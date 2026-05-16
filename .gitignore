@@ -1,0 +1,29 @@
+# Python
+mycelium/.venv/
+mycelium/__pycache__/
+mycelium/**/__pycache__/
+mycelium/**/*.pyc
+mycelium/**/*.pyo
+mycelium/.pytest_cache/
+mycelium/*.egg-info/
+
+# Secrets — never commit
+mycelium/.env
+
+# Node / Next.js
+mycelium-ui/node_modules/
+mycelium-ui/.next/
+mycelium-ui/out/
+mycelium-ui/.env.local
+mycelium-ui/.env*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor / local tooling
+.vscode/
+.idea/
+*.swp
+*.swo
+.claude/

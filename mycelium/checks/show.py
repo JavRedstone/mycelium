@@ -1,0 +1,401 @@
+"""
+Mycelium Data Inspector
+=======================
+Shows exactly what the agent sees: GitLab project state + knowledge graph.
+No agent logic runs -- this is a pure read-only diagnostic.
+
+Usage:
+    python checks/show.py              # full report
+    python checks/show.py --gitlab     # GitLab only
+    python checks/show.py --graph      # MongoDB graph only
+    python checks/show.py --commits N  # show last N commits (default 20)
+"""
+import argparse
+import asyncio
+import os
+import sys
+
+from dotenv import load_dotenv
+
+load_dotenv()
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from gitlab_mcp.client import GitLabClient
+from graph.knowledge_graph import KnowledgeGraph
+
+
+# ---------------------------------------------------------------------------
+# Formatting helpers
+# ---------------------------------------------------------------------------
+
+W = 72
+
+def hdr(title: str, ch: str = "=") -> None:
+    print(f"\n{ch * W}")
+    print(f"  {title}")
+    print(f"{ch * W}")
+
+
+def sub(title: str) -> None:
+    print(f"\n  -- {title} {'-' * max(0, W - len(title) - 6)}")
+
+
+def row(label: str, value: str, indent: int = 4, flag: str = "") -> None:
+    pad = " " * indent
+    suffix = f"  {flag}" if flag else ""
+    print(f"{pad}{label:<28}{value}{suffix}")
+
+
+def note(msg: str, indent: int = 4) -> None:
+    print(f"{' ' * indent}{msg}")
+
+
+def blank() -> None:
+    print()
+
+
+# ---------------------------------------------------------------------------
+# GitLab section
+# ---------------------------------------------------------------------------
+
+def inspect_gitlab(client: GitLabClient, commit_limit: int) -> None:
+    hdr("GITLAB PROJECT STATE", ch="=")
+
+    # --- Project info ---
+    project = client._project
+    sub("Project")
+    row("Name:", project.name)
+    row("ID:", str(project.id))
+    row("Default branch:", getattr(project, "default_branch", "main"))
+    row("Visibility:", getattr(project, "visibility", "unknown"))
+    if getattr(project, "forked_from_project", None):
+        fp = project.forked_from_project
+        row("Forked from:", fp.get("path_with_namespace", "unknown"), flag="[fork]")
+
+    # --- Members ---
+    members = client.get_members()
+    sub(f"Project Members  ({len(members)} total)")
+    if not members:
+        note("(none)")
+    else:
+        ACCESS = {10: "Guest", 20: "Reporter", 30: "Developer", 40: "Maintainer", 50: "Owner"}
+        for m in members:
+            level = ACCESS.get(m.get("access_level", 0), str(m.get("access_level")))
+            row(m["username"], f"{m['name']}  [{level}]")
+
+    # --- Commits ---
+    commits = client.get_recent_commits()
+    member_names_lower = {m["name"].lower() for m in members}
+    member_usernames_lower = {m["username"].lower() for m in members}
+    default_branch = client._default_branch
+
+    sub(f"Recent Commits on '{default_branch}'  (showing last {min(commit_limit, len(commits))} of {len(commits)} total)")
+    if not commits:
+        note("(no commits found)")
+    else:
+        for c in commits[:commit_limit]:
+            email = (c.get("author_email") or "").lower()
+            name = c.get("author_name") or ""
+            sha = c.get("id", "")[:8]
+            date = (c.get("created_at") or "")[:10]
+            msg = (c.get("message") or "").split("\n")[0][:45]
+
+            is_member = (
+                name.lower() in member_names_lower
+                or name.lower() in member_usernames_lower
+            )
+            flag = "" if is_member else "← EXTERNAL"
+            author_str = f"{name} <{email}>"
+            print(f"    {sha}  {author_str:<38}  {date}  {msg}  {flag}")
+
+    # --- External contributors ---
+    contributors = client.get_commit_contributors()
+    external = [c for c in contributors if c["external"]]
+    internal = [c for c in contributors if not c["external"]]
+
+    sub(f"Contributor Summary  ({len(internal)} internal, {len(external)} external/upstream)")
+    if external:
+        note("External authors -- in commit history but NOT current members:")
+        for e in external:
+            row(e["name"], e.get("email", ""), flag="[upstream/fork author]")
+        blank()
+        note("!  Modules primarily authored by these contributors are 'dark knowledge'")
+        note("   zones -- implementation context not held by any current team member.")
+    else:
+        note("All commit authors are current project members.")
+
+    # --- CODEOWNERS ---
+    codeowners = client.get_codeowners()
+    sub(f"CODEOWNERS  ({len(codeowners)} entries)")
+    if not codeowners:
+        note("No CODEOWNERS file found (checked: CODEOWNERS, .gitlab/CODEOWNERS, docs/CODEOWNERS)")
+        note("!  Without declared ownership, all module ownership is inferred from commits.")
+    else:
+        for pattern, owners in codeowners.items():
+            row(pattern, "->  " + ", ".join(owners))
+
+    # --- Pipelines ---
+    pipelines = client.get_pipeline_status()
+    branch = client._default_branch
+    sub(f"Pipeline Status  (last {len(pipelines)} runs on {branch})")
+    if not pipelines:
+        note("(no pipeline data -- CI/CD may not be configured)")
+    else:
+        STATUS_ICON = {"success": "OK", "failed": "FAIL", "running": "...", "pending": "..."}
+        for p in pipelines:
+            icon = STATUS_ICON.get(p.get("status", ""), "?")
+            date = (p.get("created_at") or "")[:10]
+            url = p.get("web_url") or ""
+            status = p.get("status", "unknown")
+            print(f"    {icon}  #{p['id']:<8}  {status:<10}  {date}  {url}")
+
+        failing = [p for p in pipelines if p.get("status") == "failed"]
+        if failing:
+            blank()
+            note(f"!  {len(failing)} failing pipeline(s) -- compounding risk in low-bus-factor modules.")
+
+    # --- MR Approvers ---
+    mr_approvers = client.get_mr_approvers()
+    sub(f"MR Approvers  ({len(mr_approvers)} merged MRs with approval data)")
+    if not mr_approvers:
+        note("(no approval data -- MR approvals may not be enabled, or no merged MRs yet)")
+    else:
+        for record in mr_approvers[:15]:
+            approvers_str = ", ".join(record.get("approved_by", []))
+            branch = record.get("source_branch", "?")
+            iid = record.get("mr_iid", "?")
+            title = (record.get("title") or "")[:35]
+            row(f"!{iid}  {branch[:20]}", f"approved by: {approvers_str}  -- {title}")
+
+    # --- Open Issues ---
+    issues = client.get_open_issues()
+    sub(f"Open Issues  ({len(issues)} total)")
+    if not issues:
+        note("(none)")
+    else:
+        for i in issues[:10]:
+            assignee = i.get("assignee") or "unassigned"
+            title = (i.get("title") or "")[:50]
+            labels = ", ".join(i.get("labels") or []) or "--"
+            row(f"#{i['iid']}", f"{title}  [{assignee}]  labels: {labels}")
+        if len(issues) > 10:
+            note(f"  ... and {len(issues) - 10} more")
+
+    # --- Open MRs ---
+    mrs = client.get_open_merge_requests()
+    sub(f"Open Merge Requests  ({len(mrs)} total)")
+    if not mrs:
+        note("(none)")
+    else:
+        for mr in mrs[:10]:
+            author = mr.get("author", "?")
+            assignee = mr.get("assignee") or "unassigned"
+            title = (mr.get("title") or "")[:50]
+            row(f"!{mr['iid']}", f"{title}  [by {author}, assigned {assignee}]")
+        if len(mrs) > 10:
+            note(f"  ... and {len(mrs) - 10} more")
+
+
+# ---------------------------------------------------------------------------
+# Knowledge graph section
+# ---------------------------------------------------------------------------
+
+async def inspect_graph(graph: KnowledgeGraph) -> None:
+    hdr("MONGODB KNOWLEDGE GRAPH STATE", ch="=")
+
+    snap = await graph.snapshot()
+    developers = snap.get("developers", [])
+    external_contributors = snap.get("external_contributors", [])
+    high_risk = snap.get("high_risk_modules", [])
+    open_tasks = snap.get("open_tasks", [])
+
+    all_modules = await graph.modules.find({}, {"_id": 0}).to_list(None)
+
+    # --- Internal developers ---
+    sub(f"Internal Developers  ({len(developers)} tracked)")
+    if not developers:
+        note("(none yet -- run the pipeline to populate)")
+    else:
+        for d in developers:
+            expertise = d.get("expertise") or {}
+            exp_str = "  ".join(f"{k}: {v:.2f}" for k, v in list(expertise.items())[:4])
+            last_seen = (d.get("last_seen") or "never")
+            if hasattr(last_seen, "isoformat"):
+                last_seen = last_seen.isoformat()[:10]
+            row(d["username"], d.get("name", ""))
+            if exp_str:
+                note(f"expertise: {exp_str}", indent=8)
+
+    # --- External contributors ---
+    sub(f"External / Upstream Contributors  ({len(external_contributors)} tracked)")
+    if not external_contributors:
+        note("(none yet -- run the pipeline to populate)")
+        note("These would be authors from the original/upstream repository.")
+    else:
+        for d in external_contributors:
+            identity = d.get("developer_identity") or d.get("name") or ""
+            row(d["username"], identity, flag="[upstream]")
+
+    # --- All modules ---
+    sub(f"Modules  ({len(all_modules)} tracked)")
+    if not all_modules:
+        note("(none yet -- run the pipeline to populate)")
+    else:
+        for m in all_modules:
+            score = m.get("continuity_risk_score", 0.0)
+            owners = ", ".join(m.get("owners") or []) or "unowned"
+            bus = m.get("bus_factor", 0)
+            risk_label = "CRITICAL" if score >= 0.9 else "HIGH" if score >= 0.7 else "MED" if score >= 0.4 else "LOW"
+            row(m["path"], f"risk={score:.2f} [{risk_label}]  bus={bus}  owners: {owners}")
+
+    # --- High-risk modules ---
+    sub(f"High-Risk Modules  (score >= 0.7, {len(high_risk)} found)")
+    if not high_risk:
+        note("(none above threshold)")
+    else:
+        for m in high_risk:
+            score = m.get("continuity_risk_score", 0)
+            row(m["path"], f"score={score:.2f}", flag="!")
+
+    # --- Per-module contributions ---
+    sub("Contributions (expertise edges)")
+    if not all_modules:
+        note("(no modules tracked yet)")
+    else:
+        for m in all_modules:
+            contributors = await graph.get_module_contributors(m["path"])
+            if not contributors:
+                continue
+            note(f"  {m['path']}:", indent=4)
+            for c in contributors[:5]:
+                ext_flag = " [external]" if c.get("external") else ""
+                row(
+                    c["developer_username"],
+                    f"score={c['expertise_score']:.2f}  commits={c.get('commit_count', 0)}{ext_flag}",
+                    indent=8,
+                )
+
+    # --- Open tasks ---
+    sub(f"Open Tasks  ({len(open_tasks)} tracked)")
+    if not open_tasks:
+        note("(none)")
+    else:
+        for t in open_tasks[:10]:
+            assignee = t.get("assignee") or "unassigned"
+            row(f"{t['kind']} #{t.get('gitlab_iid', '?')}", f"{t['title'][:50]}  [{assignee}]")
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+async def rescore_graph(graph: KnowledgeGraph) -> None:
+    """Recompute risk scores from current graph data without running the full pipeline."""
+    from graph.models import ModuleNode
+    from risk.forecasting import compute_bus_factor, compute_continuity_risk
+
+    hdr("RECOMPUTING RISK SCORES FROM GRAPH DATA", ch="=")
+    note("Uses actual internal committers only (excludes CODEOWNERS-only and external authors).", indent=2)
+
+    all_modules = await graph.modules.find({}, {"_id": 0}).to_list(None)
+    if not all_modules:
+        note("No modules tracked yet -- run the pipeline first.", indent=2)
+        return
+
+    module_fields = set(ModuleNode.model_fields.keys())
+    RISK_LABEL = {True: "CRITICAL", False: None}
+
+    results = []
+    for module in all_modules:
+        path = module["path"]
+        all_contribs = await graph.get_module_contributors(path)
+
+        internal_committers = [
+            c for c in all_contribs
+            if not c.get("external", False) and c.get("commit_count", 0) > 0
+        ]
+        external_committers = [c for c in all_contribs if c.get("external", False)]
+
+        base_score = compute_continuity_risk(internal_committers, module)
+        total_committers = len(internal_committers) + len(external_committers)
+        ext_ratio = len(external_committers) / total_committers if total_committers > 0 else 0.0
+        ext_penalty = round(ext_ratio * 0.3, 4) if ext_ratio > 0.5 else 0.0
+        no_internal_penalty = 0.25 if not internal_committers else 0.0
+        final_score = round(min(1.0, base_score + ext_penalty + no_internal_penalty), 4)
+        bus_factor = compute_bus_factor(internal_committers)
+
+        prev_score = module.get("continuity_risk_score", 0.0)
+        changed = abs(final_score - prev_score) > 0.001
+
+        try:
+            module_data = {k: v for k, v in module.items() if k in module_fields}
+            module_data["continuity_risk_score"] = final_score
+            module_data["bus_factor"] = bus_factor
+            await graph.upsert_module(ModuleNode(**module_data))
+        except Exception as exc:
+            note(f"[ERROR] Failed to persist {path}: {exc}", indent=4)
+
+        results.append({
+            "path": path,
+            "score": final_score,
+            "prev": prev_score,
+            "bus": bus_factor,
+            "internal": len(internal_committers),
+            "external": len(external_committers),
+            "changed": changed,
+        })
+
+    sub(f"Results ({len(results)} modules)")
+    label = lambda s: "CRITICAL" if s >= 0.9 else "HIGH" if s >= 0.7 else "MED" if s >= 0.4 else "LOW"
+    for r in sorted(results, key=lambda x: x["score"], reverse=True):
+        change = f"  (was {r['prev']:.2f})" if r["changed"] else ""
+        ext_str = f"  dark_knowledge: {r['external']} upstream authors" if r["external"] > 0 else ""
+        row(
+            r["path"],
+            f"score={r['score']:.2f} [{label(r['score'])}]  bus={r['bus']}  "
+            f"internal={r['internal']}  external={r['external']}{change}{ext_str}",
+        )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Mycelium data inspector")
+    parser.add_argument("--gitlab", action="store_true", help="Show GitLab data only")
+    parser.add_argument("--graph", action="store_true", help="Show knowledge graph only")
+    parser.add_argument("--rescore", action="store_true", help="Recompute risk scores from current graph data")
+    parser.add_argument("--commits", type=int, default=20, help="Number of commits to display (default 20)")
+    args = parser.parse_args()
+
+    explicit = args.gitlab or args.graph or args.rescore
+    show_gitlab = args.gitlab or not explicit
+    show_graph = args.graph or not explicit
+    show_rescore = args.rescore
+
+    hdr("MYCELIUM DATA INSPECTOR", ch="=")
+    note("Read-only diagnostic. No agent logic runs.", indent=2)
+
+    if show_gitlab:
+        try:
+            client = GitLabClient()
+            inspect_gitlab(client, commit_limit=args.commits)
+        except Exception as exc:
+            note(f"[ERROR] GitLab connection failed: {exc}", indent=2)
+
+    if show_graph or show_rescore:
+        try:
+            graph = KnowledgeGraph()
+            if show_graph:
+                asyncio.run(inspect_graph(graph))
+            if show_rescore:
+                asyncio.run(rescore_graph(graph))
+            graph.close()
+        except Exception as exc:
+            note(f"[ERROR] MongoDB connection failed: {exc}", indent=2)
+
+    blank()
+    print("=" * W)
+    note("Done.", indent=2)
+    blank()
+
+
+if __name__ == "__main__":
+    main()

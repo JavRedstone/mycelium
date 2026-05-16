@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+:root {
+  --font-sans: var(--font-google-sans);
+  --font-mono: var(--font-google-sans-code);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100vh;
+  background-color: #0d1117;
+}
