@@ -398,16 +398,23 @@ No aggregate continuity score exists.
 
 ## MCP architecture
 
-Two MCP servers run concurrently:
+Three MCP servers are exposed to the act agent simultaneously:
 
-| System | Role |
-|---|---|
-| GitLab MCP | executes repository actions |
-| MongoDB MCP | maintains and queries graph state |
+| Server | Type | Role |
+|---|---|---|
+| Mycelium MCP | Custom (stdio) | Pre-scoped GitLab write tools + knowledge graph reads |
+| GitLab MCP | Official partner (mcp-remote / OAuth) | Supplementary GitLab surface (hackathon requirement) |
+| MongoDB MCP | Official partner (npx) | Raw graph queries and memory operations |
 
-Both tool surfaces are merged into a unified reasoning environment.
+All tool surfaces are merged into a unified reasoning environment.
 
-The agent reasons over live graph state before taking actions.
+**Write tool priority**: Mycelium MCP write tools are preferred over GitLab MCP
+for all write actions, because Mycelium MCP is pre-scoped to the authorized
+project and cannot address upstream repositories.
+
+The GitLab MCP is included as a required hackathon partner integration. Its
+broad project access is bounded by instruction-level constraints, per-run scope
+injection, and post-hoc boundary audit — see Agent authority scope above.
 
 ---
 
@@ -426,6 +433,53 @@ System handles this by:
 - weighting organizational ownership independently
 - identifying upstream-dominant modules
 - surfacing structurally orphaned subsystems
+
+---
+
+## Agent authority scope
+
+The system is an inference and augmentation layer for a single organization's
+environment. It is a **contained actor**, not a global actor.
+
+### Agent is authorized to act on
+
+- The configured fork repository
+- Internal issues and merge requests within that project
+- Internal onboarding and handoff artifacts
+- The organization's knowledge graph (MongoDB)
+
+### Agent is explicitly excluded from
+
+- Upstream or parent repositories of the fork
+- Merge requests and issues on any other project
+- Any GitLab project not matching the configured `GITLAB_PROJECT_ID`
+
+### Why this boundary matters
+
+Upstream repositories belong to their maintainers' workflow and decision
+process. Cross-project writes are:
+
+- **Semantically contaminating** — the agent models your organization's
+  continuity state, not the upstream's
+- **Socially invasive** — automated noise in repositories you do not own
+- **Contextually wrong** — the agent is acting on state it does not own
+  and cannot model correctly
+
+### How this is enforced
+
+The GitLab MCP server (hackathon partner requirement) has broad project access
+by design. Mycelium enforces the project boundary through three layers:
+
+1. **Instruction-level constraint** — the agent's system prompt hard-prohibits
+   cross-project writes and names the upstream as explicitly excluded
+2. **Per-run scope block** — every prompt includes the authorized `project_id`
+   and `project_path`; GitLab MCP tool calls are instructed to use only these values
+3. **Post-hoc boundary audit** — after each act stage, all tool calls are
+   scanned for project arguments that don't match the authorized project;
+   violations are logged at CRITICAL level
+
+For all GitLab write operations, the Mycelium MCP server (pre-scoped to
+`GITLAB_PROJECT_ID`) is preferred over the GitLab MCP server.
 
 ---
 

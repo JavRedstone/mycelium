@@ -254,3 +254,27 @@ Mycelium is designed to fully satisfy requirements:
 * GitLab MCP + MongoDB MCP used for execution and memory
 * System performs real-world GitLab operations
 * Continuous autonomous workflow execution loop
+
+---
+
+# 10. GitLab MCP Safety Note
+
+The official GitLab MCP server (mcp-remote / OAuth) has broad project access
+by design — it can address any GitLab project the OAuth token has access to,
+including upstream repositories of a fork.
+
+Mycelium is an inference layer for a single organization's fork. Writing to
+upstream repositories is an ownership boundary violation: those repositories
+are outside the organization's continuity domain.
+
+## Implemented mitigations
+
+| Layer | Mechanism |
+|---|---|
+| Instruction-level | Agent system prompt explicitly prohibits cross-project writes and names upstream repos as excluded |
+| Per-run scope injection | Every prompt contains the authorized `project_id` and `project_path`; GitLab MCP tool calls must use only these values |
+| Preferred write surface | Mycelium MCP write tools (pre-scoped to `GITLAB_PROJECT_ID`) are listed first and preferred over GitLab MCP for all write actions |
+| Post-hoc audit | After every act stage, all tool call arguments are scanned for project identifiers that don't match the authorized project; violations are logged at CRITICAL level |
+
+These mitigations do not remove the GitLab MCP integration (required) — they
+constrain its authority to the authorized project boundary.

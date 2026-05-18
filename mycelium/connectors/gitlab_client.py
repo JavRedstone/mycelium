@@ -480,10 +480,35 @@ class GitLabClient:
             upstream_branch_name = getattr(upstream, "default_branch", None) or "main"
             upstream_branch = upstream.branches.get(upstream_branch_name)
             upstream_sha = upstream_branch.commit["id"]
-            comparison = self._project.repository_compare(
-                from_=self._default_branch, to=upstream_sha
-            )
-            commits = comparison.get("commits", []) or []
+
+            our_branch = self._project.branches.get(self._default_branch)
+            our_sha = our_branch.commit["id"]
+
+            commits = []
+
+            # Strategy 1: compare on the upstream project side — our SHA is in
+            # upstream's history for clean forks, so this usually succeeds.
+            try:
+                comparison = upstream.repository_compare(from_=our_sha, to=upstream_sha)
+                commits = comparison.get("commits", []) or []
+            except Exception:
+                pass
+
+            # Strategy 2: compare on our fork — only works when upstream SHA has
+            # been fetched into our object store.
+            if not commits:
+                try:
+                    comparison = self._project.repository_compare(
+                        from_=self._default_branch, to=upstream_sha
+                    )
+                    commits = comparison.get("commits", []) or []
+                except Exception:
+                    logger.debug(
+                        "[gitlab] get_upstream_commits_since_fork: compare API "
+                        "unreachable across projects — returning empty list"
+                    )
+                    return []
+
             results = []
             for c in commits[:max_commits]:
                 results.append({
@@ -495,7 +520,7 @@ class GitLabClient:
                 })
             return results
         except Exception as exc:
-            logger.warning("[gitlab] get_upstream_commits_since_fork failed: %s", exc)
+            logger.debug("[gitlab] get_upstream_commits_since_fork: %s", exc)
             return []
 
     def get_fork_divergence(self) -> dict | None:
@@ -576,6 +601,8 @@ class GitLabClient:
         upstream_ratio = round(len(upstream_authors) / total, 2) if total > 0 else 0.0
         fork_divergence = self.get_fork_divergence() if is_fork else None
         return {
+            "project_id": self._project.id,
+            "project_path": getattr(self._project, "path_with_namespace", str(settings.gitlab_project_id)),
             "members": self.get_members(),
             "open_issues": self.get_open_issues(),
             "open_merge_requests": self.get_open_merge_requests(),

@@ -414,8 +414,8 @@ function ModuleBreakdown({ modules, findings }: { modules: Module[]; findings: F
                       sx={{ height: 16, fontSize: "0.58rem", minWidth: 58, flexShrink: 0, color: contribColor, borderColor: contribColor + "44" }}
                     />
                     {c.commit_count > 0 && (
-                      <Typography variant="caption" color="text.disabled" sx={{ minWidth: 40, textAlign: "right", flexShrink: 0 }}>
-                        {c.commit_count}c
+                      <Typography variant="caption" color="text.disabled" sx={{ minWidth: 60, textAlign: "right", flexShrink: 0 }}>
+                        {c.commit_count} commits
                       </Typography>
                     )}
                   </Stack>
@@ -488,7 +488,7 @@ function UpstreamAuthorList({ authors, modules }: { authors: Developer[]; module
               </Box>
               {totalCommits > 0 && (
                 <Typography variant="caption" color="text.disabled" sx={{ flexShrink: 0, fontFamily: "var(--font-google-sans-code)" }}>
-                  {totalCommits}c
+                  {totalCommits} commits
                 </Typography>
               )}
             </Stack>
@@ -509,8 +509,8 @@ function UpstreamAuthorList({ authors, modules }: { authors: Developer[]; module
                         }}
                       />
                     </Box>
-                    <Typography variant="caption" sx={{ fontFamily: "var(--font-google-sans-code)", color: "rgba(250,123,23,0.6)", fontSize: "0.6rem", minWidth: 24, textAlign: "right", flexShrink: 0 }}>
-                      {m.commit_count}c
+                    <Typography variant="caption" sx={{ fontFamily: "var(--font-google-sans-code)", color: "rgba(250,123,23,0.6)", fontSize: "0.6rem", minWidth: 40, textAlign: "right", flexShrink: 0 }}>
+                      {m.commit_count} commits
                     </Typography>
                   </Stack>
                 ))}
@@ -688,7 +688,7 @@ export default function KnowledgeGraph() {
             <Stack direction="row" spacing={1} sx={{ alignItems: "baseline", mb: 2 }}>
               <Typography variant="subtitle2" color="text.secondary">Module Knowledge Breakdown</Typography>
               <Typography variant="caption" color="text.disabled">
-                who knows what · sorted by risk
+                who knows what · sorted by concentration · score = relative commit share (1.0 = top contributor)
               </Typography>
             </Stack>
             <ModuleBreakdown modules={data!.modules} findings={recentFindings} />

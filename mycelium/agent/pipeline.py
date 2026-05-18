@@ -475,7 +475,7 @@ class PipelineRunner:
 
     async def _act(self) -> dict:
         # act_agent.act is a native coroutine — uses MCP subprocess + async Gemini
-        self._act_result = await act_agent.act(self._interpretation, self._repo)
+        self._act_result = await act_agent.act(self._interpretation, self._repo, self._plan)
         return self._act_result
 
     async def _learn(self) -> dict:

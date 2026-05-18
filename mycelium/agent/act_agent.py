@@ -53,27 +53,51 @@ _USER_ID = "mycelium-pipeline"
 _AGENT_INSTRUCTION = """\
 You are Mycelium, an autonomous engineering continuity agent.
 
-Inputs you receive every turn:
-- A continuity INTERPRETATION (qualitative findings with concern_type, narrative,
-  evidence, recommended_actions) — there are no scalar risk scores in this system.
-- A snapshot of the GitLab repository state.
+═══════════════════════════════════════════════════════════
+AGENT AUTHORITY SCOPE — THIS IS A HARD SAFETY CONSTRAINT
+═══════════════════════════════════════════════════════════
 
-IMPORTANT CONSTRAINTS:
-- The GitLab project is already configured. NEVER ask the user for a project ID,
-  URL, or any configuration — all tools have the project pre-wired.
-- Do not mention tool errors to the user. If a tool fails, skip that action and
-  move on. Do not ask for clarification — decide autonomously.
-- Do not invent severity scores or buckets. Reason from the findings' narratives.
+You are a CONTAINED ACTOR. You are authorized to act within EXACTLY ONE
+GitLab project: the internal fork specified in each prompt's authority scope
+block. Your authority is bounded by your organization's continuity domain.
+
+YOU MUST NEVER:
+  ✗ Create issues on any upstream or parent repository of your fork
+  ✗ Post comments on any project other than your authorized project
+  ✗ Take any write action on any GitLab project not matching your project ID/path
+  ✗ Use GitLab MCP tools with a project_path or project_id that differs from
+    the authorized values in the authority scope block
+
+Upstream repositories:
+  ✗ Are OUTSIDE your continuity domain
+  ✗ Belong to their maintainers' workflow and decision process
+  ✗ Must NEVER receive automated writes from this system
+  ✗ Cross-project writes are ownership boundary violations
+
+When using GitLab MCP tools that require a project argument:
+  ALWAYS use the project_path from the authority scope block.
+  NEVER pass any other project path or ID.
+
+═══════════════════════════════════════════════════════════
+
+Your primary job in each turn is to EXECUTE the planned actions you are given.
+The plan has already been decided by the planner — you are the execution layer.
+
+OPERATIONAL CONSTRAINTS:
+- Do not mention tool errors to the user. If a tool fails, skip and move on.
+- Do not ask for clarification — decide autonomously.
+- Do not invent severity scores or buckets. Reason from finding narratives.
+- Do NOT skip planned actions unless the exact same issue already exists.
 
 You have three tool surfaces:
 
-1. Mycelium MCP tools — use these for ALL reads AND writes:
+1. Mycelium MCP tools — primary surface for ALL reads AND writes.
+   Pre-scoped to the authorized project — no project argument needed.
    READ:  get_concerns, get_module_experts, get_orphaned_modules,
           suggest_assignee, get_gitlab_project_state
    WRITE: create_issue, add_comment, assign_issue
    ARTIFACTS: generate_onboarding_pack(new_member_username),
               generate_offboarding_artifact(departing_member_username)
-   These are the primary tools. Use them for all GitLab actions.
 
    Use generate_onboarding_pack when a finding's concern_type is
    recent_joiner_exposure or onboarding_isolation.
@@ -81,34 +105,49 @@ You have three tool surfaces:
    fading_contributor, offboarding_risk, or sole_contributor with low
    transferability reported by the investigator.
 
-2. GitLab MCP tools — supplementary only (may be unavailable).
-   If Mycelium MCP write tools are available, prefer them over GitLab MCP.
+2. GitLab MCP tools — supplementary surface (may be unavailable).
+   When using these tools, pass ONLY the authorized project_path from the
+   authority scope block. Never pass any other project path.
+   Prefer Mycelium MCP write tools when both surfaces are available.
 
-3. MongoDB MCP tools — raw query fallback for custom aggregations.
+3. MongoDB MCP tools — raw query fallback for custom aggregations only.
 
-You receive a continuity INTERPRETATION (findings with concern_type, narrative,
-evidence, recommended_actions) — NOT scalar risk scores. Reason about each
-finding's narrative directly. The system does not use severity buckets.
-
-Decision loop:
-1. Call get_concerns and get_gitlab_project_state to understand the situation.
-2. For each finding that warrants action (per its narrative + recommended_actions),
-   call get_module_experts and suggest_assignee to identify the right people for
-   knowledge transfer.
-3. Take the minimum necessary corrective actions using create_issue / add_comment /
-   assign_issue, guided by each finding's recommended_actions.
-   - Do not duplicate existing issues — check the issues list from get_gitlab_project_state first.
-   - Keep issue titles short and descriptions actionable (one paragraph + checklist).
-   - At most 2-3 new issues per run to avoid noise.
-4. Stop calling tools when the situation has been addressed.
+Execution loop:
+1. Call get_gitlab_project_state to get the current issues list (duplicate check).
+2. For each action in the PLAN:
+   - create_issue: call Mycelium MCP create_issue unless exact title exists.
+   - add_comment / assign_issue: execute directly via Mycelium MCP.
+   - generate_onboarding_pack / generate_offboarding_artifact: call Mycelium MCP.
+3. Stop after executing all planned actions.
 """
 
 _PROMPT_TEMPLATE = """\
+╔══════════════════════════════════════════════════════════╗
+║  AGENT AUTHORITY SCOPE — BINDING FOR THIS EXECUTION      ║
+╠══════════════════════════════════════════════════════════╣
+║  Authorized project ID:   {project_id:<32} ║
+║  Authorized project path: {project_path:<32} ║
+║                                                          ║
+║  ALL GitLab write actions MUST target this project only. ║
+║  Any other project_path or project_id = HARD VIOLATION.  ║
+╚══════════════════════════════════════════════════════════╝
+
 Continuity interpretation (qualitative findings, no scores):
 {interpretation}
 
+Planned actions — execute ALL of these using your MCP tools:
+{plan}
+
 Current repository snapshot:
 {repo}
+
+EXECUTION INSTRUCTIONS:
+- Execute every planned action using Mycelium MCP tools (pre-scoped to the authorized project).
+- When using GitLab MCP tools, ALWAYS pass project_path="{project_path}".
+- Do NOT write to any other project — upstream/parent repos are outside your authority.
+- Do NOT skip actions unless a tool call explicitly fails.
+- Do NOT ask for confirmation — execute autonomously.
+- Stop after executing all planned actions.
 """
 
 
@@ -172,12 +211,24 @@ def _mycelium_toolset() -> MCPToolset:
 
 def build_root_agent() -> Agent:
     """
-    Build the Mycelium ADK agent with all three MCP toolsets attached.
+    Build the Mycelium ADK agent with all three MCP toolsets.
 
     Toolset priority:
-      1. Mycelium MCP  — typed knowledge graph + GitLab snapshot tools
-      2. GitLab MCP    — write tools (create_issue, create_merge_request, …)
-      3. MongoDB MCP   — raw query fallback
+      1. Mycelium MCP  — typed knowledge graph + GitLab write tools, pre-scoped to the
+                         configured project (settings.gitlab_project_id).
+      2. GitLab MCP    — official GitLab MCP via mcp-remote (hackathon partner requirement).
+                         Has broad project access; constrained to the authorized project
+                         via instruction-level boundaries + post-hoc audit in act().
+      3. MongoDB MCP   — raw query fallback for custom aggregations.
+
+    SAFETY NOTE — GitLab MCP scope:
+    The official GitLab MCP server (mcp-remote) uses OAuth and can operate on any
+    project the token has access to, including upstream repositories. This is
+    mitigated by:
+      (a) Explicit project scope injected into every prompt (project_id + project_path)
+      (b) Agent instruction hard-prohibiting cross-project writes
+      (c) Post-hoc audit in act() that logs CRITICAL violations
+    For all write operations, Mycelium MCP (pre-scoped) is preferred over GitLab MCP.
 
     This is the agent that gets wrapped in AdkApp for the Vertex AI Agent Engine
     runtime — both for local execution and for deployment to Agent Engine.
@@ -223,6 +274,54 @@ root_agent = build_root_agent()
 # Pipeline entry point
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Ownership boundary enforcement
+# ---------------------------------------------------------------------------
+
+# Argument keys that GitLab MCP tools use to identify a target project.
+_PROJECT_ARG_KEYS = frozenset({
+    "project_path", "project_id", "namespace", "project",
+    "project_name", "repo_path", "repository",
+})
+
+
+def _audit_boundary(
+    tool_calls: list[dict],
+    authorized_id: int,
+    authorized_path: str,
+) -> list[str]:
+    """Scan completed tool calls for ownership boundary violations.
+
+    A violation is any write-capable GitLab tool call whose project argument
+    does not match the authorized project.  Returns a list of violation
+    descriptions; an empty list means the boundary was respected.
+    """
+    violations: list[str] = []
+    authorized_path_lower = authorized_path.lower()
+
+    for tc in tool_calls:
+        tool_name = (tc.get("tool") or "").lower()
+        args = tc.get("args") or {}
+
+        for key, value in args.items():
+            if key.lower() not in _PROJECT_ARG_KEYS:
+                continue
+            if isinstance(value, int):
+                if value != authorized_id:
+                    violations.append(
+                        f"tool={tool_name!r} used project_id={value} "
+                        f"(authorized: {authorized_id})"
+                    )
+            elif isinstance(value, str) and "/" in value:
+                if value.lower() != authorized_path_lower:
+                    violations.append(
+                        f"tool={tool_name!r} used project_path={value!r} "
+                        f"(authorized: {authorized_path!r})"
+                    )
+
+    return violations
+
+
 def _collect_tool_calls(event: dict, sink: list[dict]) -> None:
     """Pull function_call / function_response pairs out of an AdkApp stream event."""
     content = event.get("content") or {}
@@ -246,14 +345,25 @@ def _collect_tool_calls(event: dict, sink: list[dict]) -> None:
                     break
 
 
-async def act(interpretation: dict, repo_snapshot: dict) -> dict:
+async def act(interpretation: dict, repo_snapshot: dict, plan: dict | None = None) -> dict:
     """
     Run one turn of the act agent under the Vertex AI Agent Engine runtime (AdkApp).
 
     `interpretation` is the analyst's findings output ({"synthesis", "findings"}).
+    `plan` is the planner's output ({"actions": [...], "graph_updates": [...]}).
+
+    The authorized project scope is derived from repo_snapshot so that the agent
+    receives the exact project_id / project_path it is permitted to act on in
+    every prompt turn — preventing drift toward upstream project writes.
     """
+    authorized_id: int = int(repo_snapshot.get("project_id") or settings.gitlab_project_id)
+    authorized_path: str = str(repo_snapshot.get("project_path") or authorized_id)
+
     prompt = _PROMPT_TEMPLATE.format(
+        project_id=authorized_id,
+        project_path=authorized_path,
         interpretation=json.dumps(interpretation, indent=2, default=str),
+        plan=json.dumps(plan or {}, indent=2, default=str),
         repo=json.dumps(repo_snapshot, indent=2, default=str),
     )
 
@@ -289,6 +399,15 @@ async def act(interpretation: dict, repo_snapshot: dict) -> dict:
     except Exception as exc:
         logger.exception("[act_agent] AdkApp run failed: %s", exc)
 
+    # --- Ownership boundary audit -------------------------------------------
+    # Check every tool call for cross-project writes before processing results.
+    # This is a defence-in-depth layer: violations should already be prevented by
+    # instruction-level constraints, but we log them critically if they slip through.
+    violations = _audit_boundary(tool_calls, authorized_id, authorized_path)
+    for v in violations:
+        logger.critical("[act_agent] OWNERSHIP BOUNDARY VIOLATION: %s", v)
+    # ------------------------------------------------------------------------
+
     executed: list[dict] = []
     failed: list[dict] = []
     details: list[dict] = []
@@ -315,6 +434,7 @@ async def act(interpretation: dict, repo_snapshot: dict) -> dict:
         "mcp_calls": [{"tool": tc.get("tool"), "args": list((tc.get("args") or {}).keys())}
                       for tc in tool_calls],
         "summary": summary_text[:2000] if summary_text else None,
+        "boundary_violations": violations,
     }
 
 

@@ -145,7 +145,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
           textTransform: "uppercase",
           letterSpacing: "0.08em",
           fontSize: "0.65rem",
-          color: "text.disabled",
+          color: "text.secondary",
           mb: 0.5,
         }}
       >
