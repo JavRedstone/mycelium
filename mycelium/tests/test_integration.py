@@ -24,6 +24,8 @@ class _TestGraph(KnowledgeGraph):
         self.modules = db["modules"]
         self.tasks = db["tasks"]
         self.contributions = db["contributions"]
+        self.actions = db["actions"]
+        self.findings = db["findings"]
 
 
 @pytest.fixture
@@ -33,6 +35,8 @@ async def graph():
     await g.modules.drop()
     await g.tasks.drop()
     await g.contributions.drop()
+    await g.actions.drop()
+    await g.findings.drop()
     await g.setup_indexes()
     yield g
     g.close()
@@ -62,7 +66,7 @@ class TestDeveloperSeparation:
         await graph.upsert_developer(
             DeveloperNode(username="upstream-bob", name="Bob", active=False, external=True)
         )
-        external = await graph.list_external_contributors()
+        external = await graph.list_upstream_authors()
         assert len(external) == 1
         assert external[0]["username"] == "upstream-bob"
 
@@ -78,7 +82,7 @@ class TestDeveloperSeparation:
         )
 
         active = await graph.list_developers(active_only=True)
-        external = await graph.list_external_contributors()
+        external = await graph.list_upstream_authors()
 
         assert len(active) == 1
         assert active[0]["username"] == "alice"
@@ -98,20 +102,21 @@ class TestDeveloperSeparation:
 # ---------------------------------------------------------------------------
 
 class TestSnapshot:
-    async def test_snapshot_has_external_contributors_key(self, graph):
+    async def test_snapshot_has_expected_keys(self, graph):
         snap = await graph.snapshot()
-        assert "external_contributors" in snap
+        assert "upstream_authors" in snap
         assert "developers" in snap
-        assert "high_risk_modules" in snap
+        assert "concentrated_modules" in snap
         assert "open_tasks" in snap
+        assert "recent_findings" in snap
 
-    async def test_snapshot_external_contributors_populated(self, graph):
+    async def test_snapshot_upstream_authors_populated(self, graph):
         await graph.upsert_developer(
             DeveloperNode(username="upstream-eve", name="Eve", active=False, external=True)
         )
         snap = await graph.snapshot()
-        assert len(snap["external_contributors"]) == 1
-        assert snap["external_contributors"][0]["username"] == "upstream-eve"
+        assert len(snap["upstream_authors"]) == 1
+        assert snap["upstream_authors"][0]["username"] == "upstream-eve"
 
     async def test_snapshot_external_not_in_developers(self, graph):
         await graph.upsert_developer(
@@ -122,7 +127,7 @@ class TestSnapshot:
         )
         snap = await graph.snapshot()
         dev_usernames = {d["username"] for d in snap["developers"]}
-        ext_usernames = {e["username"] for e in snap["external_contributors"]}
+        ext_usernames = {e["username"] for e in snap["upstream_authors"]}
 
         assert "alice" in dev_usernames
         assert "upstream-bob" not in dev_usernames
@@ -193,30 +198,27 @@ class TestContributions:
 
 
 # ---------------------------------------------------------------------------
-# Module risk scoring
+# Module concentration (measurement only — no scoring)
 # ---------------------------------------------------------------------------
 
-class TestModuleRisk:
-    async def test_high_risk_module_appears_in_list(self, graph):
+class TestModuleConcentration:
+    async def test_concentrated_module_appears_in_list(self, graph):
         await graph.upsert_module(ModuleNode(
             path="src/legacy",
             bus_factor=1,
-            continuity_risk_score=0.9,
             owners=[],
         ))
-        high_risk = await graph.list_high_risk_modules(threshold=0.7)
-        assert len(high_risk) == 1
-        assert high_risk[0]["path"] == "src/legacy"
+        concentrated = await graph.list_concentrated_modules(max_bus_factor=1)
+        assert any(m["path"] == "src/legacy" for m in concentrated)
 
-    async def test_low_risk_module_excluded_from_high_risk_list(self, graph):
+    async def test_distributed_module_excluded_from_concentrated_list(self, graph):
         await graph.upsert_module(ModuleNode(
             path="src/stable",
             bus_factor=4,
-            continuity_risk_score=0.2,
             owners=["alice", "bob"],
         ))
-        high_risk = await graph.list_high_risk_modules(threshold=0.7)
-        assert len(high_risk) == 0
+        concentrated = await graph.list_concentrated_modules(max_bus_factor=1)
+        assert not any(m["path"] == "src/stable" for m in concentrated)
 
     async def test_codeowners_module_has_declared_owners(self, graph):
         await graph.upsert_module(ModuleNode(

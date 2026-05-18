@@ -6,6 +6,7 @@ import Paper from "@mui/material/Paper";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import Chip from "@mui/material/Chip";
+import Divider from "@mui/material/Divider";
 import TerminalIcon from "@mui/icons-material/Terminal";
 
 type LogEntry = {
@@ -14,6 +15,8 @@ type LogEntry = {
   level: string;
   msg: string;
 };
+
+type LogEntryKeyed = LogEntry & { _clientKey: number };
 
 const LEVEL_COLOR: Record<string, string> = {
   DEBUG: "rgba(255,255,255,0.3)",
@@ -32,18 +35,26 @@ const LEVEL_CHIP_COLOR: Record<string, "default" | "primary" | "warning" | "erro
 };
 
 export default function AgentLog({ height = 320 }: { height?: number }) {
-  const [entries, setEntries] = useState<LogEntry[]>([]);
+  const [entries, setEntries] = useState<LogEntryKeyed[]>([]);
   const [autoScroll, setAutoScroll] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const keyRef = useRef(0);
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
   useEffect(() => {
     const es = new EventSource(`${apiUrl}/logs/stream`);
+    // Reset state on every (re)connect so stale entries don't accumulate
+    // and seq numbers from different server sessions don't collide as React keys.
+    es.onopen = () => {
+      keyRef.current = 0;
+      setEntries([]);
+    };
     es.onmessage = (e) => {
       try {
         const entry = JSON.parse(e.data) as LogEntry;
-        setEntries((prev) => [...prev.slice(-499), entry]);
+        const _clientKey = keyRef.current++;
+        setEntries((prev) => [...prev.slice(-499), { ...entry, _clientKey }]);
       } catch {}
     };
     return () => es.close();
@@ -113,25 +124,40 @@ export default function AgentLog({ height = 320 }: { height?: number }) {
               Waiting for logs…
             </Typography>
           ) : (
-            entries.map((entry) => (
-              <Stack key={entry.seq} direction="row" spacing={1.5} sx={{ alignItems: "baseline", mb: 0.25 }}>
-                <Typography component="span" sx={{ fontFamily: "var(--font-google-sans-code)", fontSize: "0.7rem", color: "rgba(255,255,255,0.25)", flexShrink: 0, minWidth: 56 }}>
-                  {entry.ts}
-                </Typography>
-                <Box sx={{ flexShrink: 0 }}>
-                  <Chip
-                    label={entry.level}
-                    size="small"
-                    color={LEVEL_CHIP_COLOR[entry.level] ?? "default"}
-                    variant="outlined"
-                    sx={{ height: 16, fontSize: "0.6rem", fontFamily: "var(--font-google-sans-code)", "& .MuiChip-label": { px: 0.75 } }}
-                  />
+            entries.map((entry, idx) => {
+              const isRunStart = entry.msg.includes("[pipeline] Observe Repo started");
+              const isFirstEntry = idx === 0;
+              return (
+                <Box key={entry._clientKey}>
+                  {isRunStart && !isFirstEntry && (
+                    <Box sx={{ my: 1.5 }}>
+                      <Divider sx={{ borderColor: "rgba(255,255,255,0.12)" }}>
+                        <Typography variant="caption" sx={{ fontFamily: "var(--font-google-sans-code)", fontSize: "0.65rem", color: "rgba(255,255,255,0.3)", px: 1 }}>
+                          ── new run · {entry.ts} ──
+                        </Typography>
+                      </Divider>
+                    </Box>
+                  )}
+                  <Stack direction="row" spacing={1.5} sx={{ alignItems: "baseline", mb: 0.25 }}>
+                    <Typography component="span" sx={{ fontFamily: "var(--font-google-sans-code)", fontSize: "0.7rem", color: "rgba(255,255,255,0.25)", flexShrink: 0, minWidth: 56 }}>
+                      {entry.ts}
+                    </Typography>
+                    <Box sx={{ flexShrink: 0 }}>
+                      <Chip
+                        label={entry.level}
+                        size="small"
+                        color={LEVEL_CHIP_COLOR[entry.level] ?? "default"}
+                        variant="outlined"
+                        sx={{ height: 16, fontSize: "0.6rem", fontFamily: "var(--font-google-sans-code)", "& .MuiChip-label": { px: 0.75 } }}
+                      />
+                    </Box>
+                    <Typography component="span" sx={{ fontFamily: "var(--font-google-sans-code)", fontSize: "0.75rem", color: LEVEL_COLOR[entry.level] ?? "rgba(255,255,255,0.7)", wordBreak: "break-word" }}>
+                      {entry.msg}
+                    </Typography>
+                  </Stack>
                 </Box>
-                <Typography component="span" sx={{ fontFamily: "var(--font-google-sans-code)", fontSize: "0.75rem", color: LEVEL_COLOR[entry.level] ?? "rgba(255,255,255,0.7)", wordBreak: "break-word" }}>
-                  {entry.msg}
-                </Typography>
-              </Stack>
-            ))
+              );
+            })
           )}
           <div ref={bottomRef} />
         </Box>

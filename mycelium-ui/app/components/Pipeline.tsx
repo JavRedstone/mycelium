@@ -26,6 +26,8 @@ import ErrorOutlinedIcon from "@mui/icons-material/ErrorOutlined";
 import AccessTimeIcon from "@mui/icons-material/AccessTime";
 import ExtensionOutlinedIcon from "@mui/icons-material/ExtensionOutlined";
 import FolderOpenOutlinedIcon from "@mui/icons-material/FolderOpenOutlined";
+import BiotechOutlinedIcon from "@mui/icons-material/BiotechOutlined";
+import Md from "./Md";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -86,8 +88,9 @@ const STATUS_LABEL: Record<StageStatus, string> = {
 export const STAGE_ICONS: Record<string, React.ReactElement> = {
   observe_repo: <VisibilityOutlinedIcon fontSize="small" />,
   map_modules: <FolderOpenOutlinedIcon fontSize="small" />,
+  investigate: <BiotechOutlinedIcon fontSize="small" />,
   observe_graph: <AccountTreeOutlinedIcon fontSize="small" />,
-  analyze: <BoltOutlinedIcon fontSize="small" />,
+  interpret: <BoltOutlinedIcon fontSize="small" />,
   plan: <AssignmentOutlinedIcon fontSize="small" />,
   act: <PlayArrowOutlinedIcon fontSize="small" />,
   learn: <SchoolOutlinedIcon fontSize="small" />,
@@ -105,16 +108,18 @@ function stageSummary(stage: Stage): string | null {
       return `${o.commit_contributors ?? 0} contributors · ${o.upstream_authors ?? 0} upstream`;
     case "map_modules":
       return `${o.modules_discovered ?? 0} modules · ${o.total_attributions ?? 0} author attributions`;
+    case "investigate":
+      return `${o.member_investigations ?? 0} member · ${o.module_investigations ?? 0} module · ${o.drift_investigated ? "1 drift" : "no drift"}`;
     case "observe_graph":
-      return `${o.developers_tracked ?? 0} devs · ${o.upstream_authors_tracked ?? 0} upstream · ${o.high_risk_modules ?? 0} high-risk`;
-    case "analyze":
-      return `${String(o.overall_health ?? "").toUpperCase()} · ${o.risk_count ?? 0} risks`;
+      return `${o.developers_tracked ?? 0} devs · ${o.upstream_authors_tracked ?? 0} upstream · ${o.concentrated_modules ?? 0} concentrated`;
+    case "interpret":
+      return `${o.finding_count ?? 0} findings · ${(o.concern_types as string[])?.length ?? 0} concern types`;
     case "plan":
       return `${o.actions_planned ?? 0} actions · ${o.graph_updates_planned ?? 0} graph updates`;
     case "act":
       return `${o.executed ?? 0} executed · ${o.failed ?? 0} failed · ${(o.mcp_calls as unknown[])?.length ?? 0} MCP calls`;
     case "learn":
-      return `${o.updated ?? 0}/${o.total ?? 0} records · ${o.modules_rescored ?? 0} modules rescored`;
+      return `${o.updated ?? 0}/${o.total ?? 0} records · ${o.findings_saved ?? 0} findings saved`;
     case "summary":
       return `${o.stages_succeeded ?? 0}/${o.stages_total ?? 0} stages · ${fmt(o.total_duration_ms as number)}`;
     default:
@@ -218,56 +223,147 @@ function MapModulesDetail({ output }: { output: Record<string, unknown> }) {
   );
 }
 
+function InvestigateDetail({ output }: { output: Record<string, unknown> }) {
+  const memberCount = (output.member_investigations as number) ?? 0;
+  const moduleCount = (output.module_investigations as number) ?? 0;
+  const driftInvestigated = output.drift_investigated as boolean;
+  const members = (output.members as Array<Record<string, unknown>>) ?? [];
+  const modules = (output.modules as Array<Record<string, unknown>>) ?? [];
+
+  if (memberCount === 0 && moduleCount === 0 && !driftInvestigated) {
+    return (
+      <Stack spacing={1.5}>
+        <Grid container spacing={2}>
+          <Grid size={4}><MetricCard label="Member Investigations" value={0} /></Grid>
+          <Grid size={4}><MetricCard label="Module Investigations" value={moduleCount} /></Grid>
+          <Grid size={4}><MetricCard label="Drift" value={driftInvestigated ? "Yes" : "No"} /></Grid>
+        </Grid>
+        <Typography variant="body2" color="text.disabled">
+          No high-attention members detected this run — no member investigators were spawned.
+          Module investigators ran for each discovered code directory.
+        </Typography>
+      </Stack>
+    );
+  }
+
+  return (
+    <Stack spacing={2}>
+      <Grid container spacing={2}>
+        <Grid size={4}><MetricCard label="Member Investigations" value={memberCount} highlight={memberCount > 0} /></Grid>
+        <Grid size={4}><MetricCard label="Module Investigations" value={moduleCount} /></Grid>
+        <Grid size={4}><MetricCard label="Drift Investigated" value={driftInvestigated ? "Yes" : "No"} /></Grid>
+      </Grid>
+
+      {members.length > 0 && (
+        <Box>
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.75, textTransform: "uppercase", letterSpacing: "0.08em", fontSize: "0.65rem" }}>
+            High-attention members
+          </Typography>
+          <Stack spacing={0.75}>
+            {members.map((m, i) => (
+              <Paper key={i} elevation={0} sx={{ p: 1.5, bgcolor: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 1.5 }}>
+                <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 0.5 }}>
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>{String(m.member ?? "")}</Typography>
+                  <Chip label={String(m.attention_reason ?? "").replace(/_/g, " ")} size="small" variant="outlined"
+                    sx={{ height: 20, fontSize: "0.65rem" }} />
+                </Stack>
+                {!!m.urgency_reasoning && (
+                  <Md>{String(m.urgency_reasoning)}</Md>
+                )}
+              </Paper>
+            ))}
+          </Stack>
+        </Box>
+      )}
+
+      {modules.length > 0 && (
+        <Box>
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.75, textTransform: "uppercase", letterSpacing: "0.08em", fontSize: "0.65rem" }}>
+            Module investigations
+          </Typography>
+          <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap" }} useFlexGap>
+            {modules.map((m, i) => {
+              const state = String(m.documentation_state ?? "");
+              const stateColor = state === "excellent" ? "#34a853" : state === "adequate" ? "#8ab4f8" : state === "sparse" ? "#fbbc04" : state === "missing" || state === "placeholder" ? "#ea4335" : "text.disabled";
+              return (
+                <Chip key={i}
+                  label={`${String(m.module ?? "")}${state ? ` · ${state}` : ""}`}
+                  size="small" variant="outlined"
+                  sx={{ height: 22, fontSize: "0.7rem", fontFamily: "var(--font-google-sans-code)", color: stateColor, borderColor: `${stateColor}55` }} />
+              );
+            })}
+          </Stack>
+        </Box>
+      )}
+    </Stack>
+  );
+}
+
 function ObserveGraphDetail({ output }: { output: Record<string, unknown> }) {
   const upstreamTracked = (output.upstream_authors_tracked as number) ?? 0;
   return (
     <Grid container spacing={2}>
       <Grid size={3}><MetricCard label="Developers Tracked" value={output.developers_tracked} /></Grid>
       <Grid size={3}><MetricCard label="Upstream Authors" value={upstreamTracked} highlight={upstreamTracked > 0} /></Grid>
-      <Grid size={3}><MetricCard label="High-Risk Modules" value={output.high_risk_modules} highlight={(output.high_risk_modules as number) > 0} /></Grid>
-      <Grid size={3}><MetricCard label="Open Tasks Tracked" value={output.open_tasks_tracked} /></Grid>
+      <Grid size={3}><MetricCard label="Concentrated Modules" value={output.concentrated_modules} /></Grid>
+      <Grid size={3}><MetricCard label="Recent Findings" value={output.recent_findings} /></Grid>
     </Grid>
   );
 }
 
-const HEALTH_COLOR: Record<string, "success" | "warning" | "error"> = {
-  healthy: "success", at_risk: "warning", critical: "error",
-};
-const RISK_CHIP_COLOR: Record<string, "success" | "warning" | "error" | "default"> = {
-  low: "success", medium: "warning", high: "error", critical: "error",
-};
-
-function AnalyzeDetail({ output }: { output: Record<string, unknown> }) {
-  const risks = (output.risk_assessments as Array<Record<string, unknown>>) ?? [];
+function InterpretDetail({ output }: { output: Record<string, unknown> }) {
+  const findings = (output.findings as Array<Record<string, unknown>>) ?? [];
   return (
     <Stack spacing={2}>
-      <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-        <Chip label={String(output.overall_health ?? "unknown").toUpperCase()} color={HEALTH_COLOR[output.overall_health as string] ?? "default"} size="small" />
-        <Typography variant="body2" color="text.secondary">{String(output.summary ?? "")}</Typography>
-      </Stack>
-      {risks.length > 0 ? (
+      <Box sx={{ color: "text.secondary" }}>
+        <Md>{String(output.synthesis ?? "")}</Md>
+      </Box>
+      {findings.length > 0 ? (
         <Stack spacing={1}>
-          {risks.map((r, i) => (
-            <Paper key={i} elevation={0} sx={{ p: 1.5, bgcolor: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 1.5 }}>
-              <Stack direction="row" spacing={1.5} sx={{ alignItems: "flex-start" }}>
-                <Chip label={String(r.risk_level ?? "").toUpperCase()} color={RISK_CHIP_COLOR[r.risk_level as string] ?? "default"} size="small" sx={{ minWidth: 64 }} />
-                <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Typography variant="body2" sx={{ fontFamily: "var(--font-google-sans-code)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {String(r.module ?? "")}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.25 }}>
-                    {String(r.reason ?? "")}
-                  </Typography>
-                </Box>
-                <Typography variant="caption" color="text.disabled" sx={{ fontFamily: "var(--font-google-sans-code)", flexShrink: 0 }}>
-                  {Math.round((r.score as number) * 100)}%
-                </Typography>
-              </Stack>
-            </Paper>
-          ))}
+          {findings.map((f, i) => {
+            const actions = (f.recommended_actions as string[]) ?? [];
+            const evidence = (f.evidence as string[]) ?? [];
+            return (
+              <Paper key={i} elevation={0} sx={{ p: 1.5, bgcolor: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 1.5 }}>
+                <Stack spacing={1}>
+                  <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap" }}>
+                    <Chip
+                      label={String(f.concern_type ?? "concern").replace(/_/g, " ")}
+                      size="small"
+                      variant="outlined"
+                      sx={{ height: 22, fontSize: "0.7rem" }}
+                    />
+                    <Typography variant="body2" sx={{ fontFamily: "var(--font-google-sans-code)", fontWeight: 600 }}>
+                      {String(f.subject ?? "")}
+                    </Typography>
+                  </Stack>
+                  <Md>{String(f.narrative ?? "")}</Md>
+                  {actions.length > 0 && (
+                    <Box>
+                      <Typography variant="caption" color="text.disabled" sx={{ display: "block", mb: 0.5, textTransform: "uppercase", letterSpacing: "0.08em", fontSize: "0.6rem" }}>
+                        Recommended actions
+                      </Typography>
+                      <Box component="ul" sx={{ pl: 2.5, my: 0, color: "text.secondary" }}>
+                        {actions.map((a, j) => (
+                          <Box component="li" key={j} sx={{ fontSize: "0.8rem", lineHeight: 1.5 }}>{a}</Box>
+                        ))}
+                      </Box>
+                    </Box>
+                  )}
+                  {evidence.length > 0 && (
+                    <Stack direction="row" spacing={0.5} sx={{ flexWrap: "wrap" }} useFlexGap>
+                      {evidence.map((e, j) => (
+                        <Chip key={j} label={e} size="small" variant="outlined" sx={{ height: 18, fontSize: "0.6rem", fontFamily: "var(--font-google-sans-code)", color: "text.disabled" }} />
+                      ))}
+                    </Stack>
+                  )}
+                </Stack>
+              </Paper>
+            );
+          })}
         </Stack>
       ) : (
-        <Typography variant="body2" color="text.disabled">No risks identified</Typography>
+        <Typography variant="body2" color="text.disabled">No findings produced</Typography>
       )}
     </Stack>
   );
@@ -347,7 +443,8 @@ function ActDetail({ output }: { output: Record<string, unknown> }) {
 }
 
 function LearnDetail({ output }: { output: Record<string, unknown> }) {
-  const rescored = (output.modules_rescored as number) ?? 0;
+  const busFactorRefreshed = (output.modules_bus_factor_refreshed as number) ?? 0;
+  const findingsSaved = (output.findings_saved as number) ?? 0;
   return (
     <Stack spacing={2}>
       <Grid container spacing={2}>
@@ -355,7 +452,10 @@ function LearnDetail({ output }: { output: Record<string, unknown> }) {
           <MetricCard label="Records Updated" value={`${output.updated ?? 0}/${output.total ?? 0}`} />
         </Grid>
         <Grid size={4}>
-          <MetricCard label="Modules Rescored" value={rescored} highlight={rescored > 0} />
+          <MetricCard label="Bus Factor Refreshed" value={busFactorRefreshed} />
+        </Grid>
+        <Grid size={4}>
+          <MetricCard label="Findings Saved" value={findingsSaved} highlight={findingsSaved > 0} />
         </Grid>
       </Grid>
     </Stack>
@@ -368,7 +468,8 @@ function SummaryDetail({ output }: { output: Record<string, unknown> }) {
       <Grid size={4}><MetricCard label="Stages" value={`${output.stages_succeeded}/${output.stages_total}`} /></Grid>
       <Grid size={4}><MetricCard label="Failed" value={output.stages_failed} highlight={(output.stages_failed as number) > 0} /></Grid>
       <Grid size={4}><MetricCard label="Duration" value={fmt(output.total_duration_ms as number)} /></Grid>
-      <Grid size={4}><MetricCard label="Actions" value={output.actions_executed} /></Grid>
+      <Grid size={4}><MetricCard label="Findings" value={output.findings_count} /></Grid>
+      <Grid size={4}><MetricCard label="Actions Planned" value={output.actions_planned} /></Grid>
       <Grid size={4}><MetricCard label="Graph Updates" value={output.graph_updates_planned} /></Grid>
     </Grid>
   );
@@ -377,8 +478,9 @@ function SummaryDetail({ output }: { output: Record<string, unknown> }) {
 const DETAIL_COMPONENT: Record<string, React.ComponentType<{ output: Record<string, unknown> }>> = {
   observe_repo: ObserveRepoDetail,
   map_modules: MapModulesDetail,
+  investigate: InvestigateDetail,
   observe_graph: ObserveGraphDetail,
-  analyze: AnalyzeDetail,
+  interpret: InterpretDetail,
   plan: PlanDetail,
   act: ActDetail,
   learn: LearnDetail,

@@ -1,358 +1,503 @@
 # Continuity Engine (Mycelium)
 GitLab Track
 
-## Overview
+## What this is
 
-Continuity Engine is an autonomous AI agent system that maintains engineering knowledge continuity across team changes. It treats organizational knowledge as a **dynamic system property**, not static documentation.
+Continuity Engine is an autonomous agent system that prevents engineering knowledge loss as teams and codebases evolve.
 
-The system continuously models how knowledge exists inside a codebase, detects when that knowledge is at risk, and takes corrective action through GitLab.
+It continuously models:
+- who understands what in a codebase (inferred, not declared)
+- where knowledge is concentrated or fragile
+- how that structure changes over time
 
----
+Then it acts directly inside GitLab to stabilize it.
 
-## Problem
-
-Engineering organizations routinely lose critical context due to:
-
-- Developer onboarding delays and unclear system understanding
-- Untracked or implicit code ownership
-- Knowledge loss when engineers leave or become inactive
-- Orphaned or stalled work in repositories
-- Over-reliance on individual experts (low bus factor)
-
-These failures are typically only detected after productivity loss occurs.
-
----
-
-## Solution
-
-Continuity Engine is an AI agent system that continuously:
-
-- Observes GitLab repository and team activity
-- Builds and updates a knowledge graph in MongoDB
-- Infers ownership, expertise, and dependency structure
-- Predicts knowledge loss and continuity risks
-- Executes corrective actions through GitLab MCP
-- Learns from outcomes to refine future decisions
-
-It operates as a closed-loop autonomous system:
+Core loop:
 
 **Observe → Infer → Decide → Act → Learn**
 
 ---
 
-## Why This Must Be an AI Agent System (Core Design Rationale)
+## Why this exists
 
-This problem cannot be solved with static rules, dashboards, or traditional automation because:
+Most engineering orgs rely on:
+- CODEOWNERS
+- tribal knowledge
+- static documentation
+- manual onboarding
 
-### 1. The system state is dynamic and incomplete
-- Code ownership is not explicitly defined
-- Expertise is inferred from behavior, not declared
-- Dependencies evolve continuously across commits and PRs
+These assume knowledge is:
+- explicit
+- stable
+- evenly distributed
 
-A deterministic system cannot reliably model this complexity.
+In reality it is:
+- implicit
+- shifting
+- unevenly distributed
 
----
-
-### 2. Decisions require contextual reasoning
-The system must evaluate:
-- Who actually understands a module (not just who last edited it)
-- Whether a change introduces knowledge concentration risk
-- How to redistribute work without breaking ongoing development
-
-These are probabilistic, context-dependent decisions that require reasoning over multiple signals.
-
----
-
-### 3. Actions affect future system state
-Every action changes:
-- ownership distribution
-- workload balance
-- knowledge graph structure
-
-This creates a feedback loop where the system must continuously re-evaluate its own assumptions.
+Continuity Engine treats engineering knowledge as a **dynamic system property**, not documentation.
 
 ---
 
-### 4. The system must generalize across unseen scenarios
-Examples:
-- unexpected engineer departure
-- rapidly changing repositories
-- partial or conflicting ownership signals
+## Core idea
 
-Hard-coded logic fails in these cases. An agent is required to generalize decisions.
+The system is built around a simple premise:
 
----
+> organizational knowledge is latent structure embedded in repository activity
 
-### Conclusion
+Not:
+- tickets
+- READMEs
+- ownership metadata
 
-This is fundamentally an **adaptive decision-making system over evolving organizational state**, which requires an AI agent architecture rather than static automation.
+Knowledge must be inferred continuously from:
+- contribution behavior
+- review patterns
+- module interaction
+- temporal activity
+- dependency structure
 
----
-
-## Core Innovation
-
-The system introduces **Continuity as a System Property**:
-
-- Knowledge is continuously inferred, not manually documented
-- Ownership is probabilistic, not explicit
-- Risk is predicted before failure, not after
-- Actions are executed autonomously, not suggested
+The graph is the source of truth.
+Generated artifacts are temporary views over that graph.
 
 ---
 
-## Core Components
+## What makes this different
 
-### 1. Knowledge Graph (MongoDB)
-Persistent memory layer representing:
+### 1. It infers real ownership (not declared ownership)
 
-- Code ownership distribution (inferred)
-- Developer expertise per module
-- Task and contribution history
-- Dependency relationships between components
-- Continuity risk signals over time
+Most systems assume:
+- “who edited the file owns it”
 
----
+This system estimates:
+- who actually understands the module
+- using contribution density, recency, review behavior, and cross-module interaction
 
-### 2. Continuity Agent (Gemini)
-The reasoning engine responsible for:
-
-- Detecting onboarding and offboarding events
-- Identifying knowledge concentration and gaps
-- Evaluating system-wide continuity risk
-- Prioritizing interventions based on impact
-- Generating structured context transfers
+Ownership becomes:
+> inferred cognitive structure, not static metadata
 
 ---
 
-### 3. GitLab Action Layer (MCP)
-Execution interface that performs real system changes:
+### 2. It maintains a live knowledge graph (not dashboards)
 
-- Issue creation and assignment
-- Merge request annotations with context
-- Task reassignment based on inferred expertise
-- Onboarding/offboarding workflow automation
-- Documentation updates based on detected drift
+Instead of static metrics, it builds a continuously updated graph:
 
----
+- developers ↔ modules
+- inferred expertise weights
+- dependency relationships
+- temporal knowledge evolution
+- upstream vs internal ownership structure
 
-### 4. Continuity Risk Forecasting Engine
-A predictive layer that estimates:
+This graph is not reporting.
 
-- Knowledge loss probability per module
-- Ownership concentration risk (“bus factor”)
-- Documentation drift vs active development
-- Emerging single points of failure
-
-This enables proactive intervention before failures occur.
+It is system memory.
 
 ---
 
-## System Loop
+### 3. It closes the loop
 
-1. Observe GitLab activity and repository state via MCP
-2. Infer ownership structure and knowledge distribution using Gemini
-3. Decide required continuity actions (onboarding, offboarding, mitigation)
-4. Act through GitLab MCP (issues, assignments, annotations)
-5. Learn by updating MongoDB knowledge graph
-6. Repeat continuously as the system evolves
+Most tools stop at:
+> “this looks risky”
+
+This system continues:
+> observe → interpret → intervene → observe impact → update model
+
+The system actively modifies the environment it models.
 
 ---
 
-## Key Workflows
+### 4. It operates under incomplete information
 
-### Onboarding Flow
+Engineering organizations contain:
+- hidden ownership
+- stale documentation
+- silent expertise concentration
+- abandoned subsystem knowledge
+- forked histories
+
+The system reconstructs structure from weak signals instead of requiring explicit declarations.
+
+---
+
+## Why this must be agentic
+
+This problem cannot be solved with deterministic automation because:
+
+- ownership is latent
+- expertise is probabilistic
+- context changes continuously
+- actions modify future system state
+
+A rules engine assumes:
+- stable inputs
+- explicit structure
+- fixed mappings
+
+Real engineering systems have none of those properties.
+
+So instead of:
+> rules over static data
+
+This system uses:
+> inference + contextual reasoning + execution over evolving state
+
+---
+
+## Important design decision: no scalar risk score
+
+The system intentionally avoids:
+- global risk scores
+- weighted aggregate metrics
+- threshold-triggered decisions
+
+Reason:
+- engineering fragility is structural, not scalar
+- aggregation destroys context
+- thresholds create brittle behavior and false certainty
+
+A human staff engineer does not think:
+> “risk = 0.82”
+
+They think:
+- “this module only has one real maintainer”
+- “this subsystem is upstream-dominated”
+- “knowledge here is stale”
+- “this dependency chain is fragile”
+
+The system mirrors that reasoning model.
+
+---
+
+## Continuity interpretation model
+
+Instead of computing a single score, the system:
+
+1. extracts structured graph signals
+2. investigates areas of concern
+3. reasons over findings contextually
+4. selects interventions
+
+Signals include:
+- ownership concentration
+- contributor dispersion
+- dependency exposure
+- knowledge freshness
+- upstream dominance
+- review bottlenecks
+- onboarding isolation
+
+No scalar aggregation is required.
+
+---
+
+## Investigator-based reasoning model
+
+Numeric values are observational only.
+
+They are not conclusions.
+
+The system spawns specialized investigative subagents that inspect graph regions and repository state in parallel.
+
+### Member investigators
+Analyze developers tied to fragile modules.
+
+Questions:
+- what knowledge is uniquely concentrated here?
+- what disappears if this person leaves?
+- how transferable is their context?
+
+---
+
+### Module investigators
+Recursively inspect subsystems.
+
+They:
+- read source structure
+- inspect READMEs/configuration
+- inspect contribution history
+- adapt investigation depth dynamically
+
+Goal:
+- determine how understandable and transferable the subsystem actually is
+
+---
+
+### Drift investigator
+Analyzes divergence between upstream and local fork history.
+
+Not:
+- “commits behind”
+
+But:
+- semantic impact of missing changes
+- security relevance
+- architectural drift
+
+---
+
+## Core components
+
+### Knowledge Graph (MongoDB)
+
+Persistent memory layer containing:
+- inferred ownership structure
+- contributor-module relationships
+- expertise distributions
+- dependency graph
+- historical evolution of knowledge
+
+The graph is the persistent system state.
+
+---
+
+### Continuity Agent (Gemini)
+
+Reasoning layer that:
+- interprets graph state
+- detects continuity threats
+- synthesizes onboarding/handoff context
+- prioritizes interventions
+- selects GitLab actions
+
+Operates on structured state, not raw logs.
+
+---
+
+### GitLab Action Layer (MCP)
+
+Execution layer:
+- create/assign issues
+- annotate merge requests
+- redistribute tasks
+- generate onboarding packs
+- generate handoff summaries
+- trigger documentation updates
+
+This is where reasoning becomes system change.
+
+---
+
+## System loop
+
+1. Pull repository + activity state
+2. Update graph memory
+3. Infer ownership and expertise structure
+4. Spawn investigative subagents
+5. Reason over findings
+6. Select interventions
+7. Execute actions inside GitLab
+8. Observe resulting state changes
+9. Repeat continuously
+
+---
+
+## Key workflows
+
+### Onboarding flow
+
 Triggered when a new engineer joins.
 
-The system:
+System:
+- maps repository structure
+- identifies active subsystem experts
+- synthesizes onboarding context pack:
+  - subsystem overview
+  - dependency map
+  - key maintainers
+  - starter tasks
+  - active architectural areas
 
-- Analyzes repository structure and active development
-- Identifies key modules and inferred experts
-- Generates a contextual onboarding pack:
-  - current system state summary
-  - relevant maintainers per subsystem
-  - prioritized starter tasks
-- Assigns tasks directly in GitLab
-
-Goal: reduce time-to-context and accelerate meaningful contribution.
+Goal:
+> reduce time-to-context, not just time-to-first-commit
 
 ---
 
-### Offboarding Flow
+### Offboarding flow
+
 Triggered when an engineer becomes inactive or leaves.
 
-The system:
+System:
+- identifies active/incomplete work
+- reconstructs implicit context from commits + reviews
+- synthesizes handoff artifacts
+- redistributes ownership
+- updates graph structure
 
-- Identifies all active and incomplete work
-- Extracts implicit knowledge from recent contributions
-- Generates structured handoff summaries per task
-- Reassigns ownership based on inferred expertise similarity
-- Updates knowledge graph to reflect structural changes
-
-Goal: prevent knowledge loss and stalled execution.
-
----
-
-### Continuity Risk Mitigation (Predictive Behavior)
-Continuously evaluates system health:
-
-- Modules with single-point knowledge dependency
-- Declining engagement in critical areas
-- Hidden ownership concentration risks
-
-When thresholds are exceeded, the system:
-
-- Creates GitLab issues proactively
-- Triggers documentation generation
-- Reassigns or balances workload automatically
-
-Goal: prevent failure before it occurs.
+Goal:
+> preserve operational continuity after knowledge loss events
 
 ---
 
-## System Metrics
+### Continuous stabilization loop
 
-The system exposes operational indicators of organizational health:
+Always running.
 
-- **Ownership Coverage**: diversity of contributors per module
-- **Knowledge Concentration Risk**: dependency on single engineers
-- **Onboarding Velocity**: time to first meaningful contribution
-- **Context Completeness**: alignment between code activity and documentation
-- **Continuity Risk Score**: predicted probability of knowledge loss
+Detects:
+- single-maintainer dependency structures
+- isolated subsystem ownership
+- stale critical modules
+- upstream-heavy dark knowledge areas
+- review bottlenecks
+- onboarding dead zones
 
-These metrics are used to drive actions, not just display information.
+Interventions are:
+- contextual
+- ranked
+- agent-selected
+
+Never threshold-triggered.
+
+---
+
+## Onboarding and handoff artifacts
+
+The system can synthesize:
+- onboarding context packs
+- subsystem summaries
+- handoff artifacts
+- transition-oriented operational context
+
+These are not generic “AI-generated docs.”
+
+They are:
+> continuity-preserving projections of graph state for humans during transition events
+
+The graph remains the source of truth.
+
+Artifacts are generated views over it.
+
+---
+
+## Metrics (observational only)
+
+Metrics describe state.
+
+They do not drive decisions directly.
+
+Examples:
+- ownership distribution
+- contributor diversity
+- onboarding velocity
+- documentation alignment
+- subsystem isolation
+- review concentration
+
+No aggregate continuity score exists.
 
 ---
 
 ## Architecture
 
-- **Reasoning Engine:** Gemini
-- **Memory Layer:** MongoDB (knowledge graph + state + history)
-- **Execution Layer:** GitLab MCP (repository operations)
-- **Orchestration:** Google Cloud Agent Builder / Vertex AI Agent Runtime
+- Reasoning: Gemini
+- Memory: MongoDB knowledge graph
+- Execution: GitLab MCP
+- Orchestration: Google Cloud Agent Runtime
 
 ---
 
-## System Behavior Summary
+## MCP architecture
 
-Continuity Engine is not a passive assistant.
+Two MCP servers run concurrently:
 
-It is an autonomous AI system that:
+| System | Role |
+|---|---|
+| GitLab MCP | executes repository actions |
+| MongoDB MCP | maintains and queries graph state |
 
-- Models engineering knowledge as a dynamic graph
-- Predicts structural risks in team knowledge distribution
-- Executes corrective actions inside GitLab
-- Continuously updates its internal understanding of the system
+Both tool surfaces are merged into a unified reasoning environment.
 
----
-
-## Demo Narrative
-
-The system is demonstrated as a lifecycle:
-
-1. **Baseline:** unclear ownership, fragmented knowledge, outdated context
-2. **Onboarding event:** system generates context pack and assigns tasks
-3. **Risk detection:** identifies knowledge concentration and triggers mitigation
-4. **Offboarding event:** extracts implicit knowledge and reassigns work
-5. **Outcome:** stabilized ownership graph and preserved system knowledge
+The agent reasons over live graph state before taking actions.
 
 ---
 
-## Value Proposition
+## Fork-aware design
 
-Continuity Engine transforms engineering knowledge from a fragile human-dependent asset into a continuously maintained, predictive, and self-correcting system layer inside software development workflows.
+Designed explicitly for fork-based repositories.
 
----
+Key issue:
+- much of the code may have been written by upstream contributors no longer present internally
 
-## Implementation Decisions
+This creates:
+> dark knowledge
 
-This section records concrete decisions made during development — what we're using, what we skipped, and why.
-
----
-
-### Dual-MCP Architecture
-
-Mycelium's act agent connects to **two official MCP servers simultaneously** during each execute stage:
-
-| MCP Server | Transport | Tools exposed | Purpose |
-|---|---|---|---|
-| **GitLab MCP** (`/api/v4/mcp`) | HTTP / streamable-HTTP | Write tools only — `create_issue`, `create_merge_request`, `add_comment`, etc. | Execute corrective actions in the GitLab project |
-| **MongoDB MCP** (`@mongodb-js/mongodb-mcp-server`) | stdio via `npx` | All tools — `find`, `aggregate`, `insertOne`, etc. | Query and update the Mycelium knowledge graph directly |
-
-Both sessions are opened concurrently. Their tool sets are merged into a single registry keyed by tool name; Gemini selects from the combined surface in each turn. This is implemented in `agent/act_agent.py` via:
-
-- `streamablehttp_client` (mcp ≥ 1.27) for GitLab MCP
-- `stdio_client` + `StdioServerParameters` for MongoDB MCP (non-fatal — falls back to GitLab-only if `npx` is unavailable)
-
-This architecture satisfies **both** the GitLab and MongoDB partner MCP requirements in a single agent, and allows Gemini to reason over live graph data (MongoDB) before deciding which GitLab actions to take.
+System handles this by:
+- separating external vs internal contributors
+- weighting organizational ownership independently
+- identifying upstream-dominant modules
+- surfacing structurally orphaned subsystems
 
 ---
 
-### GitLab Integration
+## Per-module ownership model
 
-**What we use:**
-- **python-gitlab** (`gitlab_mcp/client.py`) — observation layer, reads commit history, members, CODEOWNERS, CI status, MR approvals.
-- **Official GitLab MCP server** (`/api/v4/mcp`, HTTP transport) — execution layer, used directly in `act_agent.py` via `streamablehttp_client`.
-- **GitLab Webhooks → Mycelium** (planned) — `POST /webhook/gitlab` endpoint for push/MR/pipeline events. Makes the system event-driven rather than timer-only. Requires a public URL (Cloud Run for production).
-
-**What we skip (and why):**
-
-| Feature | Decision | Reason |
-|---|---|---|
-| **Custom Flows (Beta)** | Skip until Cloud Run deployed | Flows run inside GitLab's infra and cannot reach a local Mycelium. Worth adding post-deploy to post MR reviewer recommendations inline. |
-| **Custom Agents (GA)** | Skip for now | Conversational interface within GitLab — requires Mycelium public URL. Lower priority than webhooks. |
-
-**Right sequence for GitLab features:**
-1. Webhook endpoint (event-driven triggers, works with ngrok today)
-2. Cloud Run deploy (permanent public URL, required for submission)
-3. Custom Flow (post-deploy, calls Mycelium's Cloud Run URL, posts MR comments with graph data)
-
----
-
-### Fork-Based Repository Handling
-
-Mycelium is explicitly designed for organizations using a fork-based workflow (e.g., open-source projects maintained as forks). In this model, the majority of commit history was authored by upstream contributors who are not current project members. This creates "dark knowledge" — code written by people with no current organizational relationship.
-
-Key design decisions:
-- `DeveloperNode.external = True` flags upstream/fork authors separately from internal members
-- `ContributionEdge.expertise_score` for external contributors still contributes to module risk scoring via an external concentration penalty (`ext_ratio * 0.3` when >50% of committers are upstream)
-- Bus factor uses **only internal active committers** (`commit_count > 0`, `external = False`) — declared CODEOWNERS-only entries don't count
-- The UI surfaces upstream authors distinctly under "dark knowledge" with a warning, not mixed into the internal developer list
-
----
-
-### Per-Module Knowledge Attribution
-
-The core of the knowledge graph is not WHO contributed globally, but WHO KNOWS WHAT PART of the codebase.
+Ownership is modeled per directory/module.
 
 Implementation:
-- `get_top_level_dirs()` discovers meaningful code directories (skips `vendor/`, `.git/`, etc.)
-- `get_directory_contributors(path)` uses GitLab's path-filtered commit API to count how many times each author touched that specific directory
-- `ContributionEdge.expertise_score` is relative within each module: top contributor scores 1.0, others are proportional to their commit share
-- `_rescore_modules()` runs after each learn stage, recomputing `continuity_risk_score` and `bus_factor` per module using the updated contribution edges
+- path-filtered contribution analysis
+- normalized expertise weighting
+- continuous recomputation after each learning cycle
 
-This means the graph answers: "Alice owns `internal/` at 1.0, Bob is secondary at 0.2, no internal committers for `app/` (all upstream — CRITICAL)"
+Result:
+> every subsystem has its own evolving ownership topology
 
----
-
-### Deployment Plan
-
-| Step | What | Why |
-|---|---|---|
-| 1 | Add `POST /webhook/gitlab` to `main.py` | Event-driven triggers — pipeline runs on push/MR, not just on timer |
-| 2 | `Dockerfile` for FastAPI backend | Containerize for Cloud Run |
-| 3 | `Dockerfile` for Next.js frontend | Containerize UI |
-| 4 | Deploy both to Cloud Run | Permanent public URLs, satisfies Google Cloud partner track, enables webhooks |
-| 5 | Configure GitLab project webhook → Cloud Run URL | Mycelium reacts to real repo events |
-| 6 | (Optional) Custom Flow YAML | Triggered on MR ready → calls Mycelium `/graph` → posts reviewer comment on MR |
+Not:
+> global contributor averages
 
 ---
 
-### What's Built
+## System behavior summary
 
-- **Pipeline:** 8 stages (observe_repo → map_modules → observe_graph → analyze → plan → act → learn → summary), fully async, SSE-streamed to UI
-- **Knowledge Graph:** MongoDB Atlas, four collections (developers, modules, tasks, contributions), per-module risk scoring with bus factor + upstream concentration penalties
-- **GitLab signals collected:** commit history (global + per-directory), project members, CODEOWNERS, CI pipeline status, MR approvals
-- **Fork awareness:** upstream authors detected, stored separately, dark knowledge risk quantified; surface distinctly in UI
-- **Dual-MCP execution:** act agent connects to official GitLab MCP (HTTP) + official MongoDB MCP (stdio) simultaneously; Gemini reasons over live graph data before taking GitLab actions
-- **Gemma model:** `gemma-3-27b-it` via Google AI Studio; all three Gemini calls (analyze, plan, act) use exponential backoff (5s → 15s → 40s) against free-tier rate limits
-- **UI:** Next.js + MUI dark theme — pipeline timeline with per-stage drill-down, knowledge graph with who-knows-what per module, upstream authors panel with per-module expertise bars
+Continuity Engine is not:
+- a dashboard
+- a static analyzer
+- a documentation bot
+- a rules engine
+- a risk scoring system
+
+It is:
+- a continuously updating cognitive model of engineering knowledge
+- an autonomous reasoning system over repository state
+- a closed-loop intervention engine that stabilizes knowledge continuity over time
+
+---
+
+## Demo narrative
+
+1. Initial state:
+   - fragmented ownership
+   - stale documentation
+   - implicit subsystem knowledge
+
+2. Onboarding:
+   - system synthesizes context pack
+   - assigns meaningful starter work
+
+3. Investigation:
+   - agent identifies fragile ownership structures
+
+4. Offboarding:
+   - implicit knowledge extracted into handoff artifacts
+   - ownership redistributed
+
+5. Stabilized state:
+   - improved knowledge distribution
+   - preserved continuity
+   - reduced dependency on single individuals
+
+---
+
+## Value
+
+Transforms engineering knowledge from:
+- fragile
+- implicit
+- person-dependent
+
+into:
+- continuously modeled
+- actively maintained
+- operationally transferable
+- structurally resilient
+
+inside the development workflow itself.

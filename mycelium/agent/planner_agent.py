@@ -1,48 +1,88 @@
+"""
+Planner agent — decides the corrective GitLab actions and graph updates to make.
+
+Built with ADK on top of Vertex AI per the hackathon's mandatory stack.
+"""
+from __future__ import annotations
+
+import asyncio
 import json
 import logging
-import time
-import requests
+
+import vertexai
+from google.adk.agents import Agent
+from vertexai.preview.reasoning_engines import AdkApp
+
+from agent.json_utils import try_parse_json as _try_parse_json
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-_API_URL = (
-    f"https://generativelanguage.googleapis.com/v1beta/models/"
-    f"{settings.gemini_model}:generateContent?key={settings.gemini_api_key}"
+vertexai.init(
+    project=settings.google_cloud_project,
+    location=settings.google_cloud_location,
 )
-_HEADERS = {"Content-Type": "application/json"}
-_REQUEST_TIMEOUT_SECONDS = 60
-_MAX_ATTEMPTS = 4
-_RETRY_WAITS = [5, 15, 40]
 
-_PROMPT = """You are an engineering continuity planner.
 
-Given risk assessments and repository/graph state, decide the corrective actions to execute
-in GitLab and the updates to write to the knowledge graph.
+_INSTRUCTION = """You are an engineering continuity planner.
 
-GitLab action kinds available: create_issue, assign_issue, comment_issue, comment_mr
+You receive a continuity INTERPRETATION (findings with concern_type, narrative,
+evidence, recommended_actions) plus repository and knowledge-graph state.
+
+Per PROJECT_IDEA: there is no scalar risk model. Do NOT reason about scores or
+severity buckets. Reason about whether each finding warrants a concrete GitLab
+action right now, given its narrative and recommended_actions.
+
+GitLab action kinds available: create_issue, assign_issue, add_comment, generate_onboarding_pack, generate_offboarding_artifact
 Knowledge graph collections: developers, modules, tasks, contributions
 
 Only plan actions where there is clear evidence from the data. Do not invent data.
+Do not create more than 3-4 new issues per run to avoid noise.
 
-PLANNING RULES FOR SPECIAL SIGNALS:
+PLANNING GUIDANCE BY CONCERN TYPE:
 
-external_contributors: If modules have high external/upstream authorship, create a GitLab issue
-  titled "Knowledge Transfer: [module] — upstream author context missing" describing which modules
-  carry dark knowledge risk. Label these issues ["continuity", "upstream-knowledge", "risk"].
-  Update the graph: set external=true for those developer entries.
+knowledge_concentration / multi_module_overload / fading_contributor:
+  Consider creating an issue titled "Knowledge Transfer: [subject]" describing
+  what would be lost and recommending a pairing or handoff action. Suggest
+  candidate assignees from the graph where possible.
 
-codeowners: If codeowners data shows declared owners with no recent activity, create an issue to
-  reassign or validate ownership. Update the modules collection with the declared owners list.
-  If a high-risk module has no CODEOWNERS entry, create an issue to add one.
+fragile_documentation:
+  Consider creating an issue to write or update the README/architecture doc
+  for the affected module. Reference the investigator's documentation_gaps if
+  present in the evidence.
 
-pipeline failures: If pipelines are failing in modules with high risk scores, create an issue
-  prioritizing stabilization and assign to the module's most active current contributor.
+upstream_dominance / upstream_drift:
+  Consider an issue describing the dark-knowledge area or the missing upstream
+  context. For drift, mention the high_priority_commits the drift investigator
+  flagged if any.
 
-mr_approvers: When planning graph_updates, include contributors whose only signal is MR approvals
-  (expertise_score: 0.6) — they are implicit knowledge holders for those code areas.
+stalled_work:
+  Consider commenting on the issue/MR to nudge triage, or reassigning to an
+  active member.
 
-OUTPUT: Respond with ONLY a valid JSON object. No explanation, no reasoning, no markdown.
+undeclared_ownership / nominal_ownership:
+  Consider an issue proposing CODEOWNERS edits.
+
+ci_instability:
+  Consider an issue tagging the most active contributor for the affected area.
+
+recent_joiner_exposure / onboarding_isolation:
+  Call generate_onboarding_pack with the new member's username. This creates a
+  structured onboarding guide as a GitLab issue: team roster, module expert map,
+  and a starter checklist. Do this once per new joiner detected in the findings.
+
+fading_contributor / offboarding_risk:
+  Call generate_offboarding_artifact with the member's username. This creates a
+  handoff issue documenting their at-risk modules, knowledge gaps, and transfer
+  candidates. Do this when a member investigator flagged recently_inactive or
+  sole_contributor with low transferability.
+
+For graph_updates, include contributors whose only signal is MR approvals
+(expertise_score: 0.6) — they are implicit knowledge holders. Set external=true
+for developer entries that match upstream authors in the investigations.
+
+OUTPUT: Respond with ONLY a valid JSON object. No explanation, no markdown.
+Schema:
 {
   "actions": [
     {
@@ -70,94 +110,72 @@ OUTPUT: Respond with ONLY a valid JSON object. No explanation, no reasoning, no 
 }
 """
 
+_USER_ID = "mycelium-planner"
 
-def plan(risk_assessments: dict, repo_snapshot: dict, graph_snapshot: dict) -> dict:
+root_agent = Agent(
+    model=settings.gemini_model,
+    name="mycelium_planner_agent",
+    description="Plans GitLab corrective actions and graph updates from risk assessments.",
+    instruction=_INSTRUCTION,
+)
+
+
+def _run_through_adk(prompt: str) -> str:
+    app = AdkApp(agent=root_agent)
+    session = app.create_session(user_id=_USER_ID)
+    chunks: list[str] = []
+    try:
+        for event in app.stream_query(
+            user_id=_USER_ID,
+            session_id=session["id"],
+            message=prompt,
+        ):
+            if not isinstance(event, dict):
+                continue
+            parts = (event.get("content") or {}).get("parts") or []
+            for p in parts:
+                text = p.get("text")
+                if text:
+                    chunks.append(text)
+    finally:
+        try:
+            app.delete_session(user_id=_USER_ID, session_id=session["id"])
+        except Exception:
+            pass
+    return "\n".join(chunks).strip()
+
+
+def plan(interpretation: dict, repo_snapshot: dict, graph_snapshot: dict) -> dict:
+    """Build a remediation plan from the analyst's findings.
+
+    interpretation is the analyst output: {"synthesis": "...", "findings": [...]}.
+    """
     context = {
-        "risk_assessments": risk_assessments,
+        "interpretation": interpretation,
         "repository": repo_snapshot,
         "knowledge_graph": graph_snapshot,
     }
-    body = {
-        "contents": [{"role": "user", "parts": [{"text": f"{_PROMPT}\n\n---\n\nContext:\n{json.dumps(context, indent=2, default=str)}"}]}],
-        "generationConfig": {"temperature": 0.2},
-    }
-
-    data = _request_with_retry(body)
-    if data is None:
-        logger.warning("Planner request failed after retries; using safe fallback")
-        return {"actions": [], "graph_updates": []}
-
-    candidate = (data.get("candidates") or [{}])[0]
-    finish_reason = candidate.get("finishReason")
-    if finish_reason not in ("STOP", "MAX_TOKENS", None):
-        logger.warning("Planner finishReason=%s; using safe fallback", finish_reason)
-        return {"actions": [], "graph_updates": []}
-
-    parts = candidate.get("content", {}).get("parts", [])
-    text = "\n".join(str(p.get("text", "")) for p in parts if isinstance(p, dict)).strip()
-    if not text:
-        raise ValueError("Gemini returned empty text")
-    logger.debug("Planner output: %s", text[:300])
-
-    parsed = _try_parse_json(text)
-    if parsed is not None:
-        return parsed
-
-    logger.warning("Planner returned non-JSON output, using safe fallback")
-    return {"actions": [], "graph_updates": []}
-
-
-def _request_with_retry(body: dict) -> dict | None:
-    last_error: Exception | None = None
-    for attempt in range(1, _MAX_ATTEMPTS + 1):
-        try:
-            response = requests.post(
-                _API_URL,
-                headers=_HEADERS,
-                json=body,
-                timeout=_REQUEST_TIMEOUT_SECONDS,
-            )
-            response.raise_for_status()
-            return response.json()
-        except requests.RequestException as exc:
-            last_error = exc
-            status = getattr(getattr(exc, "response", None), "status_code", None)
-            logger.warning(
-                "Planner request attempt %d/%d failed for model %s: %s",
-                attempt, _MAX_ATTEMPTS, settings.gemini_model, exc,
-            )
-            if attempt < _MAX_ATTEMPTS:
-                wait = _RETRY_WAITS[attempt - 1]
-                if status is None or status in (429, 500, 502, 503):
-                    logger.info("Planner: waiting %ds before retry (status=%s)…", wait, status)
-                    time.sleep(wait)
-                else:
-                    break
-        except ValueError as exc:
-            last_error = exc
-            logger.warning("Planner: invalid JSON envelope on attempt %d/%d: %s", attempt, _MAX_ATTEMPTS, exc)
-            break
-    if last_error:
-        logger.error("Planner request failed permanently: %s", last_error)
-    return None
-
-
-def _try_parse_json(text: str) -> dict | None:
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    prompt = (
+        f"Context:\n{json.dumps(context, indent=2, default=str)}\n\n"
+        "Return ONLY a JSON object matching the schema in your instructions."
+    )
 
     try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        pass
+        text = _run_through_adk(prompt)
+    except Exception as exc:
+        logger.warning("[planner] AdkApp run failed (%s) — empty plan", exc)
+        return {"actions": [], "graph_updates": []}
 
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        snippet = cleaned[start:end + 1]
-        try:
-            return json.loads(snippet)
-        except json.JSONDecodeError:
-            return None
-    return None
+    if not text:
+        logger.warning("[planner] empty output from ADK — empty plan")
+        return {"actions": [], "graph_updates": []}
+
+    parsed = _try_parse_json(text)
+    if parsed is None:
+        logger.warning("[planner] non-JSON output — empty plan. text[:200]=%r", text[:200])
+        return {"actions": [], "graph_updates": []}
+    return parsed
+
+
+async def plan_async(interpretation: dict, repo_snapshot: dict, graph_snapshot: dict) -> dict:
+    return await asyncio.to_thread(plan, interpretation, repo_snapshot, graph_snapshot)

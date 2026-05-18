@@ -43,7 +43,6 @@ type Contributor = {
 type Module = {
   path: string;
   owners: string[];
-  continuity_risk_score: number;
   bus_factor: number;
   contributors: Contributor[];
 };
@@ -55,37 +54,55 @@ type Developer = {
   external: boolean;
 };
 
+type Finding = {
+  subject: string;
+  concern_type: string;
+  narrative: string;
+};
+
 type GraphData = {
   developers: Developer[];
   upstream_authors: Developer[];
   modules: Module[];
-  high_risk_modules: Module[];
+  concentrated_modules?: Module[];
+  recent_findings?: Finding[];
 };
 
 // ---------------------------------------------------------------------------
-// Risk helpers
+// Concentration helpers — bus_factor is a measurement, not a score.
+// Colour conveys structural concentration, never severity.
 // ---------------------------------------------------------------------------
-function riskLabel(score: number) {
-  if (score >= 0.8) return "CRITICAL";
-  if (score >= 0.6) return "HIGH";
-  if (score >= 0.4) return "MED";
-  return "LOW";
+function concentrationLabel(busFactor: number, hasInternal: boolean): string {
+  if (!hasInternal) return "no internal";
+  if (busFactor <= 1) return "sole holder";
+  if (busFactor === 2) return "pair-held";
+  return "distributed";
 }
 
-function riskColor(score: number) {
-  if (score >= 0.8) return "#ea4335";
-  if (score >= 0.6) return "#fa7b17";
-  if (score >= 0.4) return "#fbbc04";
+function concentrationColor(busFactor: number, hasInternal: boolean): string {
+  if (!hasInternal) return "#ea4335";   // no internal knowledge — red, descriptive
+  if (busFactor <= 1) return "#fa7b17"; // single holder — orange
+  if (busFactor === 2) return "#fbbc04";
   return "#34a853";
+}
+
+function moduleSortKey(m: Module): number {
+  // Sort modules so the structurally most-concentrated come first.
+  // bus_factor=0 (no internal committers) first, then 1, 2, ...
+  const internal = (m.contributors ?? []).filter((c) => !c.external && c.commit_count > 0).length;
+  if (internal === 0) return -1;
+  return m.bus_factor || 0;
 }
 
 // ---------------------------------------------------------------------------
 // React Flow — custom node types (defined outside component to avoid re-render)
 // ---------------------------------------------------------------------------
 function ModuleFlowNode({ data }: { data: Record<string, unknown> }) {
-  const score = data.score as number;
+  const busFactor = (data.busFactor as number) ?? 0;
+  const hasInternal = (data.hasInternal as boolean) ?? false;
   const path = data.path as string;
-  const color = riskColor(score);
+  const color = concentrationColor(busFactor, hasInternal);
+  const label = concentrationLabel(busFactor, hasInternal);
   return (
     <Box
       sx={{
@@ -105,7 +122,7 @@ function ModuleFlowNode({ data }: { data: Record<string, unknown> }) {
         {path}/
       </Typography>
       <Typography sx={{ color, opacity: 0.7, fontSize: "0.58rem", lineHeight: 1 }}>
-        {riskLabel(score)} · {Math.round(score * 100)}%
+        {label} · bus {busFactor}
       </Typography>
       <Handle type="source" position={Position.Right} style={{ background: color, border: "none", width: 7, height: 7 }} />
     </Box>
@@ -145,54 +162,80 @@ const nodeTypes: NodeTypes = {
 // ---------------------------------------------------------------------------
 // Build React Flow graph data from modules
 // ---------------------------------------------------------------------------
-const MOD_X = 20;
-const CTB_X = 460;
-const MOD_GAP = 80;
-const CTB_GAP = 52;
+const MOD_X = 16;
+const CTB_COL1_X = 430;
+const CTB_COL2_X = 610;
+const MOD_GAP = 68;
+const CTB_GAP = 44;
 
-function buildFlowGraph(modules: Module[]): { nodes: Node[]; edges: Edge[]; height: number } {
-  const topModules = [...modules]
+function buildFlowGraph(modules: Module[]): { nodes: Node[]; edges: Edge[]; totalHeight: number } {
+  // Show the 25 structurally most-concentrated modules with contributor data.
+  // Concentration is a measurement (bus_factor), not a score.
+  const visModules = [...modules]
     .filter((m) => (m.contributors?.length ?? 0) > 0)
-    .sort((a, b) => b.continuity_risk_score - a.continuity_risk_score)
-    .slice(0, 8);
+    .sort((a, b) => moduleSortKey(a) - moduleSortKey(b))
+    .slice(0, 25);
 
-  // Collect unique contributors across visible modules, sorted by expertise
+  // Collect ALL unique contributors across those modules.
+  // When a contributor appears in multiple modules, keep the highest expertise_score.
   const contribMap = new Map<string, Contributor>();
-  for (const mod of topModules) {
+  for (const mod of visModules) {
     for (const c of mod.contributors ?? []) {
-      if (!contribMap.has(c.developer_username)) contribMap.set(c.developer_username, c);
+      const prev = contribMap.get(c.developer_username);
+      if (!prev || c.expertise_score > prev.expertise_score) {
+        contribMap.set(c.developer_username, c);
+      }
     }
   }
-  const visContribs = [...contribMap.values()]
-    .sort((a, b) => b.expertise_score - a.expertise_score)
-    .slice(0, 18);
+  // Sort: internal first (so they're at the top of column 1), then by expertise desc
+  const allContribs = [...contribMap.values()].sort((a, b) => {
+    if (a.external !== b.external) return a.external ? 1 : -1;
+    return b.expertise_score - a.expertise_score;
+  });
 
-  const modTotalH = (topModules.length - 1) * MOD_GAP;
-  const ctbTotalH = (visContribs.length - 1) * CTB_GAP;
-  const height = Math.max(modTotalH, ctbTotalH) + 100;
-  const modStartY = (height - modTotalH) / 2;
-  const ctbStartY = (height - ctbTotalH) / 2;
+  // Split into 2 columns to halve the height
+  const col1 = allContribs.filter((_, i) => i % 2 === 0);
+  const col2 = allContribs.filter((_, i) => i % 2 === 1);
+
+  const modTotalH = Math.max(0, visModules.length - 1) * MOD_GAP;
+  const col1TotalH = Math.max(0, col1.length - 1) * CTB_GAP;
+  const col2TotalH = Math.max(0, col2.length - 1) * CTB_GAP;
+  const totalHeight = Math.max(modTotalH, col1TotalH, col2TotalH) + 100;
+
+  const modStartY = (totalHeight - modTotalH) / 2;
+  const col1StartY = (totalHeight - col1TotalH) / 2;
+  const col2StartY = (totalHeight - col2TotalH) / 2 + CTB_GAP / 2; // offset so they interleave visually
 
   const nodes: Node[] = [
-    ...topModules.map((mod, i) => ({
-      id: `mod-${mod.path}`,
-      type: "moduleNode" as const,
-      position: { x: MOD_X, y: modStartY + i * MOD_GAP },
-      data: { path: mod.path, score: mod.continuity_risk_score },
-      draggable: false,
-    })),
-    ...visContribs.map((c, i) => ({
+    ...visModules.map((mod, i) => {
+      const hasInternal = (mod.contributors ?? []).some((c) => !c.external && c.commit_count > 0);
+      return {
+        id: `mod-${mod.path}`,
+        type: "moduleNode" as const,
+        position: { x: MOD_X, y: modStartY + i * MOD_GAP },
+        data: { path: mod.path, busFactor: mod.bus_factor ?? 0, hasInternal },
+        draggable: false,
+      };
+    }),
+    ...col1.map((c, i) => ({
       id: `ctb-${c.developer_username}`,
       type: "contributorNode" as const,
-      position: { x: CTB_X, y: ctbStartY + i * CTB_GAP },
+      position: { x: CTB_COL1_X, y: col1StartY + i * CTB_GAP },
+      data: { username: c.developer_username, external: c.external },
+      draggable: false,
+    })),
+    ...col2.map((c, i) => ({
+      id: `ctb-${c.developer_username}`,
+      type: "contributorNode" as const,
+      position: { x: CTB_COL2_X, y: col2StartY + i * CTB_GAP },
       data: { username: c.developer_username, external: c.external },
       draggable: false,
     })),
   ];
 
-  const contribSet = new Set(visContribs.map((c) => c.developer_username));
+  const contribSet = new Set(allContribs.map((c) => c.developer_username));
   const edges: Edge[] = [];
-  for (const mod of topModules) {
+  for (const mod of visModules) {
     for (const c of mod.contributors ?? []) {
       if (!contribSet.has(c.developer_username)) continue;
       const color = c.external ? "#fa7b17" : "#4285f4";
@@ -203,27 +246,36 @@ function buildFlowGraph(modules: Module[]): { nodes: Node[]; edges: Edge[]; heig
         style: {
           stroke: color,
           strokeWidth: Math.max(0.5, c.expertise_score * 3),
-          strokeOpacity: Math.max(0.08, c.expertise_score * 0.55),
+          strokeOpacity: Math.max(0.1, c.expertise_score * 0.7),
         },
         type: "default",
       });
     }
   }
 
-  return { nodes, edges, height };
+  return { nodes, edges, totalHeight };
 }
 
 // ---------------------------------------------------------------------------
 // Module Knowledge Breakdown — the primary view
 // ---------------------------------------------------------------------------
-function ModuleBreakdown({ modules }: { modules: Module[] }) {
+function ModuleBreakdown({ modules, findings }: { modules: Module[]; findings: Finding[] }) {
   // Detect if data is still in the seeding-only state (only "repository" exists)
   const hasOnlyRoot = modules.length <= 1 && modules[0]?.path === "repository";
 
+  // Sort by structural concentration (a measurement). Modules with no internal
+  // committers float to the top; then by bus_factor ascending.
   const sorted = [...modules]
     .filter((m) => (m.contributors?.length ?? 0) > 0)
-    .sort((a, b) => b.continuity_risk_score - a.continuity_risk_score)
-    .slice(0, 12);
+    .sort((a, b) => moduleSortKey(a) - moduleSortKey(b));
+
+  // Build per-module finding index so each card can surface concern types.
+  const findingsByModule = new Map<string, Finding[]>();
+  for (const f of findings) {
+    const key = f.subject;
+    if (!findingsByModule.has(key)) findingsByModule.set(key, []);
+    findingsByModule.get(key)!.push(f);
+  }
 
   if (sorted.length === 0) {
     return (
@@ -254,14 +306,16 @@ function ModuleBreakdown({ modules }: { modules: Module[] }) {
       )}
 
       {sorted.map((mod) => {
-        const score = mod.continuity_risk_score ?? 0;
-        const color = riskColor(score);
-        const label = riskLabel(score);
         const contribs = [...(mod.contributors ?? [])].sort((a, b) => b.expertise_score - a.expertise_score);
         const internalCommitters = contribs.filter((c) => !c.external && c.commit_count > 0);
-        const noInternalKnowledge = internalCommitters.length === 0 && contribs.length > 0;
-        const showTop = contribs.slice(0, 6);
+        const hasInternal = internalCommitters.length > 0;
+        const noInternalKnowledge = !hasInternal && contribs.length > 0;
+        const showTop = contribs.slice(0, 10);
         const hiddenCount = contribs.length - showTop.length;
+        const busFactor = mod.bus_factor ?? 0;
+        const color = concentrationColor(busFactor, hasInternal);
+        const label = concentrationLabel(busFactor, hasInternal);
+        const moduleFindings = findingsByModule.get(mod.path) ?? [];
 
         return (
           <Paper
@@ -273,7 +327,7 @@ function ModuleBreakdown({ modules }: { modules: Module[] }) {
               border: "1px solid",
               borderColor: noInternalKnowledge
                 ? "rgba(234,67,53,0.25)"
-                : score >= 0.6
+                : busFactor <= 1
                 ? "rgba(250,123,23,0.15)"
                 : "rgba(255,255,255,0.06)",
               borderRadius: 2,
@@ -293,11 +347,7 @@ function ModuleBreakdown({ modules }: { modules: Module[] }) {
                 {mod.path}/
               </Typography>
               <Typography variant="caption" color="text.disabled" sx={{ flexShrink: 0 }}>
-                risk {Math.round(score * 100)}%
-              </Typography>
-              <Divider orientation="vertical" flexItem sx={{ borderColor: "rgba(255,255,255,0.08)" }} />
-              <Typography variant="caption" color="text.disabled" sx={{ flexShrink: 0 }}>
-                bus factor {mod.bus_factor ?? 0}
+                bus factor {busFactor}
               </Typography>
               {noInternalKnowledge && (
                 <>
@@ -312,6 +362,15 @@ function ModuleBreakdown({ modules }: { modules: Module[] }) {
                   />
                 </>
               )}
+              {moduleFindings.map((f, i) => (
+                <Chip
+                  key={i}
+                  label={f.concern_type.replace(/_/g, " ")}
+                  size="small"
+                  variant="outlined"
+                  sx={{ height: 18, fontSize: "0.6rem", flexShrink: 0, color: "primary.light", borderColor: "rgba(138,180,248,0.4)" }}
+                />
+              ))}
             </Stack>
 
             {/* Contributor rows */}
@@ -404,7 +463,7 @@ function UpstreamAuthorList({ authors, modules }: { authors: Developer[]; module
   const hasPerDirData = Object.keys(authorModules).length > 0;
 
   return (
-    <Stack spacing={1.25} sx={{ maxHeight: 420, overflowY: "auto" }}>
+    <Stack spacing={1.25} sx={{ maxHeight: 420, overflowY: "auto", overflowX: "hidden" }}>
       {!hasPerDirData && (
         <Paper elevation={0} sx={{ p: 1.5, bgcolor: "rgba(66,133,244,0.06)", border: "1px solid rgba(66,133,244,0.15)", borderRadius: 1.5 }}>
           <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
@@ -477,43 +536,58 @@ function UpstreamAuthorList({ authors, modules }: { authors: Developer[]; module
 // React Flow structural overview
 // ---------------------------------------------------------------------------
 function StructuralOverview({ modules }: { modules: Module[] }) {
-  const { nodes, edges, height } = useMemo(() => buildFlowGraph(modules), [modules]);
+  const { nodes, edges, totalHeight } = useMemo(() => buildFlowGraph(modules), [modules]);
 
   if (nodes.length === 0) return null;
 
+  const contribCount = nodes.filter((n) => n.type === "contributorNode").length;
+  const modCount = nodes.filter((n) => n.type === "moduleNode").length;
+
   return (
-    <Box
-      sx={{
-        height,
-        minHeight: 300,
-        width: "100%",
-        borderRadius: 2,
-        overflow: "hidden",
-        "& .react-flow__background": { bgcolor: "transparent" },
-        "& .react-flow__controls button": { bgcolor: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.6)", "&:hover": { bgcolor: "rgba(255,255,255,0.1)" } },
-        "& .react-flow__controls button svg": { fill: "rgba(255,255,255,0.6)" },
-      }}
-    >
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        fitView
-        fitViewOptions={{ padding: 0.2 }}
-        nodesDraggable={false}
-        nodesConnectable={false}
-        elementsSelectable={false}
-        panOnDrag={false}
-        zoomOnScroll={false}
-        zoomOnPinch={false}
-        preventScrolling={false}
-        proOptions={{ hideAttribution: true }}
-        colorMode="dark"
+    <Stack spacing={1}>
+      <Typography variant="caption" color="text.disabled">
+        {modCount} modules · {contribCount} contributors · drag to pan · scroll controls to zoom
+      </Typography>
+      <Box
+        sx={{
+          // Cap visible height at 600px; user pans to see the full graph
+          height: Math.min(totalHeight, 600),
+          minHeight: 300,
+          width: "100%",
+          borderRadius: 2,
+          overflow: "hidden",
+          border: "1px solid rgba(255,255,255,0.06)",
+          "& .react-flow__background": { bgcolor: "transparent" },
+          "& .react-flow__controls button": {
+            bgcolor: "rgba(255,255,255,0.06)",
+            border: "1px solid rgba(255,255,255,0.1)",
+            color: "rgba(255,255,255,0.6)",
+            "&:hover": { bgcolor: "rgba(255,255,255,0.1)" },
+          },
+          "& .react-flow__controls button svg": { fill: "rgba(255,255,255,0.6)" },
+        }}
       >
-        <Background color="rgba(255,255,255,0.04)" gap={20} />
-        <Controls showInteractive={false} />
-      </ReactFlow>
-    </Box>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={nodeTypes}
+          fitView
+          fitViewOptions={{ padding: 0.15, maxZoom: 1 }}
+          nodesDraggable={false}
+          nodesConnectable={false}
+          elementsSelectable={false}
+          panOnDrag={true}
+          zoomOnScroll={false}
+          zoomOnPinch={true}
+          preventScrolling={false}
+          proOptions={{ hideAttribution: true }}
+          colorMode="dark"
+        >
+          <Background color="rgba(255,255,255,0.03)" gap={20} />
+          <Controls showInteractive={false} />
+        </ReactFlow>
+      </Box>
+    </Stack>
   );
 }
 
@@ -553,7 +627,8 @@ export default function KnowledgeGraph() {
   const internalCount = data?.developers.length ?? 0;
   const externalCount = data?.upstream_authors?.length ?? 0;
   const moduleCount = data?.modules.filter((m) => (m.contributors?.length ?? 0) > 0).length ?? 0;
-  const highRiskCount = data?.high_risk_modules.length ?? 0;
+  const concentratedCount = data?.concentrated_modules?.length ?? 0;
+  const recentFindings: Finding[] = data?.recent_findings ?? [];
   const hasGraph = moduleCount > 0;
 
   return (
@@ -582,7 +657,7 @@ export default function KnowledgeGraph() {
           { label: "Internal Developers", value: internalCount, icon: <PersonOutlineOutlinedIcon sx={{ fontSize: 16, color: "#4285f4" }} /> },
           { label: "Upstream Authors", value: externalCount, icon: <PersonOutlineOutlinedIcon sx={{ fontSize: 16, color: "#fa7b17" }} />, highlight: externalCount > 0 },
           { label: "Modules Mapped", value: moduleCount, icon: <AccountTreeOutlinedIcon sx={{ fontSize: 16, color: "text.secondary" }} /> },
-          { label: "High-Risk Modules", value: highRiskCount, icon: <WarningAmberOutlinedIcon sx={{ fontSize: 16, color: highRiskCount > 0 ? "#ea4335" : "text.secondary" }} />, highlight: highRiskCount > 0 },
+          { label: "Concentrated (bus≤1)", value: concentratedCount, icon: <WarningAmberOutlinedIcon sx={{ fontSize: 16, color: concentratedCount > 0 ? "#fa7b17" : "text.secondary" }} />, highlight: concentratedCount > 0 },
         ].map(({ label, value, highlight, icon }) => (
           <Grid key={label} size={3}>
             <Paper elevation={0} sx={{ p: 2, bgcolor: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 2 }}>
@@ -616,7 +691,7 @@ export default function KnowledgeGraph() {
                 who knows what · sorted by risk
               </Typography>
             </Stack>
-            <ModuleBreakdown modules={data!.modules} />
+            <ModuleBreakdown modules={data!.modules} findings={recentFindings} />
           </Paper>
 
           {/* Secondary: React Flow structural overview + upstream authors */}
@@ -632,7 +707,7 @@ export default function KnowledgeGraph() {
             </Grid>
 
             <Grid size={5}>
-              <Paper elevation={0} sx={{ p: 2.5, height: "100%" }}>
+              <Paper elevation={0} sx={{ p: 2.5, height: "100%", overflow: "hidden" }}>
                 <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 1 }}>
                   <WarningAmberOutlinedIcon sx={{ fontSize: 15, color: "warning.main" }} />
                   <Typography variant="subtitle2" color="text.secondary">Upstream Authors</Typography>

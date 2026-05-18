@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from gitlab_mcp.client import GitLabClient
+from connectors.gitlab_client import GitLabClient
 from graph.knowledge_graph import KnowledgeGraph
 
 
@@ -205,9 +205,10 @@ async def inspect_graph(graph: KnowledgeGraph) -> None:
 
     snap = await graph.snapshot()
     developers = snap.get("developers", [])
-    external_contributors = snap.get("external_contributors", [])
-    high_risk = snap.get("high_risk_modules", [])
+    external_contributors = snap.get("upstream_authors", [])
+    concentrated = snap.get("concentrated_modules", [])
     open_tasks = snap.get("open_tasks", [])
+    recent_findings = snap.get("recent_findings", [])
 
     all_modules = await graph.modules.find({}, {"_id": 0}).to_list(None)
 
@@ -219,9 +220,6 @@ async def inspect_graph(graph: KnowledgeGraph) -> None:
         for d in developers:
             expertise = d.get("expertise") or {}
             exp_str = "  ".join(f"{k}: {v:.2f}" for k, v in list(expertise.items())[:4])
-            last_seen = (d.get("last_seen") or "never")
-            if hasattr(last_seen, "isoformat"):
-                last_seen = last_seen.isoformat()[:10]
             row(d["username"], d.get("name", ""))
             if exp_str:
                 note(f"expertise: {exp_str}", indent=8)
@@ -236,26 +234,25 @@ async def inspect_graph(graph: KnowledgeGraph) -> None:
             identity = d.get("developer_identity") or d.get("name") or ""
             row(d["username"], identity, flag="[upstream]")
 
-    # --- All modules ---
-    sub(f"Modules  ({len(all_modules)} tracked)")
+    # --- All modules (measurements only — no scoring) ---
+    sub(f"Modules  ({len(all_modules)} tracked) — observational measurements only")
     if not all_modules:
         note("(none yet -- run the pipeline to populate)")
     else:
         for m in all_modules:
-            score = m.get("continuity_risk_score", 0.0)
             owners = ", ".join(m.get("owners") or []) or "unowned"
             bus = m.get("bus_factor", 0)
-            risk_label = "CRITICAL" if score >= 0.9 else "HIGH" if score >= 0.7 else "MED" if score >= 0.4 else "LOW"
-            row(m["path"], f"risk={score:.2f} [{risk_label}]  bus={bus}  owners: {owners}")
+            row(m["path"], f"bus_factor={bus}  owners: {owners}")
 
-    # --- High-risk modules ---
-    sub(f"High-Risk Modules  (score >= 0.7, {len(high_risk)} found)")
-    if not high_risk:
-        note("(none above threshold)")
+    # --- Structurally concentrated modules (bus_factor <= 1) ---
+    sub(f"Concentrated Modules  (bus_factor <= 1, {len(concentrated)} found)")
+    if not concentrated:
+        note("(none)")
     else:
-        for m in high_risk:
-            score = m.get("continuity_risk_score", 0)
-            row(m["path"], f"score={score:.2f}", flag="!")
+        for m in concentrated:
+            bus = m.get("bus_factor", 0)
+            owners = ", ".join(m.get("owners") or []) or "unowned"
+            row(m["path"], f"bus_factor={bus}  owners: {owners}", flag="!")
 
     # --- Per-module contributions ---
     sub("Contributions (expertise edges)")
@@ -271,9 +268,22 @@ async def inspect_graph(graph: KnowledgeGraph) -> None:
                 ext_flag = " [external]" if c.get("external") else ""
                 row(
                     c["developer_username"],
-                    f"score={c['expertise_score']:.2f}  commits={c.get('commit_count', 0)}{ext_flag}",
+                    f"expertise={c['expertise_score']:.2f}  commits={c.get('commit_count', 0)}{ext_flag}",
                     indent=8,
                 )
+
+    # --- Findings (qualitative, replaces risk scores) ---
+    sub(f"Recent Findings  ({len(recent_findings)} from analyst)")
+    if not recent_findings:
+        note("(none yet -- run the pipeline to produce findings)")
+    else:
+        for f in recent_findings[:15]:
+            concern = f.get("concern_type", "?")
+            subject = f.get("subject", "?")
+            narrative = (f.get("narrative") or "").strip()
+            row(f"[{concern}]", subject)
+            if narrative:
+                note(narrative[:160] + ("..." if len(narrative) > 160 else ""), indent=8)
 
     # --- Open tasks ---
     sub(f"Open Tasks  ({len(open_tasks)} tracked)")
@@ -290,12 +300,18 @@ async def inspect_graph(graph: KnowledgeGraph) -> None:
 # ---------------------------------------------------------------------------
 
 async def rescore_graph(graph: KnowledgeGraph) -> None:
-    """Recompute risk scores from current graph data without running the full pipeline."""
-    from graph.models import ModuleNode
-    from risk.forecasting import compute_bus_factor, compute_continuity_risk
+    """Recompute MEASUREMENTS (bus_factor) from current graph data.
 
-    hdr("RECOMPUTING RISK SCORES FROM GRAPH DATA", ch="=")
-    note("Uses actual internal committers only (excludes CODEOWNERS-only and external authors).", indent=2)
+    Per PROJECT_IDEA: there are no scalar risk scores. This function refreshes
+    bus_factor counts (a measurement) — qualitative findings are produced only
+    by running the full pipeline (investigators + analyst).
+    """
+    from graph.models import ModuleNode
+    from risk.forecasting import compute_bus_factor
+
+    hdr("RECOMPUTING BUS_FACTOR MEASUREMENTS FROM GRAPH DATA", ch="=")
+    note("bus_factor is a count of internal committers covering 80% of commits.", indent=2)
+    note("No scoring or aggregation here — run the full pipeline to refresh findings.", indent=2)
 
     all_modules = await graph.modules.find({}, {"_id": 0}).to_list(None)
     if not all_modules:
@@ -303,7 +319,6 @@ async def rescore_graph(graph: KnowledgeGraph) -> None:
         return
 
     module_fields = set(ModuleNode.model_fields.keys())
-    RISK_LABEL = {True: "CRITICAL", False: None}
 
     results = []
     for module in all_modules:
@@ -315,21 +330,10 @@ async def rescore_graph(graph: KnowledgeGraph) -> None:
             if not c.get("external", False) and c.get("commit_count", 0) > 0
         ]
         external_committers = [c for c in all_contribs if c.get("external", False)]
-
-        base_score = compute_continuity_risk(internal_committers, module)
-        total_committers = len(internal_committers) + len(external_committers)
-        ext_ratio = len(external_committers) / total_committers if total_committers > 0 else 0.0
-        ext_penalty = round(ext_ratio * 0.3, 4) if ext_ratio > 0.5 else 0.0
-        no_internal_penalty = 0.25 if not internal_committers else 0.0
-        final_score = round(min(1.0, base_score + ext_penalty + no_internal_penalty), 4)
         bus_factor = compute_bus_factor(internal_committers)
-
-        prev_score = module.get("continuity_risk_score", 0.0)
-        changed = abs(final_score - prev_score) > 0.001
 
         try:
             module_data = {k: v for k, v in module.items() if k in module_fields}
-            module_data["continuity_risk_score"] = final_score
             module_data["bus_factor"] = bus_factor
             await graph.upsert_module(ModuleNode(**module_data))
         except Exception as exc:
@@ -337,23 +341,17 @@ async def rescore_graph(graph: KnowledgeGraph) -> None:
 
         results.append({
             "path": path,
-            "score": final_score,
-            "prev": prev_score,
             "bus": bus_factor,
             "internal": len(internal_committers),
             "external": len(external_committers),
-            "changed": changed,
         })
 
-    sub(f"Results ({len(results)} modules)")
-    label = lambda s: "CRITICAL" if s >= 0.9 else "HIGH" if s >= 0.7 else "MED" if s >= 0.4 else "LOW"
-    for r in sorted(results, key=lambda x: x["score"], reverse=True):
-        change = f"  (was {r['prev']:.2f})" if r["changed"] else ""
+    sub(f"Results ({len(results)} modules) — sorted by concentration (lowest bus_factor first)")
+    for r in sorted(results, key=lambda x: x["bus"]):
         ext_str = f"  dark_knowledge: {r['external']} upstream authors" if r["external"] > 0 else ""
         row(
             r["path"],
-            f"score={r['score']:.2f} [{label(r['score'])}]  bus={r['bus']}  "
-            f"internal={r['internal']}  external={r['external']}{change}{ext_str}",
+            f"bus={r['bus']}  internal={r['internal']}  external={r['external']}{ext_str}",
         )
 
 
@@ -361,7 +359,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Mycelium data inspector")
     parser.add_argument("--gitlab", action="store_true", help="Show GitLab data only")
     parser.add_argument("--graph", action="store_true", help="Show knowledge graph only")
-    parser.add_argument("--rescore", action="store_true", help="Recompute risk scores from current graph data")
+    parser.add_argument("--rescore", action="store_true", help="Recompute bus_factor measurements from current graph data")
     parser.add_argument("--commits", type=int, default=20, help="Number of commits to display (default 20)")
     args = parser.parse_args()
 

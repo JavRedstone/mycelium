@@ -4,9 +4,9 @@ Run with: pytest tests/test_unit.py -v
 """
 from datetime import datetime, timezone
 
-from graph.models import DeveloperNode, ContributionEdge, ModuleNode
-from risk.forecasting import compute_bus_factor, compute_doc_drift, compute_continuity_risk
-from agent.analyst_agent import _try_parse_json
+from graph.models import DeveloperNode, ContributionEdge, ModuleNode, Finding
+from risk.forecasting import compute_bus_factor
+from agent.json_utils import try_parse_json as _try_parse_json
 
 
 # ---------------------------------------------------------------------------
@@ -135,61 +135,41 @@ class TestBusFactor:
 
 
 # ---------------------------------------------------------------------------
-# Doc drift
+# Finding model — qualitative output, no scores
 # ---------------------------------------------------------------------------
 
-class TestDocDrift:
-    def test_no_commits_returns_zero(self):
-        assert compute_doc_drift(None, 0.0) == 0.0
+class TestFindingModel:
+    def test_minimal_finding(self):
+        f = Finding(
+            subject="src/auth",
+            concern_type="knowledge_concentration",
+            narrative="Single internal committer with no documentation.",
+        )
+        assert f.subject == "src/auth"
+        assert f.concern_type == "knowledge_concentration"
+        assert f.evidence == []
+        assert f.recommended_actions == []
+        assert f.id  # uuid auto-generated
 
-    def test_recent_commit_no_docs_high_drift(self):
-        recent = datetime.now(timezone.utc)
-        drift = compute_doc_drift(recent, 0.0)
-        assert drift > 0.8
+    def test_full_finding(self):
+        f = Finding(
+            run_id="abc-123",
+            subject="members/alice",
+            concern_type="sole_contributor",
+            narrative="Alice is the sole contributor to src/auth.",
+            evidence=["investigator/member/alice", "graph/contributors/alice"],
+            recommended_actions=["Pair another engineer on src/auth"],
+        )
+        assert f.run_id == "abc-123"
+        assert len(f.evidence) == 2
+        assert len(f.recommended_actions) == 1
 
-    def test_recent_commit_full_docs_low_drift(self):
-        recent = datetime.now(timezone.utc)
-        drift = compute_doc_drift(recent, 1.0)
-        assert drift == 0.0
-
-    def test_old_commit_low_drift_regardless_of_docs(self):
-        from datetime import timedelta
-        old = datetime.now(timezone.utc) - timedelta(days=200)
-        drift = compute_doc_drift(old, 0.0)
-        assert drift == 0.0
-
-
-# ---------------------------------------------------------------------------
-# Continuity risk score
-# ---------------------------------------------------------------------------
-
-class TestContinuityRisk:
-    def test_no_contributors_no_owners_max_risk(self):
-        module = {"owners": [], "doc_coverage": 0.0, "last_commit_at": None}
-        score = compute_continuity_risk([], module)
-        assert score >= 0.6
-
-    def test_many_contributors_with_docs_low_risk(self):
-        contribs = [{"expertise_score": 0.25}] * 4
-        module = {
-            "owners": ["alice", "bob", "carol", "dave"],
-            "doc_coverage": 1.0,
-            "last_commit_at": None,
-        }
-        score = compute_continuity_risk(contribs, module)
-        assert score < 0.4
-
-    def test_single_owner_high_risk(self):
-        contribs = [{"expertise_score": 1.0}]
-        module = {"owners": ["alice"], "doc_coverage": 0.0, "last_commit_at": None}
-        score = compute_continuity_risk(contribs, module)
-        assert score >= 0.4
-
-    def test_score_bounded_zero_to_one(self):
-        contribs = [{"expertise_score": 1.0}]
-        module = {"owners": [], "doc_coverage": 0.0, "last_commit_at": datetime.now(timezone.utc)}
-        score = compute_continuity_risk(contribs, module)
-        assert 0.0 <= score <= 1.0
+    def test_module_node_no_score_field(self):
+        m = ModuleNode(path="src/auth")
+        # No continuity_risk_score, no doc_coverage — measurements only.
+        assert not hasattr(m, "continuity_risk_score")
+        assert not hasattr(m, "doc_coverage")
+        assert m.bus_factor == 0
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +283,7 @@ class TestTryParseJson:
         assert _try_parse_json("") is None
 
     def test_nested_json(self):
-        text = '{"risk_assessments": [{"module": "src/auth", "score": 0.8}]}'
+        text = '{"findings": [{"subject": "src/auth", "concern_type": "knowledge_concentration"}]}'
         result = _try_parse_json(text)
         assert result is not None
-        assert result["risk_assessments"][0]["score"] == 0.8
+        assert result["findings"][0]["concern_type"] == "knowledge_concentration"

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Google_Sans, Google_Sans_Code } from "next/font/google";
 import ThemeRegistry from "./ThemeRegistry";
+import Sidebar from "./components/Sidebar";
 import "./globals.css";
 
 const googleSans = Google_Sans({
@@ -24,7 +25,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${googleSans.variable} ${googleSansCode.variable}`}>
       <body>
-        <ThemeRegistry>{children}</ThemeRegistry>
+        <ThemeRegistry>
+          <div style={{ display: "flex", minHeight: "100vh" }}>
+            <Sidebar />
+            <div style={{ flex: 1, marginLeft: 220, minHeight: "100vh", overflowX: "hidden" }}>
+              {children}
+            </div>
+          </div>
+        </ThemeRegistry>
       </body>
     </html>
   );

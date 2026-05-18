@@ -1,5 +1,9 @@
-# Google Cloud / Gemini
-google-genai>=1.0.0
+# Vertex AI + ADK (hackathon requirement)
+google-adk>=1.31.0
+google-cloud-aiplatform[adk,agent_engines]>=1.93.0
+google-genai>=1.9.0
+
+# Google Cloud helpers
 google-cloud-secret-manager>=2.20.0
 google-cloud-logging>=3.10.0
 
@@ -7,23 +11,27 @@ google-cloud-logging>=3.10.0
 pymongo[srv]>=4.7.0
 motor>=3.4.0
 
-# GitLab
+# GitLab observation layer
 python-gitlab>=4.5.0
 
-# MCP protocol client
+# MCP protocol client (used by ADK MCPToolset and by checks)
 mcp>=1.5.0
 
 # Data & validation
-pydantic>=2.7.0
+pydantic>=2.10.6
+pydantic-settings>=2.7.1
 python-dotenv>=1.0.1
 
-# Web server (Cloud Run)
+# Web server (Cloud Run runtime for FastAPI front)
 fastapi>=0.111.0
 uvicorn[standard]>=0.30.0
+sse-starlette>=2.1.0
 
-# HTTP & resilience
+# HTTP
 httpx>=0.27.0
-tenacity>=8.3.0
+
+# Deployment CLI (deployment/deploy.py uses absl flags, matching ADK samples)
+absl-py>=2.1.0
 
 # Dev / testing
 pytest>=8.2.0

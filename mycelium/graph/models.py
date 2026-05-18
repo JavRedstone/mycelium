@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel, Field
+import uuid
 
 
 class DeveloperNode(BaseModel):
@@ -15,14 +16,38 @@ class DeveloperNode(BaseModel):
 
 
 class ModuleNode(BaseModel):
-    path: str                           # e.g. "src/auth"
+    """Observational state for a module — measurements only.
+
+    Per PROJECT_IDEA, there is no scalar risk model. Severity and concern
+    are qualitative and live in Finding records produced by the analyst,
+    not as numbers stored on the module.
+    """
+    path: str                                    # e.g. "src/auth"
     language: Optional[str] = None
-    owners: list[str] = Field(default_factory=list)   # gitlab usernames
-    bus_factor: int = 0                 # number of meaningful contributors
-    doc_coverage: float = 0.0          # 0-1
+    owners: list[str] = Field(default_factory=list)   # declared GitLab usernames
+    bus_factor: int = 0                          # measurement: contributors covering 80% of commits
     last_commit_at: Optional[datetime] = None
-    continuity_risk_score: float = 0.0  # 0-1, higher = more at risk
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Finding(BaseModel):
+    """Qualitative continuity finding produced by the analyst agent.
+
+    Findings replace risk scores. Each finding describes a structural pattern
+    in the knowledge graph and what the agent thinks should be done about it.
+    No severity buckets — the narrative carries the meaning.
+    """
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    run_id: Optional[str] = None
+    subject: str                                 # module path, "members/<name>", or "upstream sync"
+    concern_type: str                            # descriptive: "knowledge_concentration",
+                                                 # "fragile_documentation", "fading_contributor",
+                                                 # "upstream_dominance", "stalled_work",
+                                                 # "undeclared_ownership", "ci_instability", etc.
+    narrative: str                               # qualitative reasoning, not a label
+    evidence: list[str] = Field(default_factory=list)         # references to investigator findings / signals
+    recommended_actions: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class TaskNode(BaseModel):
@@ -48,3 +73,14 @@ class ContributionEdge(BaseModel):
     # Optional metadata for contributions originating outside project members
     external: bool = False
     developer_identity: Optional[str] = None  # freeform name/email for external contributors
+
+
+class ActionRecord(BaseModel):
+    """A single action taken by the act agent during a pipeline run."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    run_id: str
+    executed_at: datetime = Field(default_factory=datetime.utcnow)
+    tool: str               # MCP tool name, e.g. "create_issue", "add_comment"
+    detail: str             # human-readable description, e.g. "#42 Knowledge transfer..."
+    success: bool = True
+    run_summary: Optional[str] = None  # agent's overall text for this run

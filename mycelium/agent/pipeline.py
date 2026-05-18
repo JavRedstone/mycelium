@@ -6,21 +6,22 @@ from collections import deque
 from dataclasses import asdict, dataclass, field
 from typing import Awaitable, Callable, Optional
 
-from agent import analyst_agent, planner_agent
+from agent import analyst_agent, planner_agent, investigator
 from agent import act_agent
-from gitlab_mcp.client import GitLabClient
+from connectors.gitlab_client import GitLabClient
 from graph.knowledge_graph import KnowledgeGraph
 
 logger = logging.getLogger(__name__)
 
 STAGE_DEFS = [
-    {"id": "observe_repo", "label": "Observe Repo", "description": "Read GitLab project state: members, issues, MRs, pipelines, CODEOWNERS"},
+    {"id": "observe_repo", "label": "Observe Repo", "description": "Read GitLab project state: members, issues, MRs, pipelines, CODEOWNERS, fork divergence"},
     {"id": "map_modules", "label": "Map Modules", "description": "Map per-directory upstream authorship — who knows what part of the codebase"},
+    {"id": "investigate", "label": "Investigate", "description": "Spawn concurrent subagents to read actual file content and judge transferability"},
     {"id": "observe_graph", "label": "Observe Graph", "description": "Read continuity graph snapshot"},
-    {"id": "analyze", "label": "Analyze", "description": "Assess continuity and delivery risks"},
+    {"id": "interpret", "label": "Interpret", "description": "Reason over signals + investigator findings; produce qualitative findings"},
     {"id": "plan", "label": "Plan", "description": "Build recommended remediation actions"},
     {"id": "act", "label": "Execute", "description": "Perform GitLab operations from plan"},
-    {"id": "learn", "label": "Persist", "description": "Write back knowledge graph updates"},
+    {"id": "learn", "label": "Persist", "description": "Write back knowledge graph updates and findings"},
     {"id": "summary", "label": "Summary", "description": "Compile run-level outcome metrics"},
 ]
 
@@ -65,9 +66,11 @@ class PipelineRunner:
         # Scratch data passed between stages (not stored in stage.output)
         self._repo: dict = {}
         self._module_contributors: dict = {}
+        self._investigations: dict = {}      # {"members": [...], "modules": [...], "drift": {...}}
         self._graph_data: dict = {}
-        self._risks: dict = {}
+        self._interpretation: dict = {}      # {"synthesis": "...", "findings": [...]}
         self._plan: dict = {}
+        self._act_result: dict = {}
 
     @property
     def current_run(self) -> Optional[PipelineRun]:
@@ -127,11 +130,15 @@ class PipelineRunner:
 
             await self._execute("map_modules", self._observe_modules)
 
+            # Investigate is best-effort: if subagents fail the pipeline still continues
+            # with whatever findings were collected.
+            await self._execute("investigate", self._investigate)
+
             if not await self._execute("observe_graph", self._observe_graph):
                 run.status = "failed"
                 return
 
-            if not await self._execute("analyze", self._analyze):
+            if not await self._execute("interpret", self._interpret):
                 run.status = "failed"
                 return
 
@@ -155,6 +162,10 @@ class PipelineRunner:
             self._running = False
             self._run_history.append(run)
             self._broadcast()
+            try:
+                await self._graph.save_run(run.to_dict())
+            except Exception as exc:
+                logger.error("[pipeline] Failed to persist run to MongoDB: %s", exc)
 
     async def _execute(self, stage_id: str, coro: Callable[[], Awaitable[dict]]) -> bool:
         stage = next(s for s in self._current_run.stages if s.id == stage_id)
@@ -187,8 +198,24 @@ class PipelineRunner:
         codeowners = self._repo.get("codeowners", {})
         pipelines = self._repo.get("pipeline_status", [])
         failing_pipelines = [p for p in pipelines if p.get("status") == "failed"]
+        is_fork = self._repo.get("is_fork", False)
+        upstream_ratio = self._repo.get("upstream_author_ratio", 0.0)
+        members = self._repo.get("members", [])
+
+        # Infer project lifecycle from observable signals.
+        # Agents use this to calibrate how they interpret risk scores.
+        if is_fork and upstream_ratio >= 0.7:
+            lifecycle = "fresh_fork"   # team is onboarding, dark knowledge is expected
+        elif not members:
+            lifecycle = "uninitialized"
+        elif len(members) == 1:
+            lifecycle = "solo"
+        else:
+            lifecycle = "active"
+
+        fork_divergence = self._repo.get("fork_divergence")
         return {
-            "members": len(self._repo.get("members", [])),
+            "members": len(members),
             "open_issues": len(self._repo.get("open_issues", [])),
             "open_mrs": len(self._repo.get("open_merge_requests", [])),
             "commit_contributors": len(self._repo.get("commit_contributors", [])),
@@ -199,6 +226,10 @@ class PipelineRunner:
             "pipeline_failing": len(failing_pipelines),
             "failing_pipeline_urls": [p.get("web_url") for p in failing_pipelines if p.get("web_url")],
             "mr_approvers_tracked": len(self._repo.get("mr_approvers", [])),
+            "is_fork": is_fork,
+            "upstream_author_ratio": upstream_ratio,
+            "lifecycle_context": lifecycle,
+            "fork_divergence": fork_divergence,
         }
 
     async def _observe_modules(self) -> dict:
@@ -212,29 +243,229 @@ class PipelineRunner:
             "total_attributions": total_attributions,
         }
 
+    def _detect_high_attention_members(self) -> list[dict]:
+        """Identify which members need investigator attention.
+
+        Detection logic uses observable signals, not severity thresholds —
+        it asks 'who should the agent look at,' not 'who is high risk.'
+        Severity judgment is delegated to the investigator subagent.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        members = self._repo.get("members", [])
+        commit_contributors = self._repo.get("commit_contributors", [])
+        member_activity = self._repo.get("member_activity", {})  # populated below
+
+        # Build a username/name -> dict lookup for members
+        member_by_key: dict[str, dict] = {}
+        for m in members:
+            for key in (m.get("username", "").lower(), m.get("name", "").lower()):
+                if key:
+                    member_by_key[key] = m
+
+        # Map each module to its sole or dominant internal contributor
+        # using per-directory contributor data captured in map_modules.
+        sole_owner_modules: dict[str, list[str]] = {}  # username -> [module paths]
+        for module_path, contribs in self._module_contributors.items():
+            internal = [c for c in contribs if not c.get("external", False) and c.get("commit_count", 0) > 0]
+            if len(internal) == 1:
+                top = internal[0]
+                key = (top.get("name") or top.get("email") or "").lower()
+                member_entry = member_by_key.get(key) or {"name": top.get("name"), "username": top.get("email", "").split("@")[0]}
+                username = (member_entry.get("username") or top.get("name") or "unknown").lower()
+                sole_owner_modules.setdefault(username, []).append(module_path)
+            elif len(internal) >= 2:
+                # Check for concentration: if top contributor has 3x+ the commits of #2
+                internal_sorted = sorted(internal, key=lambda c: c.get("commit_count", 0), reverse=True)
+                top, second = internal_sorted[0], internal_sorted[1]
+                if top.get("commit_count", 0) >= 3 * max(second.get("commit_count", 1), 1):
+                    key = (top.get("name") or top.get("email") or "").lower()
+                    member_entry = member_by_key.get(key) or {"name": top.get("name"), "username": top.get("email", "").split("@")[0]}
+                    username = (member_entry.get("username") or top.get("name") or "unknown").lower()
+                    sole_owner_modules.setdefault(username, []).append(module_path)
+
+        # Temporal signals from commit history (no GitLab member.created_at needed)
+        now = datetime.now(timezone.utc)
+        recent_window = timedelta(days=30)
+        previously_active_window = timedelta(days=90)
+
+        def _parse(ts: str):
+            if not ts:
+                return None
+            try:
+                # GitLab returns ISO 8601 with timezone
+                return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            except Exception:
+                return None
+
+        attention: list[dict] = []
+        seen_members: set[str] = set()
+
+        def _add(member: dict, reason: str, modules: list[str]):
+            key = (member.get("username") or member.get("name") or "").lower()
+            if not key or (key, reason) in seen_members:
+                return
+            seen_members.add((key, reason))
+            attention.append({
+                "member": member,
+                "attention_reason": reason,
+                "uniquely_owned_modules": modules,
+            })
+
+        # 1. Sole contributors — directly from per-module attribution
+        for username, modules in sole_owner_modules.items():
+            member = member_by_key.get(username) or {"username": username, "name": username}
+            if len(modules) >= 2:
+                _add(member, "multi_module_concentration", modules)
+            else:
+                _add(member, "sole_contributor", modules)
+
+        # 2. Recently inactive / recent joiners — from commit timestamps
+        for c in commit_contributors:
+            if c.get("external"):
+                continue
+            name_key = (c.get("name") or "").lower()
+            email_key = (c.get("email") or "").lower()
+            activity = member_activity.get(name_key) or member_activity.get(email_key)
+            if not activity:
+                continue
+            first = _parse(activity.get("first_commit", ""))
+            last = _parse(activity.get("last_commit", ""))
+            if not last:
+                continue
+            member_entry = member_by_key.get(name_key) or member_by_key.get(email_key) or {
+                "name": c.get("name"), "username": email_key.split("@")[0] if email_key else name_key
+            }
+            username = (member_entry.get("username") or "").lower()
+            modules = sole_owner_modules.get(username, [])
+
+            # Recent joiner: first commit within last 30 days
+            if first and (now - first) <= recent_window:
+                _add(member_entry, "recent_joiner", modules)
+            # Recently inactive: was active in the 30-90 day window, silent in last 30
+            elif (now - last) > recent_window and (now - last) <= previously_active_window:
+                _add(member_entry, "recently_inactive", modules)
+
+        return attention
+
+    async def _investigate(self) -> dict:
+        """Spawn concurrent investigator subagents over modules, members, and drift.
+
+        This is where the system stops being algorithmic. Each subagent reads
+        actual file content (via the GitLab client) and produces a structured
+        assessment with its own reasoning. No thresholds — the subagent's
+        judgment is the output.
+        """
+        # Capture member activity for high-attention detection
+        try:
+            self._repo["member_activity"] = await asyncio.to_thread(
+                self._gitlab.get_member_activity_dates
+            )
+        except Exception as exc:
+            logger.warning("[investigate] member activity fetch failed: %s", exc)
+            self._repo["member_activity"] = {}
+
+        high_attention = self._detect_high_attention_members()
+        logger.info("[investigate] High-attention members: %d", len(high_attention))
+
+        # Member investigators — one per high-attention member, concurrent
+        member_tasks = [
+            investigator.investigate_member(
+                member=item["member"],
+                attention_reason=item["attention_reason"],
+                uniquely_owned_modules=item["uniquely_owned_modules"],
+                gitlab_client=self._gitlab,
+            )
+            for item in high_attention
+        ]
+
+        # Module investigators — one per discovered module, concurrent
+        module_tasks = []
+        for module_path, contribs in self._module_contributors.items():
+            module_tasks.append(
+                investigator.investigate_module(
+                    module_path=module_path,
+                    contributors=contribs,
+                    gitlab_client=self._gitlab,
+                )
+            )
+
+        # Drift investigator — only if this is a fork that's behind
+        fork_div = self._repo.get("fork_divergence")
+        drift_task = None
+        if fork_div and fork_div.get("commits_behind", 0) > 0:
+            drift_task = investigator.investigate_drift(
+                fork_divergence=fork_div,
+                gitlab_client=self._gitlab,
+            )
+
+        # Run everything concurrently
+        all_tasks: list = list(member_tasks) + list(module_tasks)
+        if drift_task is not None:
+            all_tasks.append(drift_task)
+
+        results = await asyncio.gather(*all_tasks, return_exceptions=True)
+
+        # Split results back by category
+        m_count = len(member_tasks)
+        mod_count = len(module_tasks)
+
+        def _ok(r):
+            if isinstance(r, Exception):
+                logger.warning("[investigate] subagent raised: %s", r)
+                return None
+            return r
+
+        member_results = [r for r in (_ok(x) for x in results[:m_count]) if r]
+        module_results = [r for r in (_ok(x) for x in results[m_count:m_count + mod_count]) if r]
+        drift_result = _ok(results[-1]) if drift_task is not None else None
+
+        self._investigations = {
+            "members": member_results,
+            "modules": module_results,
+            "drift": drift_result,
+        }
+
+        return {
+            "high_attention_members": len(high_attention),
+            "member_investigations": len(member_results),
+            "module_investigations": len(module_results),
+            "drift_investigated": drift_result is not None and drift_result.get("investigated", False),
+            "members": member_results,
+            "modules": module_results,
+            "drift": drift_result,
+        }
+
     async def _observe_graph(self) -> dict:
         self._graph_data = await self._graph.snapshot()
         return {
             "developers_tracked": len(self._graph_data.get("developers", [])),
             "upstream_authors_tracked": len(self._graph_data.get("upstream_authors", [])),
-            "high_risk_modules": len(self._graph_data.get("high_risk_modules", [])),
+            "concentrated_modules": len(self._graph_data.get("concentrated_modules", [])),
             "open_tasks_tracked": len(self._graph_data.get("open_tasks", [])),
+            "recent_findings": len(self._graph_data.get("recent_findings", [])),
         }
 
-    async def _analyze(self) -> dict:
-        self._risks = await asyncio.to_thread(
-            analyst_agent.analyze, self._repo, self._graph_data
+    async def _interpret(self) -> dict:
+        """Continuity interpretation stage — replaces the old 'analyze' stage.
+
+        Produces qualitative findings (no scores) by reasoning over signals
+        plus investigator outputs.
+        """
+        self._interpretation = await asyncio.to_thread(
+            analyst_agent.analyze, self._repo, self._graph_data, self._investigations
         )
+        findings = self._interpretation.get("findings", [])
         return {
-            "overall_health": self._risks.get("overall_health"),
-            "summary": self._risks.get("summary"),
-            "risk_count": len(self._risks.get("risk_assessments", [])),
-            "risk_assessments": self._risks.get("risk_assessments", []),
+            "synthesis": self._interpretation.get("synthesis"),
+            "finding_count": len(findings),
+            "findings": findings,
+            "concern_types": sorted({f.get("concern_type", "?") for f in findings}),
         }
 
     async def _plan_stage(self) -> dict:
         self._plan = await asyncio.to_thread(
-            planner_agent.plan, self._risks, self._repo, self._graph_data
+            planner_agent.plan, self._interpretation, self._repo, self._graph_data
         )
         return {
             "actions_planned": len(self._plan.get("actions", [])),
@@ -244,7 +475,8 @@ class PipelineRunner:
 
     async def _act(self) -> dict:
         # act_agent.act is a native coroutine — uses MCP subprocess + async Gemini
-        return await act_agent.act(self._risks, self._repo)
+        self._act_result = await act_agent.act(self._interpretation, self._repo)
+        return self._act_result
 
     async def _learn(self) -> dict:
         count, total = 0, len(self._plan.get("graph_updates", []))
@@ -309,7 +541,7 @@ class PipelineRunner:
                 edge = ContributionEdge(
                     developer_username=username,
                     module_path="repository",
-                    commit_count=1,
+                    commit_count=c.get("commit_count", 1),
                     lines_changed=0,
                     expertise_score=0.0,
                     external=is_external,
@@ -445,31 +677,67 @@ class PipelineRunner:
         except Exception as exc:
             logger.error("[pipeline] Persisting MR approver contributions failed: %s", exc)
 
-        # Recompute risk scores for all modules now that contributions are seeded
-        rescored = await self._rescore_modules()
-        logger.info("[pipeline] Rescored %d module(s)", rescored)
+        # Refresh bus_factor measurements only. No scoring, no aggregation.
+        # Severity lives in Finding records (persisted below), not on modules.
+        rescored = await self._refresh_bus_factors()
+        logger.info("[pipeline] Refreshed bus_factor on %d module(s)", rescored)
 
-        return {"updated": count, "total": total, "modules_rescored": rescored}
+        # Persist findings produced by the interpret stage. These replace the
+        # old continuity_risk_score field on modules entirely.
+        findings_saved = await self._persist_findings()
+        logger.info("[pipeline] Persisted %d finding(s)", findings_saved)
 
-    async def _rescore_modules(self) -> int:
-        """
-        Recompute continuity_risk_score for every tracked module after contributions are seeded.
+        # Persist agent actions to the actions log
+        actions_saved = 0
+        try:
+            from graph.models import ActionRecord
+            run_id = self._current_run.run_id if self._current_run else "unknown"
+            run_summary = self._act_result.get("summary")
+            act_details = self._act_result.get("details", [])
+            for d in act_details:
+                await self._graph.insert_action(ActionRecord(
+                    run_id=run_id,
+                    tool=d.get("kind", "unknown"),
+                    detail=d.get("detail", ""),
+                    success=True,
+                    run_summary=run_summary,
+                ))
+                actions_saved += 1
+            if not act_details:
+                # Record the run even when no actions were taken — shows agent assessed
+                await self._graph.insert_action(ActionRecord(
+                    run_id=run_id,
+                    tool="assess",
+                    detail=run_summary or "Agent assessed project state — no actions required.",
+                    success=True,
+                    run_summary=run_summary,
+                ))
+                actions_saved += 1
+        except Exception as exc:
+            logger.error("[pipeline] Persisting agent actions failed: %s", exc)
 
-        Bus factor uses only active internal committers (commit_count > 0, external=False).
-        CODEOWNERS-only entries (commit_count=0) are excluded from bus factor — declared
-        ownership without commits is not the same as held knowledge.
+        return {
+            "updated": count,
+            "total": total,
+            "modules_bus_factor_refreshed": rescored,
+            "findings_saved": findings_saved,
+            "actions_saved": actions_saved,
+        }
 
-        An external-concentration penalty is applied when the majority of code was
-        written by upstream/fork authors — this is "dark knowledge" risk that the
-        standard formula cannot see.
+    async def _refresh_bus_factors(self) -> int:
+        """Recompute bus_factor for each tracked module.
+
+        bus_factor is a measurement — a count of internal committers covering
+        80% of commits. No severity attached. No scoring. The analyst decides
+        what to make of it in context.
         """
         from graph.models import ModuleNode
-        from risk.forecasting import compute_bus_factor, compute_continuity_risk
+        from risk.forecasting import compute_bus_factor
 
         try:
             all_modules = await self._graph.modules.find({}, {"_id": 0}).to_list(None)
         except Exception as exc:
-            logger.error("[pipeline] Rescore: failed to fetch modules: %s", exc)
+            logger.error("[pipeline] bus_factor refresh: failed to fetch modules: %s", exc)
             return 0
 
         updated = 0
@@ -479,57 +747,66 @@ class PipelineRunner:
             path = module["path"]
             try:
                 all_contribs = await self._graph.get_module_contributors(path)
-
-                # Split by type
                 internal_committers = [
                     c for c in all_contribs
                     if not c.get("external", False) and c.get("commit_count", 0) > 0
                 ]
-                external_committers = [
-                    c for c in all_contribs if c.get("external", False)
-                ]
-
-                # Base score uses only internal committers for bus factor
-                base_score = compute_continuity_risk(internal_committers, module)
-
-                # External concentration penalty — dark knowledge risk
-                total_committers = len(internal_committers) + len(external_committers)
-                ext_ratio = len(external_committers) / total_committers if total_committers > 0 else 0.0
-                ext_penalty = round(ext_ratio * 0.3, 4) if ext_ratio > 0.5 else 0.0
-
-                # No internal committers at all = additional structural risk
-                no_internal_penalty = 0.25 if not internal_committers else 0.0
-
-                final_score = round(min(1.0, base_score + ext_penalty + no_internal_penalty), 4)
                 bus_factor = compute_bus_factor(internal_committers)
-
                 module_data = {k: v for k, v in module.items() if k in module_fields}
-                module_data["continuity_risk_score"] = final_score
                 module_data["bus_factor"] = bus_factor
-
                 await self._graph.upsert_module(ModuleNode(**module_data))
                 updated += 1
-                logger.debug(
-                    "[rescore] %s: score=%.2f bus=%d internal=%d external=%d",
-                    path, final_score, bus_factor, len(internal_committers), len(external_committers),
-                )
             except Exception as exc:
-                logger.error("[pipeline] Rescore failed for module %s: %s", path, exc)
+                logger.error("[pipeline] bus_factor refresh failed for %s: %s", path, exc)
 
         return updated
 
+    async def _persist_findings(self) -> int:
+        """Persist analyst-produced findings to the findings collection.
+
+        Findings replace the old continuity_risk_score field. Each finding is a
+        qualitative record (subject, concern_type, narrative, evidence,
+        recommended_actions) tied to this pipeline run.
+        """
+        from graph.models import Finding
+
+        findings = (self._interpretation or {}).get("findings", []) or []
+        if not findings:
+            return 0
+        run_id = self._current_run.run_id if self._current_run else None
+        saved = 0
+        for f in findings:
+            try:
+                finding = Finding(
+                    run_id=run_id,
+                    subject=str(f.get("subject", "?")),
+                    concern_type=str(f.get("concern_type", "unspecified")),
+                    narrative=str(f.get("narrative", "")),
+                    evidence=list(f.get("evidence", []) or []),
+                    recommended_actions=list(f.get("recommended_actions", []) or []),
+                )
+                await self._graph.insert_finding(finding)
+                saved += 1
+            except Exception as exc:
+                logger.error("[pipeline] insert_finding failed: %s", exc)
+        return saved
+
     async def _summary(self) -> dict:
-        stages = self._current_run.stages if self._current_run else []
+        # Exclude the summary stage itself — it's "running" when this executes, so counting
+        # it would give N-1/N. Report only the substantive pipeline stages.
+        all_stages = self._current_run.stages if self._current_run else []
+        stages = [s for s in all_stages if s.id != "summary"]
         succeeded = sum(1 for s in stages if s.status == "success")
         failed = sum(1 for s in stages if s.status == "failed")
         skipped = sum(1 for s in stages if s.status == "skipped")
-        total_ms = sum(s.duration_ms or 0 for s in stages if s.duration_ms is not None)
+        total_ms = sum(s.duration_ms or 0 for s in all_stages if s.duration_ms is not None)
         return {
             "stages_total": len(stages),
             "stages_succeeded": succeeded,
             "stages_failed": failed,
             "stages_skipped": skipped,
-            "actions_executed": len((self._plan or {}).get("actions", [])),
+            "findings_count": len((self._interpretation or {}).get("findings", [])),
+            "actions_planned": len((self._plan or {}).get("actions", [])),
             "graph_updates_planned": len((self._plan or {}).get("graph_updates", [])),
             "total_duration_ms": total_ms,
         }

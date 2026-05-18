@@ -1,163 +1,256 @@
-# Google Cloud Rapid Agent Hackathon 2026
+# Hackathon Requirements (Google Cloud Rapid Agent Hackathon 2026)
 
-**Timeline:** May 5, 2026 - June 11, 2026  
-**Submission Deadline:** June 11, 2026, 2:00 P.M. PT  
-**Judging:** June 22 - July 6, 2026  
-**Official Site:** https://rapid-agent.devpost.com/
+This document defines the **non-negotiable technical and architectural requirements** for Mycelium. It is intended to ensure full compliance with the official hackathon rules.
 
----
-
-## The Challenge
-
-Build a functional agent powered by Gemini that solves a real-world problem targeting your work, personal life, hobbies, or daily routines. Your agent must:
-
-- **Go beyond chat** - Use tools and capabilities to actually accomplish tasks (not just answer questions)
-- **Handle complexity** - Plan multi-step solutions and use available tools while keeping you in control
-- **Integrate a partner** - Demonstrate meaningful integration with at least one partner's MCP server
+These requirements are derived from the official competition scope and must be preserved during implementation.
 
 ---
 
-## Partner Tracks
+# 1. Google Agent Stack Requirement (Vertex AI + ADK)
 
-Choose **at least one** and build with their Model Context Protocol (MCP) server:
+## Mandatory Google Stack
 
-- [Arize](https://rapid-agent.devpost.com/details/arize-resources)
-- [Dynatrace](https://rapid-agent.devpost.com/details/dynatrace-resources) *(new)*
-- [Elastic](https://rapid-agent.devpost.com/details/elastic-resources)
-- [Fivetran](https://rapid-agent.devpost.com/details/fivetran-resources)
-- [GitLab](https://rapid-agent.devpost.com/details/gitlab-resources)
-- [MongoDB](https://rapid-agent.devpost.com/details/mongodb-resources)
+The system must use the official Google agent ecosystem:
 
-**Mycelium track strategy:** Enter **both GitLab and MongoDB tracks**. The act agent connects to both official MCP servers simultaneously — GitLab MCP (HTTP) for write actions and MongoDB MCP (stdio) for live knowledge graph queries. This is meaningful dual integration, not a token mention. The other four partners (Arize, Elastic, Fivetran, Dynatrace) are out of scope for this use case.
-
----
-
-## Partner Details
-
-### GitLab
-
-> A complete DevSecOps platform delivered as a single application. Fundamentally changes how Dev, Sec, and Ops teams collaborate.
-
-**Trial:** 30-day Ultimate trial — no access codes required. Includes Duo Agent Platform with **24 credits/user**.
-
-| Feature | Status | Relevant to Mycelium? |
-|---|---|---|
-| **MCP Server** | Beta | **Yes — act_agent.py connects to `https://gitlab.com/api/v4/mcp` via HTTP/streamable-HTTP transport (mcp >= 1.27). Auth: `Authorization: Bearer <GITLAB_TOKEN>`.** |
-| **Webhooks → Mycelium** | N/A (GitLab feature) | **Yes — event-driven pipeline triggers on push/MR/pipeline events. Requires public URL.** |
-| Custom Flows | Beta | Only useful post-Cloud Run. Once deployed: trigger on MR ready → call `/graph` → post reviewer comment. |
-| Custom Agents | GA | Conversational interface ("who owns X?") — requires Mycelium public URL. Lower priority. |
-
-**Resources:**
-- MCP Server: https://docs.gitlab.com/user/gitlab_duo/model_context_protocol/mcp_server/
-- Custom Flows: https://docs.gitlab.com/user/duo_agent_platform/flows/custom/
-- Start a Trial: https://about.gitlab.com/free-trial/
-
-**How it applies to Mycelium:**
-`act_agent.py` connects to the official GitLab MCP server at `{GITLAB_URL}/api/v4/mcp` using `streamablehttp_client` from `mcp` v1.27+. Auth via `Authorization: Bearer {GITLAB_TOKEN}`. Write-capable tools are dynamically discovered; Gemini selects which to invoke based on the risk assessment.
+### Required components:
+- Vertex AI SDK (`google-cloud-aiplatform`)
+- Vertex AI Agent Engine
+- Agent Development Kit (ADK)
+- Gemini models (via Vertex AI)
 
 ---
 
-### MongoDB
+## Correct architecture relationship
 
-> Atlas is the unified operational foundation and persistent memory layer for modern AI and agentic workloads. Combines operational, vector, and semantic data on a single platform.
+ADK is not a standalone replacement for Vertex AI.
 
-**Resources:**
-- Sample Mflix Dataset (includes pre-built vector embeddings): `sample_mflix.embedded_movies`
-- [Data Modelling in MongoDB](https://www.mongodb.com/docs/manual/data-modeling/)
-- [MongoDB MCP Server](https://www.mongodb.com/docs/mcp-server/)
-- [MongoDB Atlas Search](https://www.mongodb.com/docs/atlas/atlas-search/)
-- [MongoDB Vector Search](https://www.mongodb.com/docs/atlas/atlas-vector-search/)
-- [Voyage AI (embeddings)](https://docs.voyageai.com/)
-- [AI Learning Hub](https://www.mongodb.com/developer/products/atlas/ai-learning-hub/)
+### Correct layering:
 
-**How it applies to Mycelium:**
-
-MongoDB Atlas is Mycelium's knowledge graph store (Motor async client, four collections: `developers`, `modules`, `tasks`, `contributions`).
-
-**Implemented:**
-- **MongoDB MCP Server** (`@mongodb-js/mongodb-mcp-server`) — `act_agent.py` connects via stdio (`npx`) and gives Gemini direct `find`/`aggregate` access to all graph collections during the execute stage. This lets the agent self-query the live graph rather than relying on the pre-built `snapshot()` context dump. Auth via `MDB_MCP_CONNECTION_STRING` env var (set to `MONGODB_URI`).
-
-**Potential future upgrade:**
-- **Vector Search on `DeveloperNode`** — embed developer expertise profiles, use Atlas Vector Search to find "who is most similar to this departing developer?" for handoff recommendations. Replaces score-based lookup with semantic similarity.
+- Vertex AI = platform + runtime
+- Agent Engine = execution environment
+- ADK = agent construction framework inside Vertex AI
 
 ---
 
-## Building Your Project
+## Required implementation pattern
 
-### Phase 1: Core Frameworks & Environment
-- **Managed Setup:** Gemini Enterprise Agent Platform API Setup
-- **Low-Code Path:** Agent Builder Guide
-- **Developer SDK:** Gemini Enterprise Agent Platform SDK for Python
-- **Get Credits:** Apply for $100 in Google Cloud credits by June 4th, 2026
-
-### Phase 2: Action Mechanisms & Data Connectivity
-- Agent Builder Extensions for external APIs
-- Agent Builder Data Stores for indexing PDFs, websites, or BigQuery tables
-
-### Phase 3: Partner Integration & Infrastructure
-- Access partner-specific resources at https://rapid-agent.devpost.com/resources
-
-### Phase 4: Reasoning, State, & Logic Hosting
-- Agent Runtime for deploying Python-based agents
-- Secret Manager for storing API keys
-
-### Phase 5: Deployment & Safety
-- Agent Builder Deployment for web/API access
-- Cloud Run Quickstart for custom backends
+```python
+from google.adk.agents import Agent
+from vertexai.agent_engines import AdkApp
+````
 
 ---
 
-## What to Submit
+## Key constraint
 
-1. **Hosted project URL** - Must be functional and testable
-2. **Public code repository** - Include open-source license file (visible at repo top)
-3. **Demo video** - 3 minutes max, on YouTube or Vimeo, showing it working
-4. **Track selection** - Which partner track you're entering
-5. **Description** - Features, technologies, data sources, learnings
-6. **Devpost submission form** - All required fields completed
-
-### Project Requirements
-
-- **New project only** - Must be created during contest period
-- **Platform:** Must run on web, Android, or iOS
-- **Stack:** Use Google Cloud + chosen partner's tools (no competing cloud platforms)
-- **AI tools:** Only Google Cloud AI tools allowed (Gemini, BigQuery ML, etc.)
-- **License:** Must include open-source license in repository
+* AI Studio alone is NOT sufficient
+* Direct Gemini API usage without Vertex AI is NOT sufficient
+* ADK must be used as part of Vertex AI Agent Engine
 
 ---
 
-## Judging Criteria
+## Required runtime pattern
 
-**Stage 1:** Pass/fail baseline viability check (meets all requirements)
-
-**Stage 2:** Equal-weighted scoring on:
-- **Technological Implementation** - Quality of Google Cloud + partner integration
-- **Design** - User experience and thoughtful design
-- **Potential Impact** - Impact on target communities
-- **Idea Quality** - Creativity and uniqueness
-
----
-
-## Key Dates
-
-- **Contest Period:** May 5 - June 11, 2026
-- **Credit Application Deadline:** June 4, 2026
-- **Submission Deadline:** June 11, 2026, 2:00 P.M. PT
-- **Judging Period:** June 22 - July 6, 2026
-- **Winners Announced:** ~July 7, 2026
+```python
+app = AdkApp(
+    agent=Agent(
+        model="gemini-2.5-flash",
+        name="mycelium_agent",
+        tools=[...]
+    )
+)
+```
 
 ---
 
-## Quick Checklist
+# 2. Partner MCP Integration Requirement (MANDATORY)
 
-- [ ] Choose a partner track
-- [ ] Apply for Google Cloud credits
-- [ ] Plan your agent's real-world problem
-- [ ] Build with Google Cloud Agent Builder
-- [ ] Integrate partner's MCP server
-- [ ] Create demo video
-- [ ] Push code to public GitHub repo with license
-- [ ] Deploy hosted version
-- [ ] Submit on Devpost
+The system MUST integrate at least one official partner MCP server.
 
+Mycelium uses a dual-MCP architecture:
 
+| Partner | MCP Server           | Role                                            |
+| ------- | -------------------- | ----------------------------------------------- |
+| GitLab  | Official GitLab MCP  | Repository execution (issues, MRs, assignments) |
+| MongoDB | Official MongoDB MCP | Knowledge graph + memory operations             |
+
+---
+
+## MCP usage requirements
+
+The system must:
+
+* Connect to real MCP servers (not mocks)
+* Execute tool calls dynamically
+* Use MCP inside the agent decision loop
+* Perform meaningful system actions
+
+---
+
+## MCP role in system loop
+
+```text
+Observe → Infer → Decide → Act → Learn
+```
+
+Where:
+
+* MongoDB MCP = memory + state access
+* GitLab MCP = execution layer (real-world changes)
+
+---
+
+# 3. Agent Requirement (Non-Chat System)
+
+The system must be an autonomous agent, not a chatbot.
+
+## Required capabilities:
+
+* Multi-step reasoning
+* Tool execution via MCP
+* Persistent memory
+* State updates over time
+* Autonomous decision-making
+* External system actions
+
+---
+
+## Required execution loop
+
+```text
+Observe → Infer → Decide → Act → Learn
+```
+
+---
+
+## Disallowed patterns:
+
+* Chat-only interfaces
+* Static Q&A systems
+* Read-only dashboards
+* Systems without external actions
+* Single-step prompt-response tools
+
+---
+
+# 4. Real-World Action Requirement
+
+The agent must perform real operational work.
+
+## Valid actions include:
+
+* Creating GitLab issues
+* Assigning merge requests
+* Updating repository metadata
+* Detecting ownership changes
+* Updating knowledge graphs
+* Triggering onboarding/offboarding workflows
+
+---
+
+## Core requirement
+
+The system must modify external system state.
+
+---
+
+# 5. Google Cloud Deployment Requirement
+
+The system must run on Google Cloud infrastructure.
+
+## Required components:
+
+* Vertex AI Agent Engine OR Cloud Run
+* Vertex AI SDK integration
+* Gemini model access via Vertex AI
+* Public deployment endpoint for demo
+
+---
+
+## Required deployment architecture
+
+```text
+Vertex AI Agent Engine (ADK Runtime)
+        ↓
+Mycelium Agent Orchestration Layer
+        ↓
+MCP Tool Layer (GitLab + MongoDB)
+        ↓
+External Systems (GitLab, MongoDB Atlas)
+```
+
+---
+
+# 6. System Architecture Constraints
+
+The following architecture is required for compliance:
+
+## Core stack:
+
+* Vertex AI SDK (`google-cloud-aiplatform`)
+* Vertex AI Agent Engine
+* ADK (Agent Development Kit)
+* Gemini reasoning model
+* MCP tool layer (GitLab + MongoDB)
+* Cloud Run or Vertex AI deployment
+
+---
+
+## Required system structure
+
+```text
+Vertex AI Agent Engine (ADK runtime)
+        ↓
+Mycelium Agent Orchestration
+        ↓
+MCP Tool Layer
+        ↓
+External Systems
+```
+
+---
+
+# 7. Submission Requirements
+
+To be valid, the project must include:
+
+* Hosted working deployment (Google Cloud)
+* Public source repository with open-source license
+* Demo video (≤ 3 minutes)
+* Explicit partner MCP integration
+* Clearly demonstrated Google Cloud + Vertex AI usage
+
+---
+
+# 8. Key Compliance Summary
+
+## Must use:
+
+* Vertex AI SDK
+* Vertex AI Agent Engine
+* ADK (Agent Development Kit)
+* Gemini models via Vertex AI
+* At least one partner MCP server
+
+---
+
+## Must NOT:
+
+* Rely only on AI Studio
+* Omit MCP integration
+* Build a non-actionable chatbot
+* Avoid Google Cloud deployment
+* Use non-Google agent frameworks as primary runtime
+
+---
+
+# 9. Mycelium Compliance Status
+
+Mycelium is designed to fully satisfy requirements:
+
+* ADK used as agent construction layer
+* Vertex AI Agent Engine used as runtime
+* Gemini used for reasoning and planning
+* GitLab MCP + MongoDB MCP used for execution and memory
+* System performs real-world GitLab operations
+* Continuous autonomous workflow execution loop

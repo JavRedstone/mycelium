@@ -9,10 +9,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
-from config.settings import settings
+from config.settings import settings  # initialises Vertex AI env vars on import
 from agent.pipeline import PipelineRunner
 from graph.knowledge_graph import KnowledgeGraph
-from gitlab_mcp.client import GitLabClient
+from connectors.gitlab_client import GitLabClient
 
 # ---------------------------------------------------------------------------
 # In-memory log store
@@ -22,7 +22,7 @@ _LOG_HISTORY: deque = deque(maxlen=500)
 _log_seq = 0
 
 _IGNORED_LOGGERS = ("motor", "pymongo", "urllib3", "httpcore", "httpx",
-                    "asyncio", "watchfiles", "sse_starlette")
+                    "asyncio", "watchfiles", "sse_starlette", "google")
 
 
 class _UILogHandler(logging.Handler):
@@ -48,6 +48,11 @@ class _UILogHandler(logging.Handler):
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logging.getLogger("agent").setLevel(logging.DEBUG)
+# google.genai emits a one-time INFO note about Schema → JSONSchema migration.
+# That migration is inside ADK internals (FunctionDeclaration building); we
+# can't switch to parameters_json_schema ourselves. Silence INFO from the
+# google namespace so we still see WARNINGs and ERRORs.
+logging.getLogger("google").setLevel(logging.WARNING)
 logging.getLogger().addHandler(_UILogHandler())
 log = logging.getLogger(__name__)
 
@@ -60,6 +65,12 @@ pipeline = PipelineRunner(gitlab, graph)
 
 
 async def run_loop():
+    if not settings.pipeline_loop_enabled:
+        log.info(
+            "Pipeline auto-loop is DISABLED (PIPELINE_LOOP_ENABLED=false). "
+            "Use POST /pipeline/run to trigger a run manually."
+        )
+        return
     log.info("Mycelium pipeline loop started — interval %ds", settings.agent_loop_interval)
     while True:
         await pipeline.run()
@@ -93,6 +104,21 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/config")
+async def config():
+    """Return non-sensitive runtime configuration for the UI."""
+    return {
+        "google_cloud_project": settings.google_cloud_project,
+        "google_cloud_location": settings.google_cloud_location,
+        "gemini_model": settings.gemini_model,
+        "gitlab_url": settings.gitlab_url,
+        "gitlab_project_id": settings.gitlab_project_id,
+        "mongodb_db": settings.mongodb_db,
+        "pipeline_loop_enabled": settings.pipeline_loop_enabled,
+        "agent_loop_interval_seconds": settings.agent_loop_interval,
+    }
+
+
 @app.get("/snapshot")
 async def snapshot():
     return await graph.snapshot()
@@ -111,8 +137,21 @@ async def graph_full():
         "developers": snap["developers"],
         "upstream_authors": snap["upstream_authors"],
         "modules": modules_with_contribs,
-        "high_risk_modules": snap["high_risk_modules"],
+        "concentrated_modules": snap.get("concentrated_modules", []),
+        "recent_findings": snap.get("recent_findings", []),
     }
+
+
+@app.get("/actions")
+async def list_actions(limit: int = 200):
+    """Agent action log — what the act agent has done across all pipeline runs."""
+    return await graph.list_actions(limit=limit)
+
+
+@app.get("/findings")
+async def list_findings(limit: int = 200, run_id: str | None = None):
+    """Continuity findings — qualitative analyst output, no scores."""
+    return await graph.list_findings(limit=limit, run_id=run_id)
 
 
 # ---------------------------------------------------------------------------
@@ -120,16 +159,28 @@ async def graph_full():
 # ---------------------------------------------------------------------------
 
 @app.get("/pipeline/history")
-async def pipeline_history():
+async def pipeline_history(limit: int = 50):
+    try:
+        runs = await graph.list_runs(limit=limit)
+        if runs:
+            return {"runs": runs}
+    except Exception as exc:
+        log.warning("MongoDB pipeline history unavailable (%s) — using in-memory", exc)
     return {"runs": [r.to_dict() for r in pipeline.run_history]}
 
 
 @app.get("/pipeline/current")
 async def pipeline_current():
     run = pipeline.current_run
-    if not run:
-        return {"run": None}
-    return {"run": run.to_dict()}
+    if run:
+        return {"run": run.to_dict()}
+    try:
+        latest = await graph.get_latest_run()
+        if latest:
+            return {"run": latest}
+    except Exception:
+        pass
+    return {"run": None}
 
 
 @app.post("/pipeline/run")
@@ -145,10 +196,17 @@ async def pipeline_stream():
     queue = pipeline.subscribe()
 
     async def generator():
-        # Send current state immediately on connect
+        # Seed with current in-progress run, or last completed run from MongoDB
         run = pipeline.current_run
         if run:
             yield {"data": json.dumps(run.to_dict())}
+        else:
+            try:
+                latest = await graph.get_latest_run()
+                if latest:
+                    yield {"data": json.dumps(latest)}
+            except Exception:
+                pass
         try:
             while True:
                 try:

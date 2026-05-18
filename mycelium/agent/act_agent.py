@@ -1,12 +1,21 @@
 """
-Act agent: Gemini + official GitLab MCP (HTTP) + official MongoDB MCP (stdio).
+Act agent — the autonomous reasoning loop that takes corrective action.
 
-Connects to:
-  - GitLab MCP at /api/v4/mcp via streamable-HTTP — write-capable tools only
-  - MongoDB MCP via npx stdio subprocess — all tools (find, aggregate, etc.)
+Implements the hackathon's required stack:
+    ADK (google.adk.agents.Agent)
+        ↓
+    Vertex AI Agent Engine runtime (vertexai.preview.reasoning_engines.AdkApp)
+        ↓
+    Gemini (via Vertex AI, NOT AI Studio)
+        ↓
+    Two MCP toolsets exposed to the agent simultaneously:
+        - Official GitLab MCP server (HTTP / streamable-HTTP) — write tools
+        - Official MongoDB MCP server (stdio via `npx`)        — graph queries
 
-Gemini runs a multi-turn loop across both tool sets. MongoDB MCP is non-fatal:
-if npx is unavailable, the agent falls back to GitLab MCP alone.
+Gemini reasons across both tool surfaces in a single multi-turn loop and decides
+which GitLab actions to perform based on what it finds in the knowledge graph.
+MongoDB MCP is non-fatal: if `npx` or the MongoDB server is unavailable, the agent
+falls back to GitLab-only operation.
 """
 from __future__ import annotations
 
@@ -15,301 +24,330 @@ import json
 import logging
 import os
 import sys
-from dataclasses import dataclass
+from pathlib import Path
 
-import httpx
-from mcp.client.session import ClientSession
-from mcp.client.stdio import StdioServerParameters, stdio_client
-from mcp.client.streamable_http import streamablehttp_client
+import vertexai
+from google.adk.agents import Agent
+from google.adk.tools.mcp_tool import MCPToolset
+from google.adk.tools.mcp_tool.mcp_session_manager import (
+    StdioConnectionParams,
+)
+from mcp.client.stdio import StdioServerParameters
+from vertexai.preview.reasoning_engines import AdkApp
 
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-_GEMINI_URL = (
-    f"https://generativelanguage.googleapis.com/v1beta/models/"
-    f"{settings.gemini_model}:generateContent?key={settings.gemini_api_key}"
+# Vertex AI must be initialised before any ADK Agent is created or run.
+vertexai.init(
+    project=settings.google_cloud_project,
+    location=settings.google_cloud_location,
 )
-_GEMINI_HEADERS = {"Content-Type": "application/json"}
 
-_GITLAB_MCP_URL = f"{settings.gitlab_url}/api/v4/mcp"
-_MCP_TIMEOUT = 60.0
-
-# npx binary name differs on Windows
 _NPX = "npx.cmd" if sys.platform == "win32" else "npx"
+_PYTHON = sys.executable
+_SERVER_PY = Path(__file__).resolve().parent.parent / "connectors" / "mcp_server.py"
+_USER_ID = "mycelium-pipeline"
+
+_AGENT_INSTRUCTION = """\
+You are Mycelium, an autonomous engineering continuity agent.
+
+Inputs you receive every turn:
+- A continuity INTERPRETATION (qualitative findings with concern_type, narrative,
+  evidence, recommended_actions) — there are no scalar risk scores in this system.
+- A snapshot of the GitLab repository state.
+
+IMPORTANT CONSTRAINTS:
+- The GitLab project is already configured. NEVER ask the user for a project ID,
+  URL, or any configuration — all tools have the project pre-wired.
+- Do not mention tool errors to the user. If a tool fails, skip that action and
+  move on. Do not ask for clarification — decide autonomously.
+- Do not invent severity scores or buckets. Reason from the findings' narratives.
+
+You have three tool surfaces:
+
+1. Mycelium MCP tools — use these for ALL reads AND writes:
+   READ:  get_concerns, get_module_experts, get_orphaned_modules,
+          suggest_assignee, get_gitlab_project_state
+   WRITE: create_issue, add_comment, assign_issue
+   ARTIFACTS: generate_onboarding_pack(new_member_username),
+              generate_offboarding_artifact(departing_member_username)
+   These are the primary tools. Use them for all GitLab actions.
+
+   Use generate_onboarding_pack when a finding's concern_type is
+   recent_joiner_exposure or onboarding_isolation.
+   Use generate_offboarding_artifact when a finding's concern_type is
+   fading_contributor, offboarding_risk, or sole_contributor with low
+   transferability reported by the investigator.
+
+2. GitLab MCP tools — supplementary only (may be unavailable).
+   If Mycelium MCP write tools are available, prefer them over GitLab MCP.
+
+3. MongoDB MCP tools — raw query fallback for custom aggregations.
+
+You receive a continuity INTERPRETATION (findings with concern_type, narrative,
+evidence, recommended_actions) — NOT scalar risk scores. Reason about each
+finding's narrative directly. The system does not use severity buckets.
+
+Decision loop:
+1. Call get_concerns and get_gitlab_project_state to understand the situation.
+2. For each finding that warrants action (per its narrative + recommended_actions),
+   call get_module_experts and suggest_assignee to identify the right people for
+   knowledge transfer.
+3. Take the minimum necessary corrective actions using create_issue / add_comment /
+   assign_issue, guided by each finding's recommended_actions.
+   - Do not duplicate existing issues — check the issues list from get_gitlab_project_state first.
+   - Keep issue titles short and descriptions actionable (one paragraph + checklist).
+   - At most 2-3 new issues per run to avoid noise.
+4. Stop calling tools when the situation has been addressed.
+"""
 
 _PROMPT_TEMPLATE = """\
-You are an engineering continuity agent with access to GitLab action tools and \
-MongoDB knowledge graph query tools.
+Continuity interpretation (qualitative findings, no scores):
+{interpretation}
 
-Steps:
-1. Query the MongoDB knowledge graph (find, aggregate) for context on flagged modules
-2. Take the minimum necessary corrective actions via GitLab tools (HIGH/CRITICAL risks only)
-3. Do not create duplicate issues — check existing repo state first
-4. Keep issue titles and descriptions concise and actionable
-5. Stop calling tools when done
-
-Risk Assessment:
-{risks}
-
-Current Repository State:
+Current repository snapshot:
 {repo}
 """
 
-_READ_PREFIXES = ("list_", "get_", "search_", "show_", "describe_", "fetch_")
-
-
-def _is_write_tool(tool_name: str) -> bool:
-    return not any(tool_name.startswith(p) for p in _READ_PREFIXES)
-
 
 # ---------------------------------------------------------------------------
-# Tool registry — maps tool name to its MCP session
+# Agent construction
 # ---------------------------------------------------------------------------
 
-@dataclass
-class _ToolEntry:
-    declaration: dict
-    session: ClientSession
+def _gitlab_toolset() -> MCPToolset:
+    """Official GitLab MCP server proxied via mcp-remote (stdio transport).
 
+    GitLab MCP uses OAuth 2.0 Dynamic Client Registration — not PAT bearer tokens.
+    mcp-remote handles the OAuth handshake and caches the token in ~/.mcp-auth/.
+    First run: opens a browser for OAuth authorization (one-time per machine).
+    Subsequent runs: reuses the cached OAuth token automatically.
 
-def _mcp_tool_to_gemini(tool) -> dict:
-    schema = tool.inputSchema or {}
-    params: dict = {}
-    if schema.get("properties"):
-        params = {
-            "type": "OBJECT",
-            "properties": {k: _convert_schema_type(v) for k, v in schema["properties"].items()},
-        }
-        if schema.get("required"):
-            params["required"] = schema["required"]
-    return {
-        "name": tool.name,
-        "description": tool.description or "",
-        "parameters": params,
-    }
-
-
-def _convert_schema_type(prop: dict) -> dict:
-    type_map = {
-        "string": "STRING", "integer": "INTEGER", "number": "NUMBER",
-        "boolean": "BOOLEAN", "array": "ARRAY", "object": "OBJECT",
-    }
-    result = dict(prop)
-    if "type" in result:
-        result["type"] = type_map.get(result["type"], result["type"].upper())
-    if "items" in result:
-        result["items"] = _convert_schema_type(result["items"])
-    return result
-
-
-async def _build_registry(
-    gl_session: ClientSession,
-    mg_session: ClientSession | None,
-) -> dict[str, _ToolEntry]:
-    """Merge tools from GitLab MCP (write only) and MongoDB MCP (all)."""
-    registry: dict[str, _ToolEntry] = {}
-
-    try:
-        gl_tools = await gl_session.list_tools()
-        for t in gl_tools.tools:
-            if _is_write_tool(t.name):
-                registry[t.name] = _ToolEntry(_mcp_tool_to_gemini(t), gl_session)
-        logger.info(
-            "[act_agent] GitLab MCP: %d write tools: %s",
-            len(registry), list(registry.keys()),
-        )
-    except Exception as exc:
-        logger.warning("[act_agent] GitLab MCP list_tools failed: %s", exc)
-
-    if mg_session is not None:
-        try:
-            mg_tools = await mg_session.list_tools()
-            mg_count = 0
-            for t in mg_tools.tools:
-                registry[t.name] = _ToolEntry(_mcp_tool_to_gemini(t), mg_session)
-                mg_count += 1
-            logger.info("[act_agent] MongoDB MCP: %d tools added", mg_count)
-        except Exception as exc:
-            logger.warning("[act_agent] MongoDB MCP list_tools failed: %s", exc)
-
-    return registry
-
-
-# ---------------------------------------------------------------------------
-# Gemini HTTP with exponential backoff
-# ---------------------------------------------------------------------------
-
-async def _post_gemini(http: httpx.AsyncClient, body: dict, max_retries: int = 3) -> dict:
-    waits = [5, 15, 40]
-    last_exc: Exception | None = None
-    for attempt in range(max_retries):
-        try:
-            resp = await http.post(_GEMINI_URL, headers=_GEMINI_HEADERS, json=body)
-            resp.raise_for_status()
-            return resp.json()
-        except httpx.HTTPStatusError as exc:
-            last_exc = exc
-            status = exc.response.status_code
-            logger.warning("[act_agent] Gemini %d on attempt %d/%d", status, attempt + 1, max_retries)
-            if status not in (429, 500, 502, 503) or attempt == max_retries - 1:
-                break
-            wait = waits[min(attempt, len(waits) - 1)]
-            logger.info("[act_agent] Waiting %ds before retry…", wait)
-            await asyncio.sleep(wait)
-        except httpx.RequestError as exc:
-            last_exc = exc
-            logger.warning("[act_agent] Connection error on attempt %d/%d: %s", attempt + 1, max_retries, exc)
-            break
-    raise last_exc  # type: ignore[misc]
-
-
-# ---------------------------------------------------------------------------
-# Multi-turn Gemini + MCP loop
-# ---------------------------------------------------------------------------
-
-async def _run_mcp_loop(
-    prompt: str,
-    registry: dict[str, _ToolEntry],
-    max_turns: int = 10,
-) -> list[dict]:
-    if not registry:
-        logger.warning("[act_agent] No tools in registry — skipping execution")
-        return []
-
-    declarations = [entry.declaration for entry in registry.values()]
-    contents = [{"role": "user", "parts": [{"text": prompt}]}]
-    tool_calls: list[dict] = []
-
-    async with httpx.AsyncClient(timeout=_MCP_TIMEOUT) as http:
-        for turn in range(max_turns):
-            body = {
-                "contents": contents,
-                "tools": [{"functionDeclarations": declarations}],
-                "generationConfig": {"temperature": 0.2},
-            }
-            try:
-                data = await _post_gemini(http, body)
-            except Exception as exc:
-                logger.warning("[act_agent] Gemini call failed on turn %d, stopping: %s", turn, exc)
-                break
-
-            candidate = data["candidates"][0]
-            parts = candidate.get("content", {}).get("parts", [])
-            contents.append({"role": "model", "parts": parts})
-
-            fc_parts = [p for p in parts if "functionCall" in p]
-            if not fc_parts:
-                logger.debug("[act_agent] Model finished after %d turn(s)", turn + 1)
-                break
-
-            function_responses = []
-            for fc_part in fc_parts:
-                fc = fc_part["functionCall"]
-                name = fc["name"]
-                args = fc.get("args") or {}
-                logger.info("[mcp_tool] %s(%s)", name, list(args.keys()))
-
-                entry = registry.get(name)
-                if entry is None:
-                    logger.error("[act_agent] Unknown tool %s — skipping", name)
-                    result_dict = {"error": f"Unknown tool: {name}"}
-                else:
-                    try:
-                        mcp_result = await entry.session.call_tool(name, args)
-                        raw = mcp_result.content[0].text if mcp_result.content else "{}"
-                        try:
-                            result_dict = json.loads(raw)
-                        except json.JSONDecodeError:
-                            result_dict = {"raw": raw}
-                    except Exception as exc:
-                        logger.error("[act_agent] MCP tool %s failed: %s", name, exc)
-                        result_dict = {"error": str(exc)}
-
-                tool_calls.append({"tool": name, "args": args, "result": result_dict})
-                function_responses.append({
-                    "functionResponse": {
-                        "name": name,
-                        "response": {"result": result_dict},
-                    }
-                })
-
-            contents.append({"role": "user", "parts": function_responses})
-
-    return tool_calls
-
-
-# ---------------------------------------------------------------------------
-# Public entry point
-# ---------------------------------------------------------------------------
-
-async def act(risks: dict, repo_snapshot: dict) -> dict:
+    Requires GitLab Duo (Premium/Ultimate) with beta features enabled.
+    See: https://docs.gitlab.com/ee/user/gitlab_duo/mcp/
     """
-    Run the act agent via official GitLab MCP (HTTP) + MongoDB MCP (stdio).
-    MongoDB MCP is non-fatal: falls back to GitLab-only if npx is unavailable.
+    env = dict(os.environ)
+    return MCPToolset(
+        connection_params=StdioConnectionParams(
+            server_params=StdioServerParameters(
+                command=_NPX,
+                args=[
+                    "-y", "mcp-remote@latest",
+                    f"{settings.gitlab_url}/api/v4/mcp",
+                ],
+                env=env,
+            ),
+        ),
+    )
+
+
+def _mongodb_toolset() -> MCPToolset:
+    """Official MongoDB MCP server via stdio (`npx @mongodb-js/mongodb-mcp-server`)."""
+    env = dict(os.environ)
+    env["MDB_MCP_CONNECTION_STRING"] = settings.mongodb_uri
+    return MCPToolset(
+        connection_params=StdioConnectionParams(
+            server_params=StdioServerParameters(
+                command=_NPX,
+                args=["-y", "@mongodb-js/mongodb-mcp-server"],
+                env=env,
+            ),
+        ),
+    )
+
+
+def _mycelium_toolset() -> MCPToolset:
+    """Custom Mycelium MCP server — typed tools over the knowledge graph + GitLab."""
+    return MCPToolset(
+        connection_params=StdioConnectionParams(
+            server_params=StdioServerParameters(
+                command=_PYTHON,
+                args=[str(_SERVER_PY)],
+                env=dict(os.environ),
+            ),
+        ),
+    )
+
+
+def build_root_agent() -> Agent:
+    """
+    Build the Mycelium ADK agent with all three MCP toolsets attached.
+
+    Toolset priority:
+      1. Mycelium MCP  — typed knowledge graph + GitLab snapshot tools
+      2. GitLab MCP    — write tools (create_issue, create_merge_request, …)
+      3. MongoDB MCP   — raw query fallback
+
+    This is the agent that gets wrapped in AdkApp for the Vertex AI Agent Engine
+    runtime — both for local execution and for deployment to Agent Engine.
+    """
+    tools: list = []
+    try:
+        tools.append(_mycelium_toolset())
+    except Exception as exc:
+        logger.warning(
+            "[act_agent] Mycelium MCP toolset construction failed (%s) — "
+            "agent will run without Mycelium-specific tools", exc,
+        )
+    try:
+        tools.append(_gitlab_toolset())
+    except Exception as exc:
+        logger.warning(
+            "[act_agent] GitLab MCP toolset construction failed (%s) — "
+            "check that GitLab Duo is enabled and GITLAB_TOKEN has the mcp scope", exc,
+        )
+    try:
+        tools.append(_mongodb_toolset())
+    except Exception as exc:
+        logger.warning(
+            "[act_agent] MongoDB MCP toolset construction failed (%s) — "
+            "agent will run without raw MongoDB tools", exc,
+        )
+
+    return Agent(
+        model=settings.gemini_model,
+        name="mycelium_act_agent",
+        description="Continuity agent that queries the knowledge graph and "
+                    "takes corrective action in GitLab.",
+        instruction=_AGENT_INSTRUCTION,
+        tools=tools,
+    )
+
+
+# `root_agent` is the canonical name expected by ADK deployment tooling.
+root_agent = build_root_agent()
+
+
+# ---------------------------------------------------------------------------
+# Pipeline entry point
+# ---------------------------------------------------------------------------
+
+def _collect_tool_calls(event: dict, sink: list[dict]) -> None:
+    """Pull function_call / function_response pairs out of an AdkApp stream event."""
+    content = event.get("content") or {}
+    parts = content.get("parts") or []
+    for part in parts:
+        fc = part.get("function_call") or part.get("functionCall")
+        if fc:
+            sink.append({
+                "tool": fc.get("name"),
+                "args": fc.get("args") or {},
+                "result": None,
+            })
+        fr = part.get("function_response") or part.get("functionResponse")
+        if fr:
+            # Pair the response with the most recent unmatched call of the same name.
+            name = fr.get("name")
+            response = fr.get("response") or {}
+            for entry in reversed(sink):
+                if entry["tool"] == name and entry["result"] is None:
+                    entry["result"] = response
+                    break
+
+
+async def act(interpretation: dict, repo_snapshot: dict) -> dict:
+    """
+    Run one turn of the act agent under the Vertex AI Agent Engine runtime (AdkApp).
+
+    `interpretation` is the analyst's findings output ({"synthesis", "findings"}).
     """
     prompt = _PROMPT_TEMPLATE.format(
-        risks=json.dumps(risks, indent=2, default=str),
+        interpretation=json.dumps(interpretation, indent=2, default=str),
         repo=json.dumps(repo_snapshot, indent=2, default=str),
     )
 
-    gl_headers = {"Authorization": f"Bearer {settings.gitlab_token}"}
-    mg_env = dict(os.environ)
-    mg_env["MDB_MCP_CONNECTION_STRING"] = settings.mongodb_uri
-    mg_params = StdioServerParameters(
-        command=_NPX,
-        args=["-y", "@mongodb-js/mongodb-mcp-server"],
-        env=mg_env,
-    )
+    app = AdkApp(agent=root_agent)
 
     tool_calls: list[dict] = []
+    final_text_parts: list[str] = []
+
+    def _drain_stream() -> None:
+        session = app.create_session(user_id=_USER_ID)
+        try:
+            for event in app.stream_query(
+                user_id=_USER_ID,
+                session_id=session["id"],
+                message=prompt,
+            ):
+                if isinstance(event, dict):
+                    _collect_tool_calls(event, tool_calls)
+                    parts = (event.get("content") or {}).get("parts") or []
+                    for p in parts:
+                        text = p.get("text")
+                        if text:
+                            final_text_parts.append(text)
+        finally:
+            try:
+                app.delete_session(user_id=_USER_ID, session_id=session["id"])
+            except Exception:
+                pass  # session cleanup is best-effort
+
     try:
-        async with streamablehttp_client(
-            _GITLAB_MCP_URL,
-            headers=gl_headers,
-            timeout=_MCP_TIMEOUT,
-        ) as (gl_r, gl_w, _):
-            async with ClientSession(gl_r, gl_w) as gl_session:
-                await gl_session.initialize()
-
-                try:
-                    async with stdio_client(mg_params) as (mg_r, mg_w):
-                        async with ClientSession(mg_r, mg_w) as mg_session:
-                            await mg_session.initialize()
-                            registry = await _build_registry(gl_session, mg_session)
-                            tool_calls = await _run_mcp_loop(prompt, registry)
-                except Exception as exc:
-                    logger.warning(
-                        "[act_agent] MongoDB MCP unavailable (%s) — running GitLab MCP only", exc,
-                    )
-                    registry = await _build_registry(gl_session, None)
-                    tool_calls = await _run_mcp_loop(prompt, registry)
-
+        # stream_query is synchronous; run it off the event loop so SSE keeps flowing.
+        await asyncio.to_thread(_drain_stream)
     except Exception as exc:
-        # Unwrap anyio / Python 3.11+ ExceptionGroup so the real cause is visible.
-        inner = getattr(exc, "exceptions", None)
-        if inner:
-            for sub in inner:
-                logger.error("[act_agent] GitLab MCP inner error: %s — %s", type(sub).__name__, sub)
-        logger.error("[act_agent] GitLab MCP session failed (%s): %s", type(exc).__name__, exc)
+        logger.exception("[act_agent] AdkApp run failed: %s", exc)
 
-    executed, failed, details = [], [], []
+    executed: list[dict] = []
+    failed: list[dict] = []
+    details: list[dict] = []
     for tc in tool_calls:
-        name = tc["tool"]
-        args = tc["args"]
-        result = tc["result"]
-        if "error" in result:
-            failed.append({"tool": name, "error": result["error"]})
-            logger.error("[act_agent] %s failed: %s", name, result["error"])
+        name = tc.get("tool") or "?"
+        args = tc.get("args") or {}
+        result = tc.get("result") or {}
+        # MCP tool errors surface inside response payloads; treat any "error" key as failure.
+        err = _extract_error(result)
+        if err:
+            failed.append({"tool": name, "error": err})
         else:
             executed.append(tc)
-            iid = result.get("iid") or result.get("id")
-            title = args.get("title") or args.get("body", "")[:60]
-            details.append({"kind": name, "detail": f"#{iid} {title}".strip() if iid else title})
+            iid = _extract_iid(result)
+            title = args.get("title") or (args.get("body") or "")[:60]
+            label = f"#{iid} {title}".strip() if iid else title
+            details.append({"kind": name, "detail": label})
 
+    summary_text = "\n".join(final_text_parts).strip()
     return {
         "executed": len(executed),
         "failed": len(failed),
         "details": details,
-        "mcp_calls": [{"tool": tc["tool"], "args": list(tc["args"].keys())} for tc in tool_calls],
+        "mcp_calls": [{"tool": tc.get("tool"), "args": list((tc.get("args") or {}).keys())}
+                      for tc in tool_calls],
+        "summary": summary_text[:2000] if summary_text else None,
     }
+
+
+def _extract_error(payload: dict | list | str | None) -> str | None:
+    if not payload:
+        return None
+    if isinstance(payload, dict):
+        if "error" in payload:
+            return str(payload["error"])
+        for v in payload.values():
+            err = _extract_error(v)
+            if err:
+                return err
+    elif isinstance(payload, list):
+        for item in payload:
+            err = _extract_error(item)
+            if err:
+                return err
+    return None
+
+
+def _extract_iid(payload: dict | list | str | None) -> str | int | None:
+    if isinstance(payload, dict):
+        for key in ("iid", "id"):
+            if key in payload:
+                return payload[key]
+        for v in payload.values():
+            iid = _extract_iid(v)
+            if iid is not None:
+                return iid
+    elif isinstance(payload, list):
+        for item in payload:
+            iid = _extract_iid(item)
+            if iid is not None:
+                return iid
+    return None
