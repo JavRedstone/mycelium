@@ -9,49 +9,59 @@ import Tooltip from "@mui/material/Tooltip";
 
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import AccountTreeOutlinedIcon from "@mui/icons-material/AccountTreeOutlined";
+import BiotechOutlinedIcon from "@mui/icons-material/BiotechOutlined";
 import BoltOutlinedIcon from "@mui/icons-material/BoltOutlined";
 import AssignmentOutlinedIcon from "@mui/icons-material/AssignmentOutlined";
 import PlayArrowOutlinedIcon from "@mui/icons-material/PlayArrowOutlined";
 import SchoolOutlinedIcon from "@mui/icons-material/SchoolOutlined";
 import AssessmentOutlinedIcon from "@mui/icons-material/AssessmentOutlined";
+import FolderOpenOutlinedIcon from "@mui/icons-material/FolderOpenOutlined";
 
-import { fmt, timeAgo, type PipelineRun } from "./Pipeline";
+import { fmt, timeAgo, fmtDatetime, type PipelineRun } from "./Pipeline";
 
 type StageStatus = "pending" | "running" | "success" | "failed" | "skipped";
 
-const STAGE_ORDER = ["observe_repo", "observe_graph", "analyze", "plan", "act", "learn", "summary"];
+const STAGE_ORDER = [
+  "observe_repo", "map_modules", "investigate",
+  "observe_graph", "interpret", "plan", "act", "learn", "summary",
+];
 const STAGE_LABEL: Record<string, string> = {
-  observe_repo: "Observe Repo",
-  observe_graph: "Observe Graph",
-  analyze: "Analyze",
-  plan: "Plan",
-  act: "Execute",
-  learn: "Persist",
-  summary: "Summary",
+  observe_repo:  "Observe",
+  map_modules:   "Map",
+  investigate:   "Investigate",
+  observe_graph: "Graph",
+  interpret:     "Interpret",
+  plan:          "Plan",
+  act:           "Execute",
+  learn:         "Persist",
+  summary:       "Summary",
 };
 const STAGE_ICON_EL: Record<string, React.ReactElement> = {
-  observe_repo: <VisibilityOutlinedIcon sx={{ fontSize: 12 }} />,
+  observe_repo:  <VisibilityOutlinedIcon sx={{ fontSize: 12 }} />,
+  map_modules:   <FolderOpenOutlinedIcon sx={{ fontSize: 12 }} />,
+  investigate:   <BiotechOutlinedIcon sx={{ fontSize: 12 }} />,
   observe_graph: <AccountTreeOutlinedIcon sx={{ fontSize: 12 }} />,
-  analyze: <BoltOutlinedIcon sx={{ fontSize: 12 }} />,
-  plan: <AssignmentOutlinedIcon sx={{ fontSize: 12 }} />,
-  act: <PlayArrowOutlinedIcon sx={{ fontSize: 12 }} />,
-  learn: <SchoolOutlinedIcon sx={{ fontSize: 12 }} />,
-  summary: <AssessmentOutlinedIcon sx={{ fontSize: 12 }} />,
+  interpret:     <BoltOutlinedIcon sx={{ fontSize: 12 }} />,
+  plan:          <AssignmentOutlinedIcon sx={{ fontSize: 12 }} />,
+  act:           <PlayArrowOutlinedIcon sx={{ fontSize: 12 }} />,
+  learn:         <SchoolOutlinedIcon sx={{ fontSize: 12 }} />,
+  summary:       <AssessmentOutlinedIcon sx={{ fontSize: 12 }} />,
 };
 
 const CELL_BG: Record<StageStatus, string> = {
   pending: "rgba(255,255,255,0.05)",
   running: "#1a73e8",
   success: "#34a853",
-  failed: "#ea4335",
+  failed:  "#ea4335",
   skipped: "rgba(255,255,255,0.08)",
 };
 
 const RUN_DOT_COLOR: Record<string, string> = {
-  success: "#34a853",
-  partial: "#fbbc04",
-  failed: "#ea4335",
-  running: "#1a73e8",
+  success:   "#34a853",
+  partial:   "#fbbc04",
+  cancelled: "#fbbc04",
+  failed:    "#ea4335",
+  running:   "#1a73e8",
 };
 
 const COL_W = 28;
@@ -116,6 +126,17 @@ export default function RunHistory() {
     es.onmessage = (e) => {
       try {
         const run = JSON.parse(e.data) as PipelineRun;
+        // Apply live SSE data immediately so the grid updates during a run.
+        setRuns((prev) => {
+          const idx = prev.findIndex((r) => r.run_id === run.run_id);
+          if (idx >= 0) {
+            const next = [...prev];
+            next[idx] = run;
+            return next;
+          }
+          return [...prev, run];
+        });
+        // Fetch full history from MongoDB once the run is done to pick up persisted data.
         if (run.status !== "running") fetchHistory();
       } catch {}
     };
@@ -200,11 +221,21 @@ export default function RunHistory() {
           }}
         >
           {/* Date label row (offset by LABEL_W) */}
-          <Box sx={{ display: "flex", pl: `${LABEL_W}px`, mb: 0.5, minWidth: "max-content" }}>
+          <Box sx={{ display: "flex", pl: `${LABEL_W}px`, mb: 0.5, minWidth: "max-content", alignItems: "center" }}>
             {sorted.map((run, i) => (
-              <Box key={run.run_id} sx={{ width: COL_W, flexShrink: 0, position: "relative", height: 14 }}>
+              <Box key={run.run_id} sx={{ width: COL_W, flexShrink: 0, display: "flex", justifyContent: "center", height: 14 }}>
                 {dateLabels[i] && (
-                  <Typography sx={{ fontSize: "0.58rem", color: "rgba(255,255,255,0.25)", position: "absolute", left: 0, whiteSpace: "nowrap", lineHeight: 1 }}>
+                  <Typography sx={{
+                    fontSize: "0.55rem",
+                    color: "rgba(255,255,255,0.35)",
+                    lineHeight: 1,
+                    whiteSpace: "nowrap",
+                    fontWeight: 600,
+                    writingMode: "vertical-rl",
+                    transform: "rotate(180deg)",
+                    height: 14,
+                    overflow: "hidden",
+                  }}>
                     {dateLabels[i]}
                   </Typography>
                 )}
@@ -213,20 +244,32 @@ export default function RunHistory() {
           </Box>
 
           {/* Run status dots + time labels row */}
-          <Box sx={{ display: "flex", pl: `${LABEL_W}px`, mb: 1, minWidth: "max-content" }}>
+          <Box sx={{ display: "flex", pl: `${LABEL_W}px`, mb: 1, minWidth: "max-content", alignItems: "flex-end" }}>
             {sorted.map((run) => (
               <Tooltip
                 key={run.run_id}
                 title={
                   <Stack spacing={0.25}>
                     <Typography variant="caption" sx={{ fontWeight: 600, textTransform: "capitalize" }}>{run.status}</Typography>
-                    <Typography variant="caption" color="text.secondary">{timeAgo(run.started_at)}</Typography>
+                    <Typography variant="caption" color="text.secondary">{fmtDatetime(run.started_at)}</Typography>
+                    <Typography variant="caption" color="text.disabled">{timeAgo(run.started_at)}</Typography>
                   </Stack>
                 }
                 placement="top"
                 arrow
               >
-                <Stack sx={{ width: COL_W, flexShrink: 0, alignItems: "center", cursor: "default", gap: 0.5 }}>
+                <Stack sx={{ width: COL_W, flexShrink: 0, alignItems: "center", cursor: "default", gap: 0.75 }}>
+                  <Typography sx={{
+                    fontSize: "0.55rem",
+                    color: "rgba(255,255,255,0.22)",
+                    lineHeight: 1,
+                    whiteSpace: "nowrap",
+                    writingMode: "vertical-rl",
+                    transform: "rotate(180deg)",
+                    letterSpacing: "0.02em",
+                  }}>
+                    {fmtTime(run.started_at)}
+                  </Typography>
                   <Box
                     sx={{
                       width: 8,
@@ -236,9 +279,6 @@ export default function RunHistory() {
                       boxShadow: run.status === "running" ? "0 0 0 3px rgba(26,115,232,0.25)" : "none",
                     }}
                   />
-                  <Typography sx={{ fontSize: "0.58rem", color: "rgba(255,255,255,0.22)", lineHeight: 1, whiteSpace: "nowrap" }}>
-                    {fmtTime(run.started_at)}
-                  </Typography>
                 </Stack>
               </Tooltip>
             ))}

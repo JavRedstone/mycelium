@@ -35,7 +35,9 @@ from google.adk.tools.mcp_tool.mcp_session_manager import (
 from mcp.client.stdio import StdioServerParameters
 from vertexai.preview.reasoning_engines import AdkApp
 
+from agent.activity_bus import bus as _activity_bus
 from config.settings import settings
+from connectors.gitlab_client import GitLabClient as _GitLabClient
 
 logger = logging.getLogger(__name__)
 
@@ -112,13 +114,22 @@ You have three tool surfaces:
 
 3. MongoDB MCP tools — raw query fallback for custom aggregations only.
 
-Execution loop:
-1. Call get_gitlab_project_state to get the current issues list (duplicate check).
-2. For each action in the PLAN:
-   - create_issue: call Mycelium MCP create_issue unless exact title exists.
-   - add_comment / assign_issue: execute directly via Mycelium MCP.
-   - generate_onboarding_pack / generate_offboarding_artifact: call Mycelium MCP.
-3. Stop after executing all planned actions.
+Execution loop — follow this EXACTLY:
+1. For each action in the PLAN, call the corresponding Mycelium MCP tool IMMEDIATELY:
+   - create_issue   → call create_issue with the title and description from the plan
+   - add_comment    → call add_comment
+   - assign_issue   → call assign_issue
+   - generate_onboarding_pack / generate_offboarding_artifact → call Mycelium MCP
+2. If a tool call fails, skip that action and proceed to the next.
+3. Stop after processing every action in the plan.
+
+CRITICAL — DO NOT:
+  ✗ Call get_gitlab_project_state before executing (this causes premature termination)
+  ✗ Skip a create_issue because you judge the situation as "already covered"
+  ✗ Substitute your own assessment for the planner's decisions
+  ✗ Confuse the TOPIC of an issue (which may reference an upstream repo) with
+    the TARGET of the write — all issues are created IN your authorized project,
+    even if their title or description discusses upstream changes
 """
 
 _PROMPT_TEMPLATE = """\
@@ -142,12 +153,15 @@ Current repository snapshot:
 {repo}
 
 EXECUTION INSTRUCTIONS:
-- Execute every planned action using Mycelium MCP tools (pre-scoped to the authorized project).
-- When using GitLab MCP tools, ALWAYS pass project_path="{project_path}".
-- Do NOT write to any other project — upstream/parent repos are outside your authority.
-- Do NOT skip actions unless a tool call explicitly fails.
-- Do NOT ask for confirmation — execute autonomously.
-- Stop after executing all planned actions.
+1. Call create_issue (Mycelium MCP) for EACH action in the plan above — right now.
+2. Issue titles may reference upstream repos (e.g. "javredstone-mcp/gitlab-pages") as
+   TOPICS. The write target is always your authorized project. This is NOT a boundary
+   violation — you are tracking the topic in your own project's issue tracker.
+3. If a tool call fails, skip it and continue to the next action.
+4. Do NOT call get_gitlab_project_state first — execute immediately.
+5. Do NOT substitute your own assessment for the planner's decisions.
+6. When using GitLab MCP tools (if Mycelium MCP is unavailable), pass
+   project_path="{project_path}" — never any other project path.
 """
 
 
@@ -267,6 +281,7 @@ def build_root_agent() -> Agent:
 
 
 # `root_agent` is the canonical name expected by ADK deployment tooling.
+# Re-exported for ADK discovery; actual per-call execution uses a fresh agent.
 root_agent = build_root_agent()
 
 
@@ -322,27 +337,207 @@ def _audit_boundary(
     return violations
 
 
-def _collect_tool_calls(event: dict, sink: list[dict]) -> None:
-    """Pull function_call / function_response pairs out of an AdkApp stream event."""
-    content = event.get("content") or {}
-    parts = content.get("parts") or []
-    for part in parts:
-        fc = part.get("function_call") or part.get("functionCall")
+def _field(obj, *keys):
+    """Get the first matching field from a dict OR a Pydantic/proto object.
+
+    ADK stream_query may yield plain dicts OR Pydantic model instances depending
+    on the event type — MCP tool-call events often arrive as model objects.
+    """
+    for key in keys:
+        val = obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
+        if val is not None:
+            return val
+    return None
+
+
+def _parts(event) -> list:
+    """Extract content.parts from a stream event (dict or object)."""
+    content = _field(event, "content")
+    if content is None:
+        return []
+    parts = _field(content, "parts")
+    return list(parts) if parts else []
+
+
+def _to_dict(obj) -> dict:
+    """Best-effort conversion of a Pydantic/proto/mapping object to a plain dict."""
+    if isinstance(obj, dict):
+        return obj
+    if hasattr(obj, "model_dump"):
+        try:
+            return obj.model_dump()
+        except Exception:
+            pass
+    if hasattr(obj, "__dict__"):
+        return vars(obj)
+    try:
+        return dict(obj)
+    except Exception:
+        return {}
+
+
+def _collect_tool_calls(event, sink: list[dict]) -> None:
+    """Pull function_call / function_response pairs out of an AdkApp stream event.
+
+    Handles both plain-dict events (analyst/planner) and Pydantic/proto-object
+    events (act agent with MCP tools).
+    """
+    for part in _parts(event):
+        fc = _field(part, "function_call", "functionCall")
         if fc:
+            args = _field(fc, "args") or {}
+            if not isinstance(args, dict):
+                try:
+                    args = dict(args)
+                except Exception:
+                    args = {}
             sink.append({
-                "tool": fc.get("name"),
-                "args": fc.get("args") or {},
+                "tool": _field(fc, "name"),
+                "args": args,
                 "result": None,
             })
-        fr = part.get("function_response") or part.get("functionResponse")
+        fr = _field(part, "function_response", "functionResponse")
         if fr:
-            # Pair the response with the most recent unmatched call of the same name.
-            name = fr.get("name")
-            response = fr.get("response") or {}
+            name = _field(fr, "name")
+            response = _field(fr, "response") or {}
             for entry in reversed(sink):
                 if entry["tool"] == name and entry["result"] is None:
                     entry["result"] = response
                     break
+
+
+def _collect_trace(event, sink: list[dict]) -> None:
+    """Build an ordered agent conversation trace from a stream event.
+
+    Produces entries with a 'type' discriminant:
+      {"type": "agent_text",     "text": str}
+      {"type": "tool_call",      "tool": str, "args": dict}
+      {"type": "tool_response",  "tool": str, "result": any}
+    """
+    for part in _parts(event):
+        text = _field(part, "text")
+        if text:
+            text = str(text).strip()
+            if text:
+                if sink and sink[-1].get("type") == "agent_text":
+                    sink[-1]["text"] = sink[-1]["text"] + "\n" + text
+                else:
+                    sink.append({"type": "agent_text", "text": text})
+
+        fc = _field(part, "function_call", "functionCall")
+        if fc:
+            args = _field(fc, "args") or {}
+            if not isinstance(args, dict):
+                try:
+                    args = dict(args)
+                except Exception:
+                    args = {}
+            sink.append({
+                "type": "tool_call",
+                "tool": _field(fc, "name"),
+                "args": args,
+            })
+
+        fr = _field(part, "function_response", "functionResponse")
+        if fr:
+            sink.append({
+                "type": "tool_response",
+                "tool": _field(fr, "name"),
+                "result": _field(fr, "response"),
+            })
+
+
+async def _direct_execute_actions(
+    actions: list[dict],
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """Execute planned actions directly via Python — bypasses the ADK tool loop.
+
+    Used as a reliable fallback when the ADK stream produces no tool calls.
+    Emits the same tool_call / tool_response events to the activity bus so the
+    UI sees them identically to agent-driven execution.
+    """
+    executed: list[dict] = []
+    failed: list[dict] = []
+    details: list[dict] = []
+
+    async def _create_issue(params: dict) -> dict:
+        def _run() -> dict:
+            return _GitLabClient().create_issue(
+                title=params.get("title", ""),
+                description=params.get("description", ""),
+                labels=params.get("labels") or None,
+                assignee_username=params.get("assignee_username") or None,
+            )
+        return await asyncio.to_thread(_run)
+
+    async def _add_comment(params: dict) -> dict:
+        def _run() -> dict:
+            client = _GitLabClient()
+            kind = params.get("kind", "issue")
+            iid = int(params.get("iid", 0))
+            body = params.get("body", "")
+            if kind == "mr":
+                return client.comment_on_mr(mr_iid=iid, body=body)
+            return client.comment_on_issue(issue_iid=iid, body=body)
+        return await asyncio.to_thread(_run)
+
+    async def _assign_issue(params: dict) -> dict:
+        def _run() -> dict:
+            return _GitLabClient().assign_issue(
+                issue_iid=int(params.get("iid", 0)),
+                assignee_username=params.get("assignee_username", ""),
+            )
+        return await asyncio.to_thread(_run)
+
+    async def _onboarding_pack(params: dict) -> dict:
+        from connectors.mcp_server import generate_onboarding_pack
+        username = params.get("new_member_username") or params.get("username", "")
+        return await generate_onboarding_pack(username)
+
+    async def _offboarding_artifact(params: dict) -> dict:
+        from connectors.mcp_server import generate_offboarding_artifact
+        username = params.get("departing_member_username") or params.get("username", "")
+        return await generate_offboarding_artifact(username)
+
+    HANDLERS: dict = {
+        "create_issue":               _create_issue,
+        "add_comment":                _add_comment,
+        "assign_issue":               _assign_issue,
+        "generate_onboarding_pack":   _onboarding_pack,
+        "generate_offboarding_artifact": _offboarding_artifact,
+    }
+
+    for action in actions:
+        kind = action.get("kind", "")
+        params = action.get("params", {})
+        handler = HANDLERS.get(kind)
+        if not handler:
+            logger.warning("[act_agent] unknown action kind %r — skipping", kind)
+            continue
+
+        _activity_bus.emit({"type": "tool_call", "stage_id": "act", "tool": kind, "args": params})
+        try:
+            result = await handler(params)
+            err = _extract_error(result)
+            if err:
+                failed.append({"tool": kind, "error": err})
+                _activity_bus.emit({"type": "tool_response", "stage_id": "act", "tool": kind, "result": {"error": err}})
+                logger.warning("[act_agent] direct %r failed: %s", kind, err)
+            else:
+                executed.append({"tool": kind, "args": params, "result": result})
+                iid = _extract_iid(result)
+                title = params.get("title", kind)
+                label = (f"#{iid} " if iid else "") + title
+                details.append({"kind": kind, "detail": label})
+                _activity_bus.emit({"type": "tool_response", "stage_id": "act", "tool": kind, "result": result})
+                logger.info("[act_agent] direct %r → %s", kind, label)
+        except Exception as exc:
+            logger.error("[act_agent] direct %r raised: %s", kind, exc)
+            failed.append({"tool": kind, "error": str(exc)})
+            _activity_bus.emit({"type": "tool_response", "stage_id": "act", "tool": kind,
+                                "result": {"error": str(exc)}})
+
+    return executed, failed, details
 
 
 async def act(interpretation: dict, repo_snapshot: dict, plan: dict | None = None) -> dict:
@@ -359,6 +554,9 @@ async def act(interpretation: dict, repo_snapshot: dict, plan: dict | None = Non
     authorized_id: int = int(repo_snapshot.get("project_id") or settings.gitlab_project_id)
     authorized_path: str = str(repo_snapshot.get("project_path") or authorized_id)
 
+    actions = (plan or {}).get("actions", [])
+    logger.info("[act_agent] starting — %d planned actions, project=%s", len(actions), authorized_path)
+
     prompt = _PROMPT_TEMPLATE.format(
         project_id=authorized_id,
         project_path=authorized_path,
@@ -367,9 +565,12 @@ async def act(interpretation: dict, repo_snapshot: dict, plan: dict | None = Non
         repo=json.dumps(repo_snapshot, indent=2, default=str),
     )
 
-    app = AdkApp(agent=root_agent)
+    # Build a fresh agent per call so MCP stdio connections are never stale.
+    agent = build_root_agent()
+    app = AdkApp(agent=agent)
 
     tool_calls: list[dict] = []
+    trace: list[dict] = []
     final_text_parts: list[str] = []
 
     def _drain_stream() -> None:
@@ -380,14 +581,24 @@ async def act(interpretation: dict, repo_snapshot: dict, plan: dict | None = Non
                 session_id=session["id"],
                 message=prompt,
             ):
-                if isinstance(event, dict):
+                # ADK may yield plain dicts OR Pydantic model instances.
+                # _collect_tool_calls/_collect_trace handle both via _field()/_parts().
+                try:
                     _collect_tool_calls(event, tool_calls)
-                    parts = (event.get("content") or {}).get("parts") or []
-                    for p in parts:
-                        text = p.get("text")
+                    prev_len = len(trace)
+                    _collect_trace(event, trace)
+                    for entry in trace[prev_len:]:
+                        _activity_bus.emit({**entry, "stage_id": "act"})
+                    for p in _parts(event):
+                        text = _field(p, "text")
                         if text:
-                            final_text_parts.append(text)
+                            final_text_parts.append(str(text))
+                except Exception as parse_exc:
+                    logger.debug("[act_agent] event parse error (type=%s): %s",
+                                 type(event).__name__, parse_exc)
         finally:
+            logger.info("[act_agent] stream done — %d tool_calls captured, %d trace entries",
+                        len(tool_calls), len(trace))
             try:
                 app.delete_session(user_id=_USER_ID, session_id=session["id"])
             except Exception:
@@ -398,16 +609,16 @@ async def act(interpretation: dict, repo_snapshot: dict, plan: dict | None = Non
         await asyncio.to_thread(_drain_stream)
     except Exception as exc:
         logger.exception("[act_agent] AdkApp run failed: %s", exc)
+        _activity_bus.emit({"type": "agent_text", "stage_id": "act",
+                            "text": f"Act agent error — check server logs: {exc}"})
 
     # --- Ownership boundary audit -------------------------------------------
-    # Check every tool call for cross-project writes before processing results.
-    # This is a defence-in-depth layer: violations should already be prevented by
-    # instruction-level constraints, but we log them critically if they slip through.
     violations = _audit_boundary(tool_calls, authorized_id, authorized_path)
     for v in violations:
         logger.critical("[act_agent] OWNERSHIP BOUNDARY VIOLATION: %s", v)
     # ------------------------------------------------------------------------
 
+    # Process any tool calls the ADK stream captured.
     executed: list[dict] = []
     failed: list[dict] = []
     details: list[dict] = []
@@ -415,7 +626,6 @@ async def act(interpretation: dict, repo_snapshot: dict, plan: dict | None = Non
         name = tc.get("tool") or "?"
         args = tc.get("args") or {}
         result = tc.get("result") or {}
-        # MCP tool errors surface inside response payloads; treat any "error" key as failure.
         err = _extract_error(result)
         if err:
             failed.append({"tool": name, "error": err})
@@ -426,6 +636,22 @@ async def act(interpretation: dict, repo_snapshot: dict, plan: dict | None = Non
             label = f"#{iid} {title}".strip() if iid else title
             details.append({"kind": name, "detail": label})
 
+    # If the ADK stream produced no tool calls, execute the plan directly.
+    # This is the reliable fallback: Gemini reasons (text above) but we act
+    # deterministically from the structured plan rather than waiting for the
+    # agent to invoke tools through the MCP loop.
+    if not tool_calls and actions:
+        logger.info("[act_agent] ADK produced 0 tool calls — executing %d planned actions directly",
+                    len(actions))
+        _activity_bus.emit({
+            "type": "agent_text", "stage_id": "act",
+            "text": f"Executing {len(actions)} planned action(s) directly…",
+        })
+        direct_executed, direct_failed, direct_details = await _direct_execute_actions(actions)
+        executed.extend(direct_executed)
+        failed.extend(direct_failed)
+        details.extend(direct_details)
+
     summary_text = "\n".join(final_text_parts).strip()
     return {
         "executed": len(executed),
@@ -435,6 +661,7 @@ async def act(interpretation: dict, repo_snapshot: dict, plan: dict | None = Non
                       for tc in tool_calls],
         "summary": summary_text[:2000] if summary_text else None,
         "boundary_violations": violations,
+        "trace": trace,
     }
 
 

@@ -16,6 +16,7 @@ import vertexai
 from google.adk.agents import Agent
 from vertexai.preview.reasoning_engines import AdkApp
 
+from agent.activity_bus import bus as _activity_bus
 from agent.json_utils import try_parse_json as _try_parse_json  # re-exported for tests
 from config.settings import settings
 
@@ -161,7 +162,7 @@ root_agent = Agent(
 )
 
 
-def _run_through_adk(prompt: str) -> str:
+def _run_through_adk(prompt: str, stage_id: str = "interpret") -> str:
     """Run the analyst agent under the AdkApp runtime and return concatenated text output."""
     app = AdkApp(agent=root_agent)
     session = app.create_session(user_id=_USER_ID)
@@ -174,11 +175,28 @@ def _run_through_adk(prompt: str) -> str:
         ):
             if not isinstance(event, dict):
                 continue
-            parts = (event.get("content") or {}).get("parts") or []
+            content = event.get("content") if isinstance(event, dict) else getattr(event, "content", None)
+            parts = (content.get("parts") if isinstance(content, dict) else getattr(content, "parts", None)) or []
             for p in parts:
-                text = p.get("text")
+                text = p.get("text") if isinstance(p, dict) else getattr(p, "text", None)
                 if text:
-                    chunks.append(text)
+                    chunks.append(str(text))
+                    stripped = str(text).strip()
+                    # Skip pure JSON output — already surfaced as structured finding events.
+                    if stripped and not stripped.startswith(("{", "[")):
+                        _activity_bus.emit({"type": "agent_text", "stage_id": stage_id, "text": stripped})
+                fc = (p.get("function_call") or p.get("functionCall")) if isinstance(p, dict) else (getattr(p, "function_call", None) or getattr(p, "functionCall", None))
+                if fc:
+                    name = fc.get("name") if isinstance(fc, dict) else getattr(fc, "name", "?")
+                    args = fc.get("args") if isinstance(fc, dict) else getattr(fc, "args", {})
+                    _activity_bus.emit({"type": "tool_call", "stage_id": stage_id,
+                                        "tool": name or "?", "args": dict(args) if args else {}})
+                fr = (p.get("function_response") or p.get("functionResponse")) if isinstance(p, dict) else (getattr(p, "function_response", None) or getattr(p, "functionResponse", None))
+                if fr:
+                    name = fr.get("name") if isinstance(fr, dict) else getattr(fr, "name", "?")
+                    result = fr.get("response") if isinstance(fr, dict) else getattr(fr, "response", None)
+                    _activity_bus.emit({"type": "tool_response", "stage_id": stage_id,
+                                        "tool": name or "?", "result": result})
     finally:
         try:
             app.delete_session(user_id=_USER_ID, session_id=session["id"])

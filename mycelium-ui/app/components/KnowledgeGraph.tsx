@@ -11,6 +11,8 @@ import LinearProgress from "@mui/material/LinearProgress";
 import Grid from "@mui/material/Grid";
 import Divider from "@mui/material/Divider";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutlined";
+import ScienceOutlinedIcon from "@mui/icons-material/ScienceOutlined";
 import HubOutlinedIcon from "@mui/icons-material/HubOutlined";
 import WarningAmberOutlinedIcon from "@mui/icons-material/WarningAmberOutlined";
 import PersonOutlineOutlinedIcon from "@mui/icons-material/PersonOutlineOutlined";
@@ -38,6 +40,7 @@ type Contributor = {
   commit_count: number;
   expertise_score: number;
   external: boolean;
+  demo?: boolean;
 };
 
 type Module = {
@@ -45,6 +48,7 @@ type Module = {
   owners: string[];
   bus_factor: number;
   contributors: Contributor[];
+  demo?: boolean;
 };
 
 type Developer = {
@@ -52,6 +56,7 @@ type Developer = {
   name: string;
   active: boolean;
   external: boolean;
+  demo?: boolean;
 };
 
 type Finding = {
@@ -97,10 +102,18 @@ function moduleSortKey(m: Module): number {
 // ---------------------------------------------------------------------------
 // React Flow — custom node types (defined outside component to avoid re-render)
 // ---------------------------------------------------------------------------
+const DEMO_DOT = (
+  <Box component="span" sx={{
+    display: "inline-block", width: 6, height: 6, borderRadius: "50%",
+    bgcolor: "#a78bfa", ml: 0.5, verticalAlign: "middle", flexShrink: 0,
+  }} />
+);
+
 function ModuleFlowNode({ data }: { data: Record<string, unknown> }) {
   const busFactor = (data.busFactor as number) ?? 0;
   const hasInternal = (data.hasInternal as boolean) ?? false;
   const path = data.path as string;
+  const isDemo = (data.demo as boolean) ?? false;
   const color = concentrationColor(busFactor, hasInternal);
   const label = concentrationLabel(busFactor, hasInternal);
   return (
@@ -109,18 +122,23 @@ function ModuleFlowNode({ data }: { data: Record<string, unknown> }) {
         px: 1.5,
         py: 0.75,
         bgcolor: color + "18",
-        border: `1px solid ${color}55`,
+        border: `1px solid ${isDemo ? "#7c3aed88" : color + "55"}`,
         borderRadius: 1.5,
         minWidth: 130,
         cursor: "default",
         userSelect: "none",
+        outline: isDemo ? "1px dashed #7c3aed44" : "none",
+        outlineOffset: 2,
       }}
     >
-      <Typography
-        sx={{ color, fontFamily: "monospace", fontWeight: 700, fontSize: "0.7rem", display: "block", lineHeight: 1.4 }}
-      >
-        {path}/
-      </Typography>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+        <Typography
+          sx={{ color, fontFamily: "monospace", fontWeight: 700, fontSize: "0.7rem", lineHeight: 1.4, flex: 1 }}
+        >
+          {path}/
+        </Typography>
+        {isDemo && DEMO_DOT}
+      </Box>
       <Typography sx={{ color, opacity: 0.7, fontSize: "0.58rem", lineHeight: 1 }}>
         {label} · bus {busFactor}
       </Typography>
@@ -132,7 +150,8 @@ function ModuleFlowNode({ data }: { data: Record<string, unknown> }) {
 function ContributorFlowNode({ data }: { data: Record<string, unknown> }) {
   const external = data.external as boolean;
   const username = data.username as string;
-  const color = external ? "#fa7b17" : "#4285f4";
+  const isDemo = (data.demo as boolean) ?? false;
+  const color = isDemo ? "#a78bfa" : external ? "#fa7b17" : "#4285f4";
   return (
     <Box
       sx={{
@@ -147,9 +166,12 @@ function ContributorFlowNode({ data }: { data: Record<string, unknown> }) {
       }}
     >
       <Handle type="target" position={Position.Left} style={{ background: color, border: "none", width: 7, height: 7 }} />
-      <Typography sx={{ color, fontFamily: "monospace", fontSize: "0.68rem", lineHeight: 1.5 }}>
-        {username}
-      </Typography>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+        <Typography sx={{ color, fontFamily: "monospace", fontSize: "0.68rem", lineHeight: 1.5 }}>
+          {username}
+        </Typography>
+        {isDemo && DEMO_DOT}
+      </Box>
     </Box>
   );
 }
@@ -209,11 +231,12 @@ function buildFlowGraph(modules: Module[]): { nodes: Node[]; edges: Edge[]; tota
   const nodes: Node[] = [
     ...visModules.map((mod, i) => {
       const hasInternal = (mod.contributors ?? []).some((c) => !c.external && c.commit_count > 0);
+      const isDemo = mod.demo || (mod.contributors ?? []).some((c) => c.demo);
       return {
         id: `mod-${mod.path}`,
         type: "moduleNode" as const,
         position: { x: MOD_X, y: modStartY + i * MOD_GAP },
-        data: { path: mod.path, busFactor: mod.bus_factor ?? 0, hasInternal },
+        data: { path: mod.path, busFactor: mod.bus_factor ?? 0, hasInternal, demo: isDemo },
         draggable: false,
       };
     }),
@@ -221,14 +244,14 @@ function buildFlowGraph(modules: Module[]): { nodes: Node[]; edges: Edge[]; tota
       id: `ctb-${c.developer_username}`,
       type: "contributorNode" as const,
       position: { x: CTB_COL1_X, y: col1StartY + i * CTB_GAP },
-      data: { username: c.developer_username, external: c.external },
+      data: { username: c.developer_username, external: c.external, demo: c.demo ?? false },
       draggable: false,
     })),
     ...col2.map((c, i) => ({
       id: `ctb-${c.developer_username}`,
       type: "contributorNode" as const,
       position: { x: CTB_COL2_X, y: col2StartY + i * CTB_GAP },
-      data: { username: c.developer_username, external: c.external },
+      data: { username: c.developer_username, external: c.external, demo: c.demo ?? false },
       draggable: false,
     })),
   ];
@@ -316,6 +339,7 @@ function ModuleBreakdown({ modules, findings }: { modules: Module[]; findings: F
         const color = concentrationColor(busFactor, hasInternal);
         const label = concentrationLabel(busFactor, hasInternal);
         const moduleFindings = findingsByModule.get(mod.path) ?? [];
+        const isDemo = mod.demo || contribs.some((c) => c.demo);
 
         return (
           <Paper
@@ -371,6 +395,14 @@ function ModuleBreakdown({ modules, findings }: { modules: Module[]; findings: F
                   sx={{ height: 18, fontSize: "0.6rem", flexShrink: 0, color: "primary.light", borderColor: "rgba(138,180,248,0.4)" }}
                 />
               ))}
+              {isDemo && (
+                <Chip
+                  label="demo"
+                  size="small"
+                  icon={<ScienceOutlinedIcon sx={{ fontSize: "11px !important" }} />}
+                  sx={{ height: 18, fontSize: "0.6rem", flexShrink: 0, color: "#a78bfa", borderColor: "#7c3aed55", bgcolor: "#7c3aed11", border: "1px solid" }}
+                />
+              )}
             </Stack>
 
             {/* Contributor rows */}
@@ -413,6 +445,13 @@ function ModuleBreakdown({ modules, findings }: { modules: Module[]; findings: F
                       variant="outlined"
                       sx={{ height: 16, fontSize: "0.58rem", minWidth: 58, flexShrink: 0, color: contribColor, borderColor: contribColor + "44" }}
                     />
+                    {c.demo && (
+                      <Chip
+                        label="demo"
+                        size="small"
+                        sx={{ height: 16, fontSize: "0.58rem", flexShrink: 0, color: "#a78bfa", bgcolor: "#7c3aed11", border: "1px solid #7c3aed55" }}
+                      />
+                    )}
                     {c.commit_count > 0 && (
                       <Typography variant="caption" color="text.disabled" sx={{ minWidth: 60, textAlign: "right", flexShrink: 0 }}>
                         {c.commit_count} commits
@@ -480,12 +519,17 @@ function UpstreamAuthorList({ authors, modules }: { authors: Developer[]; module
         return (
           <Box key={dev.username} sx={{ pb: 1, borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
             <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", mb: mods.length ? 0.6 : 0 }}>
-              <PersonOutlineOutlinedIcon sx={{ fontSize: 13, color: "#fa7b17", flexShrink: 0 }} />
+              <PersonOutlineOutlinedIcon sx={{ fontSize: 13, color: dev.demo ? "#a78bfa" : "#fa7b17", flexShrink: 0 }} />
               <Box sx={{ flex: 1, minWidth: 0 }}>
-                <Typography variant="caption" sx={{ fontFamily: "var(--font-google-sans-code)", color: "#fa7b17", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <Typography variant="caption" sx={{ fontFamily: "var(--font-google-sans-code)", color: dev.demo ? "#a78bfa" : "#fa7b17", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {dev.name || dev.username}
                 </Typography>
               </Box>
+              {dev.demo && (
+                <Chip label="demo" size="small" icon={<ScienceOutlinedIcon sx={{ fontSize: "10px !important" }} />}
+                  sx={{ height: 15, fontSize: "0.55rem", color: "#a78bfa", bgcolor: "#7c3aed11",
+                        border: "1px solid #7c3aed55", "& .MuiChip-label": { px: 0.5 }, flexShrink: 0 }} />
+              )}
               {totalCommits > 0 && (
                 <Typography variant="caption" color="text.disabled" sx={{ flexShrink: 0, fontFamily: "var(--font-google-sans-code)" }}>
                   {totalCommits} commits
@@ -599,6 +643,7 @@ export default function KnowledgeGraph() {
   const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [clearing, setClearing] = useState(false);
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -618,6 +663,16 @@ export default function KnowledgeGraph() {
     }
   }, [apiUrl]);
 
+  async function clearDemoData() {
+    setClearing(true);
+    try {
+      await fetch(`${apiUrl}/graph/demo`, { method: "DELETE" });
+      await fetchGraph();
+    } finally {
+      setClearing(false);
+    }
+  }
+
   useEffect(() => {
     fetchGraph();
     intervalRef.current = setInterval(fetchGraph, 30_000);
@@ -630,6 +685,9 @@ export default function KnowledgeGraph() {
   const concentratedCount = data?.concentrated_modules?.length ?? 0;
   const recentFindings: Finding[] = data?.recent_findings ?? [];
   const hasGraph = moduleCount > 0;
+  const demoDevCount = data?.developers.filter((d) => d.demo).length ?? 0;
+  const demoModCount = data?.modules.filter((m) => m.demo || m.contributors?.some((c) => c.demo)).length ?? 0;
+  const hasDemo = demoDevCount > 0 || demoModCount > 0;
 
   return (
     <Stack spacing={3}>
@@ -644,10 +702,39 @@ export default function KnowledgeGraph() {
             </Typography>
           )}
         </Stack>
-        <Button size="small" variant="outlined" onClick={fetchGraph} disabled={loading} startIcon={<RefreshIcon />} sx={{ height: 30 }}>
-          {loading ? "Loading…" : "Refresh"}
-        </Button>
+        <Stack direction="row" spacing={1}>
+          {hasDemo && (
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={clearDemoData}
+              disabled={clearing}
+              startIcon={<DeleteOutlineIcon />}
+              sx={{ height: 30, color: "#a78bfa", borderColor: "#7c3aed55", "&:hover": { borderColor: "#a78bfa", bgcolor: "#7c3aed11" } }}
+            >
+              {clearing ? "Clearing…" : "Clear demo data"}
+            </Button>
+          )}
+          <Button size="small" variant="outlined" onClick={fetchGraph} disabled={loading} startIcon={<RefreshIcon />} sx={{ height: 30 }}>
+            {loading ? "Loading…" : "Refresh"}
+          </Button>
+        </Stack>
       </Stack>
+
+      {/* Demo data banner */}
+      {hasDemo && (
+        <Paper elevation={0} sx={{ p: 1.5, bgcolor: "#7c3aed11", border: "1px solid #7c3aed44", borderRadius: 2 }}>
+          <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+            <ScienceOutlinedIcon sx={{ fontSize: 15, color: "#a78bfa", flexShrink: 0 }} />
+            <Typography variant="caption" sx={{ color: "#a78bfa", flex: 1 }}>
+              Demo data active — {demoDevCount > 0 ? `${demoDevCount} developer${demoDevCount !== 1 ? "s" : ""}` : ""}
+              {demoDevCount > 0 && demoModCount > 0 ? " · " : ""}
+              {demoModCount > 0 ? `${demoModCount} module${demoModCount !== 1 ? "s" : ""}` : ""} seeded for simulation.
+              Results shown include synthetic entries. Use <strong>Clear demo data</strong> to remove them.
+            </Typography>
+          </Stack>
+        </Paper>
+      )}
 
       {error && <Typography variant="body2" color="error.main">{error}</Typography>}
 

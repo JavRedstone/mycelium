@@ -13,6 +13,7 @@ class DeveloperNode(BaseModel):
     expertise: dict[str, float] = Field(default_factory=dict)  # module_path -> score 0-1
     last_seen: Optional[datetime] = None
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    demo: bool = False  # True for seeded simulation entries — safe to bulk-delete
 
 
 class ModuleNode(BaseModel):
@@ -28,6 +29,7 @@ class ModuleNode(BaseModel):
     bus_factor: int = 0                          # measurement: contributors covering 80% of commits
     last_commit_at: Optional[datetime] = None
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    demo: bool = False  # True for seeded simulation entries — safe to bulk-delete
 
 
 class Finding(BaseModel):
@@ -73,6 +75,17 @@ class ContributionEdge(BaseModel):
     # Optional metadata for contributions originating outside project members
     external: bool = False
     developer_identity: Optional[str] = None  # freeform name/email for external contributors
+    demo: bool = False  # True for seeded simulation entries — safe to bulk-delete
+
+
+class ContributionHistory(BaseModel):
+    """Monthly commit count per (developer, module) — the timeline backbone."""
+    developer_username: str
+    module_path: str
+    year_month: str          # "YYYY-MM"
+    commit_count: int = 0
+    external: bool = False
+    demo: bool = False
 
 
 class ActionRecord(BaseModel):

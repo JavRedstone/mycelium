@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import time
 import uuid
@@ -8,10 +9,16 @@ from typing import Awaitable, Callable, Optional
 
 from agent import analyst_agent, planner_agent, investigator
 from agent import act_agent
+from agent.activity_bus import bus as _activity_bus
 from connectors.gitlab_client import GitLabClient
 from graph.knowledge_graph import KnowledgeGraph
 
 logger = logging.getLogger(__name__)
+
+
+class _PipelineCancelled(Exception):
+    pass
+
 
 STAGE_DEFS = [
     {"id": "observe_repo", "label": "Observe Repo", "description": "Read GitLab project state: members, issues, MRs, pipelines, CODEOWNERS, fork divergence"},
@@ -63,6 +70,8 @@ class PipelineRunner:
         self._subscribers: set[asyncio.Queue] = set()
         self._running = False
 
+        self._cancel_requested = False
+
         # Scratch data passed between stages (not stored in stage.output)
         self._repo: dict = {}
         self._module_contributors: dict = {}
@@ -79,6 +88,9 @@ class PipelineRunner:
     @property
     def is_running(self) -> bool:
         return self._running
+
+    def request_cancel(self) -> None:
+        self._cancel_requested = True
 
     @property
     def run_history(self) -> list:
@@ -115,6 +127,7 @@ class PipelineRunner:
             logger.warning("[pipeline] Run requested but already running — skipping")
             return
         self._running = True
+        self._cancel_requested = False
         run = PipelineRun(
             run_id=str(uuid.uuid4()),
             started_at=time.time(),
@@ -122,6 +135,9 @@ class PipelineRunner:
         )
         self._current_run = run
         self._broadcast()
+        _activity_bus.reset()
+        _activity_bus.start_capture(run.run_id)
+        _activity_bus.emit({"type": "run_start", "run_id": run.run_id})
 
         try:
             if not await self._execute("observe_repo", self._observe_repo):
@@ -155,6 +171,9 @@ class PipelineRunner:
                 if all(s.status in ("success", "skipped") for s in run.stages)
                 else "partial"
             )
+        except _PipelineCancelled:
+            run.status = "cancelled"
+            logger.info("[pipeline] Run cancelled by user request")
         except Exception:
             run.status = "failed"
             logger.exception("[pipeline] Unexpected pipeline error")
@@ -162,28 +181,46 @@ class PipelineRunner:
             self._running = False
             self._run_history.append(run)
             self._broadcast()
+            _activity_bus.emit({"type": "run_end", "run_id": run.run_id, "status": run.status})
+            captured_events = _activity_bus.stop_capture()
             try:
                 await self._graph.save_run(run.to_dict())
             except Exception as exc:
                 logger.error("[pipeline] Failed to persist run to MongoDB: %s", exc)
+            try:
+                await self._graph.save_activity_events(run.run_id, captured_events)
+            except Exception as exc:
+                logger.error("[pipeline] Failed to persist activity events: %s", exc)
 
     async def _execute(self, stage_id: str, coro: Callable[[], Awaitable[dict]]) -> bool:
+        if self._cancel_requested:
+            for s in self._current_run.stages:
+                if s.status == "pending":
+                    s.status = "skipped"
+            self._broadcast()
+            raise _PipelineCancelled()
         stage = next(s for s in self._current_run.stages if s.id == stage_id)
         stage.status = "running"
         stage.started_at = time.time()
         self._broadcast()
+        _activity_bus.emit({"type": "stage_start", "stage_id": stage_id, "label": stage.label})
         try:
             logger.info("[pipeline] %-12s started", stage.label)
             stage.output = await coro()
             stage.status = "success"
             stage.duration_ms = int((time.time() - stage.started_at) * 1000)
             logger.info("[pipeline] %-12s done in %dms", stage.label, stage.duration_ms)
+            _activity_bus.emit({"type": "stage_end", "stage_id": stage_id, "label": stage.label,
+                                "status": "success", "duration_ms": stage.duration_ms})
             return True
         except Exception as exc:
             stage.status = "failed"
             stage.error = str(exc)
             stage.duration_ms = int((time.time() - stage.started_at) * 1000)
             logger.error("[pipeline] %-12s failed: %s", stage.label, exc)
+            _activity_bus.emit({"type": "stage_end", "stage_id": stage_id, "label": stage.label,
+                                "status": "failed", "duration_ms": stage.duration_ms,
+                                "error": str(exc)})
             return False
         finally:
             self._broadcast()
@@ -369,6 +406,11 @@ class PipelineRunner:
         logger.info("[investigate] High-attention members: %d", len(high_attention))
 
         # Member investigators — one per high-attention member, concurrent
+        for item in high_attention:
+            subject = (item["member"].get("username") or item["member"].get("name") or "?")
+            _activity_bus.emit({"type": "subagent_spawn", "stage_id": "investigate",
+                                "kind": "member", "subject": subject,
+                                "reason": item["attention_reason"]})
         member_tasks = [
             investigator.investigate_member(
                 member=item["member"],
@@ -382,6 +424,8 @@ class PipelineRunner:
         # Module investigators — one per discovered module, concurrent
         module_tasks = []
         for module_path, contribs in self._module_contributors.items():
+            _activity_bus.emit({"type": "subagent_spawn", "stage_id": "investigate",
+                                "kind": "module", "subject": module_path})
             module_tasks.append(
                 investigator.investigate_module(
                     module_path=module_path,
@@ -420,6 +464,23 @@ class PipelineRunner:
         module_results = [r for r in (_ok(x) for x in results[m_count:m_count + mod_count]) if r]
         drift_result = _ok(results[-1]) if drift_task is not None else None
 
+        # Emit subagent results
+        for item, result in zip(high_attention, member_results):
+            subject = (item["member"].get("username") or item["member"].get("name") or "?")
+            summary = result.get("knowledge_at_risk") or result.get("urgency_reasoning") or "investigated"
+            _activity_bus.emit({"type": "subagent_result", "stage_id": "investigate",
+                                "kind": "member", "subject": subject,
+                                "summary": str(summary)[:200]})
+        for module_path, result in zip(self._module_contributors.keys(), module_results):
+            summary = result.get("transferability_assessment") or result.get("documentation_state") or "investigated"
+            _activity_bus.emit({"type": "subagent_result", "stage_id": "investigate",
+                                "kind": "module", "subject": module_path,
+                                "summary": str(summary)[:200]})
+        if drift_result and drift_result.get("investigated"):
+            _activity_bus.emit({"type": "subagent_result", "stage_id": "investigate",
+                                "kind": "drift", "subject": drift_result.get("upstream_project", "upstream"),
+                                "summary": str(drift_result.get("urgency_assessment", "investigated"))[:200]})
+
         self._investigations = {
             "members": member_results,
             "modules": module_results,
@@ -456,6 +517,11 @@ class PipelineRunner:
             analyst_agent.analyze, self._repo, self._graph_data, self._investigations
         )
         findings = self._interpretation.get("findings", [])
+        for f in findings:
+            _activity_bus.emit({"type": "finding", "stage_id": "interpret",
+                                "subject": str(f.get("subject", "?")),
+                                "concern_type": str(f.get("concern_type", "?")),
+                                "narrative": str(f.get("narrative", ""))[:300]})
         return {
             "synthesis": self._interpretation.get("synthesis"),
             "finding_count": len(findings),
@@ -467,6 +533,11 @@ class PipelineRunner:
         self._plan = await asyncio.to_thread(
             planner_agent.plan, self._interpretation, self._repo, self._graph_data
         )
+        for action in self._plan.get("actions", []):
+            params = action.get("params") or {}
+            _activity_bus.emit({"type": "action_planned", "stage_id": "plan",
+                                "kind": str(action.get("kind", "?")),
+                                "title": str(params.get("title", json.dumps(params)[:80]))})
         return {
             "actions_planned": len(self._plan.get("actions", [])),
             "graph_updates_planned": len(self._plan.get("graph_updates", [])),
@@ -474,6 +545,20 @@ class PipelineRunner:
         }
 
     async def _act(self) -> dict:
+        actions = self._plan.get("actions") or []
+        if actions:
+            lines = [f"Executing **{len(actions)}** planned action(s):\n"]
+            for a in actions[:8]:
+                kind = a.get("kind", "?")
+                title = (a.get("params") or {}).get("title", "")
+                lines.append(f"- `{kind}`: {title}")
+            if len(actions) > 8:
+                lines.append(f"- *(+{len(actions) - 8} more)*")
+            _activity_bus.emit({"type": "agent_text", "stage_id": "act",
+                                "text": "\n".join(lines)})
+        else:
+            _activity_bus.emit({"type": "agent_text", "stage_id": "act",
+                                "text": "No actions planned — assessing project state."})
         # act_agent.act is a native coroutine — uses MCP subprocess + async Gemini
         self._act_result = await act_agent.act(self._interpretation, self._repo, self._plan)
         return self._act_result

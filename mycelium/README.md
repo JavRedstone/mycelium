@@ -158,6 +158,57 @@ python checks/vertex/check_ask.py "Which modules have the highest dark knowledge
 
 ---
 
+## CLI
+
+`cli.py` provides a terminal interface to the running server. Run from the
+`mycelium/` directory with the virtual environment active:
+
+```bash
+# Check connections and print config
+python cli.py init
+
+# Trigger a pipeline run (fire and forget)
+python cli.py run
+
+# Trigger a run and stream the Activity Feed live in the terminal
+python cli.py run --watch
+
+# Show graph state: concentrated modules, recent findings, run history
+python cli.py status
+
+# Generate an onboarding pack for a new team member (creates a GitLab issue)
+python cli.py onboard marco.torres
+
+# Generate an offboarding/handoff artifact
+python cli.py offboard priya.sharma
+
+# Inspect a module — contributors, expertise, bus factor
+python cli.py inspect module scripts
+
+# Inspect a developer — expertise profile and module ownership
+python cli.py inspect developer alex.chen
+
+# Seed demo data (team | new_joiner | fading | sole_owner)
+python cli.py demo seed team
+
+# Clear all demo entries from the graph
+python cli.py demo clear
+
+# Replay the last pipeline run's activity stream
+python cli.py replay
+
+# Replay a specific run at 2× speed
+python cli.py replay --run-id <uuid> --speed 2.0
+```
+
+Override the server URL with `--url` or the `MYCELIUM_URL` environment variable:
+
+```bash
+MYCELIUM_URL=https://mycelium.example.com python cli.py status
+```
+
+---
+
 ## Running Locally
 
 ```bash
@@ -266,6 +317,80 @@ outside the team.
 
 **Continuity risk score** — 0.0–1.0. Combines bus factor, upstream author
 concentration, CODEOWNERS drift, and pipeline health signals.
+
+---
+
+## Bus Factor: Internal Committers Only
+
+Bus factor is calculated from **internal project members only**. External
+contributors (upstream authors of a fork) are excluded regardless of their
+commit count.
+
+### Why
+
+If a module's entire commit history was written by upstream contributors who
+are not on your team, those people cannot transfer knowledge to you. They are
+already gone. Their commits represent knowledge that exists only in the code
+and has no organizational owner. Counting them toward bus factor would give a
+false sense of safety.
+
+### Example
+
+Suppose `grzesiek.bizon` has 153 commits to `internal/` in a forked project's
+history. If `grzesiek.bizon` is an upstream author (not a current project
+member), the pipeline marks them as `external=True`. When bus factor for
+`internal/` is computed:
+
+```
+internal contributors = [c for c in contributions if not c.external and c.commit_count > 0]
+bus_factor(internal/) = len(internal contributors) = 0
+```
+
+Bus factor is 0 even though 153 commits exist. The module is a **dark knowledge
+zone** — fully functional but organizationally orphaned.
+
+This shows up in the Knowledge Graph UI: `internal/` has a bus_factor of 0 with
+`grzesiek.bizon` listed under "Upstream Authors" (not "Contributors"), and the
+module card shows a dark-knowledge warning.
+
+### What the agent does with this
+
+The analyst and planner agents receive bus_factor as a measurement signal, not a
+decision rule. Bus_factor=0 for a module does not automatically create an issue.
+The agents reason: is this module being actively changed? Does it have any docs?
+Is there a fork-path to understanding it? The issue (if created) reflects that
+full picture, not just the number.
+
+---
+
+## Demo Data System
+
+Mycelium includes a seed system for populating MongoDB with realistic synthetic
+team data — useful for demos, testing, and developing without waiting for a real
+repository to accumulate multi-month history.
+
+All seeded entries are flagged `demo: true` in MongoDB. They are:
+
+- **Visible in the UI** — purple "demo" chip on every contributor row, module
+  card, and React Flow node where a demo entry is involved
+- **Excluded from agent context** — `snapshot()`, `list_developers()`, and
+  `list_concentrated_modules()` all filter `{"demo": {"$ne": true}}`. Synthetic
+  contributors never appear in generated GitLab issues.
+- **Protected from pipeline overwrites** — `upsert_developer()` / `upsert_module()`
+  / `upsert_contribution()` use `$setOnInsert` for the `demo` field, so a real
+  pipeline run never flips `demo: true` to `false` on seeded entries.
+- **Clearable in one command** — `python -m scripts.seed_scenarios --clear` or
+  `DELETE /graph/demo` or the "Clear demo data" button in the UI.
+
+See [`scripts/README.md`](scripts/README.md) for the full demo team roster,
+module coverage matrix, and scenario commands.
+
+### Demo API endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/graph/demo` | Returns `{"has_demo": true/false}` |
+| `DELETE` | `/graph/demo` | Deletes all `demo: true` documents from all collections |
 
 ---
 

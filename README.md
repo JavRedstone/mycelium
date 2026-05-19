@@ -539,6 +539,9 @@ It is:
    - preserved continuity
    - reduced dependency on single individuals
 
+For a full video demo script with seed commands, split-screen recording setup,
+voiceover guide, and "before/after" slide content, see [`DEMO.md`](DEMO.md).
+
 ---
 
 ## Value
@@ -555,3 +558,40 @@ into:
 - structurally resilient
 
 inside the development workflow itself.
+
+---
+
+## Phase 2 roadmap — org-level multi-repo
+
+The current system is a single-repo agent. This is intentional: depth and
+operability inside one repo is more valuable for a production system than
+premature multi-tenant abstraction.
+
+The correct expansion path, when ready:
+
+### Multi-repo support (tactical)
+
+Add `project_id` as a scope key to every MongoDB collection. The `GitLabClient`
+and `PipelineRunner` already accept a single project as a parameter — parameterize
+them and add a `repos` configuration collection. The pipeline scheduler fans out
+across configured repos on independent intervals.
+
+This is a schema migration and orchestration change, not a reasoning change. It
+does not improve agent quality.
+
+### Org-level cross-repo intelligence (strategic)
+
+The architecturally interesting expansion: developers as org-level entities whose
+expertise spans multiple repos. In this model:
+
+- `alex.chen` has expertise in `repo-A/auth/` and `repo-B/internal/`
+- if alex leaves, both repos lose coverage simultaneously
+- the system can surface "this engineer is a critical node across 3 repos"
+
+This requires restructuring the knowledge graph so developers are top-level org
+entities and repos are scoped under them — a larger schema redesign.
+
+**Current recommendation:** deploy separate instances per repo. The ops overhead
+is low (Cloud Run + environment variables), isolation is clean, and it avoids
+premature abstraction. Org-level intelligence is Phase 2 once cross-repo patterns
+are understood from real usage.

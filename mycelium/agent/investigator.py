@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 import vertexai
 from google import genai
 
+from agent.activity_bus import bus as _activity_bus
 from agent.json_utils import try_parse_json
 from config.settings import settings
 
@@ -205,6 +206,16 @@ Return ONLY valid JSON, no markdown. Schema:
     parsed.setdefault("module", module_path)
     parsed["files_read_count"] = file_count
     parsed["investigated"] = True
+
+    lines = [f"**Module: {module_path}**  ({file_count} files read)"]
+    if parsed.get("documentation_state"):
+        lines.append(f"Documentation: {parsed['documentation_state']}")
+    if parsed.get("transferability_assessment"):
+        lines.append(f"\n{parsed['transferability_assessment']}")
+    if parsed.get("severity_reasoning"):
+        lines.append(f"\n{parsed['severity_reasoning']}")
+    _activity_bus.emit({"type": "agent_text", "stage_id": "investigate", "text": "\n".join(lines)})
+
     return parsed
 
 
@@ -282,6 +293,14 @@ Return ONLY valid JSON, no markdown. Schema:
     parsed.setdefault("member", member_name)
     parsed.setdefault("attention_reason", attention_reason)
     parsed.setdefault("uniquely_owned_modules", uniquely_owned_modules)
+
+    lines = [f"**Member: {member_name}**  (reason: {attention_reason})"]
+    if parsed.get("knowledge_at_risk"):
+        lines.append(f"\n{parsed['knowledge_at_risk']}")
+    if parsed.get("urgency_reasoning"):
+        lines.append(f"\n{parsed['urgency_reasoning']}")
+    _activity_bus.emit({"type": "agent_text", "stage_id": "investigate", "text": "\n".join(lines)})
+
     return parsed
 
 
@@ -349,4 +368,12 @@ Return ONLY valid JSON, no markdown. Schema:
     parsed["investigated"] = True
     parsed.setdefault("commits_behind", fork_divergence.get("commits_behind", 0))
     parsed.setdefault("upstream_project", fork_divergence.get("upstream_project", ""))
+
+    lines = [f"**Upstream drift**: {parsed['commits_behind']} commits behind `{parsed['upstream_project']}`"]
+    if parsed.get("urgency_assessment"):
+        lines.append(f"\n{parsed['urgency_assessment']}")
+    if parsed.get("severity_reasoning"):
+        lines.append(f"\n{parsed['severity_reasoning']}")
+    _activity_bus.emit({"type": "agent_text", "stage_id": "investigate", "text": "\n".join(lines)})
+
     return parsed

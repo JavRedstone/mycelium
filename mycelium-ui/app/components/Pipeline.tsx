@@ -16,6 +16,7 @@ import AccountTreeOutlinedIcon from "@mui/icons-material/AccountTreeOutlined";
 import BoltOutlinedIcon from "@mui/icons-material/BoltOutlined";
 import AssignmentOutlinedIcon from "@mui/icons-material/AssignmentOutlined";
 import PlayArrowOutlinedIcon from "@mui/icons-material/PlayArrowOutlined";
+import StopOutlinedIcon from "@mui/icons-material/StopOutlined";
 import SchoolOutlinedIcon from "@mui/icons-material/SchoolOutlined";
 import AssessmentOutlinedIcon from "@mui/icons-material/AssessmentOutlined";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
@@ -24,15 +25,15 @@ import LoopIcon from "@mui/icons-material/Loop";
 import CheckCircleOutlinedIcon from "@mui/icons-material/CheckCircleOutlined";
 import ErrorOutlinedIcon from "@mui/icons-material/ErrorOutlined";
 import AccessTimeIcon from "@mui/icons-material/AccessTime";
-import ExtensionOutlinedIcon from "@mui/icons-material/ExtensionOutlined";
 import FolderOpenOutlinedIcon from "@mui/icons-material/FolderOpenOutlined";
 import BiotechOutlinedIcon from "@mui/icons-material/BiotechOutlined";
 import Md from "./Md";
+import AgentTrace, { type TraceEvent } from "./AgentTrace";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-type StageStatus = "pending" | "running" | "success" | "failed" | "skipped";
+type StageStatus = "pending" | "running" | "success" | "failed" | "skipped" | "cancelled";
 
 type Stage = {
   id: string;
@@ -66,15 +67,24 @@ export function timeAgo(ts: number) {
   if (diff < 5) return "just now";
   if (diff < 60) return `${diff}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
 }
 
-const STATUS_COLOR: Record<StageStatus, "default" | "primary" | "success" | "error"> = {
+export function fmtDatetime(ts: number): string {
+  const d = new Date(ts * 1000);
+  const date = d.toLocaleDateString([], { month: "short", day: "numeric" });
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return `${date} · ${time}`;
+}
+
+const STATUS_COLOR: Record<StageStatus, "default" | "primary" | "success" | "error" | "warning"> = {
   pending: "default",
   running: "primary",
   success: "success",
   failed: "error",
   skipped: "default",
+  cancelled: "warning",
 };
 
 const STATUS_LABEL: Record<StageStatus, string> = {
@@ -82,6 +92,7 @@ const STATUS_LABEL: Record<StageStatus, string> = {
   running: "Running",
   success: "Done",
   failed: "Failed",
+  cancelled: "Cancelled",
   skipped: "Skipped",
 };
 
@@ -401,7 +412,9 @@ function PlanDetail({ output }: { output: Record<string, unknown> }) {
 
 function ActDetail({ output }: { output: Record<string, unknown> }) {
   const details = (output.details as Array<Record<string, unknown>>) ?? [];
-  const mcpCalls = (output.mcp_calls as Array<Record<string, unknown>>) ?? [];
+  const trace = (output.trace as TraceEvent[] | undefined) ?? [];
+  const violations = (output.boundary_violations as string[]) ?? [];
+
   return (
     <Stack spacing={2}>
       <Stack direction="row" spacing={2}>
@@ -412,19 +425,22 @@ function ActDetail({ output }: { output: Record<string, unknown> }) {
           <Box component="span" sx={{ color: (output.failed as number) > 0 ? "error.main" : "text.disabled", fontWeight: 600 }}>{String(output.failed)}</Box> failed
         </Typography>
       </Stack>
-      {mcpCalls.length > 0 && (
+
+      {violations.length > 0 && (
         <Box>
-          <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", mb: 1 }}>
-            <ExtensionOutlinedIcon sx={{ fontSize: 14, color: "text.disabled" }} />
-            <Typography variant="caption" color="text.disabled">MCP tool calls</Typography>
-          </Stack>
-          <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap" }} useFlexGap>
-            {mcpCalls.map((tc, i) => (
-              <Chip key={i} label={String(tc.tool ?? "")} size="small" variant="outlined" sx={{ fontFamily: "var(--font-google-sans-code)", height: 22, fontSize: "0.7rem", color: "primary.light", borderColor: "primary.dark" }} />
+          <Typography variant="caption" color="error.main" sx={{ display: "block", mb: 0.5, fontWeight: 600 }}>
+            ⚠ Ownership boundary violations detected
+          </Typography>
+          <Stack spacing={0.5}>
+            {violations.map((v, i) => (
+              <Typography key={i} variant="caption" sx={{ fontFamily: "var(--font-google-sans-code)", color: "error.light", fontSize: "0.68rem" }}>
+                {v}
+              </Typography>
             ))}
           </Stack>
         </Box>
       )}
+
       {details.length > 0 ? (
         <Stack spacing={0.75}>
           {details.map((d, i) => (
@@ -437,6 +453,12 @@ function ActDetail({ output }: { output: Record<string, unknown> }) {
         </Stack>
       ) : (
         <Typography variant="body2" color="text.disabled">No actions executed</Typography>
+      )}
+
+      {trace.length > 0 && (
+        <Box sx={{ borderTop: "1px solid rgba(255,255,255,0.06)", pt: 2 }}>
+          <AgentTrace events={trace} />
+        </Box>
       )}
     </Stack>
   );
@@ -591,6 +613,7 @@ export default function Pipeline() {
   const [selectedStage, setSelectedStage] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [triggering, setTriggering] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [tick, setTick] = useState(0);
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -606,6 +629,8 @@ export default function Pipeline() {
       try {
         const data = JSON.parse(e.data) as PipelineRun;
         setRun(data);
+        // Clear stopping state once the run is no longer running.
+        if (data.status !== "running") setStopping(false);
         const running = data.stages.find((s) => s.status === "running");
         if (running) {
           setSelectedStage(running.id);
@@ -631,27 +656,65 @@ export default function Pipeline() {
     }
   }
 
+  async function stopRun() {
+    setStopping(true);
+    try {
+      await fetch(`${apiUrl}/pipeline/stop`, { method: "POST" });
+    } catch {
+      setStopping(false); // only reset on network error; success keeps "Stopping…" until run ends
+    }
+  }
+
   return (
     <Stack spacing={2}>
       {/* Header */}
       <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "center" }}>
-        <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
-          <Typography variant="subtitle2" color="text.secondary">Current Run</Typography>
-          {run && (
-            <Typography variant="caption" color="text.disabled">
-              started {timeAgo(run.started_at)}
-              <Box component="span" sx={{ display: "none" }}>{tick}</Box>
-            </Typography>
-          )}
-          {run && (
-            <Chip
-              label={run.status.toUpperCase()}
-              size="small"
-              color={run.status === "success" ? "success" : run.status === "failed" ? "error" : run.status === "running" ? "primary" : "default"}
-              variant="outlined"
-              sx={{ height: 20, fontSize: "0.65rem" }}
-            />
-          )}
+        <Stack spacing={0.25}>
+          <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
+            <Typography variant="subtitle2" color="text.secondary">Current Run</Typography>
+            {run && (
+              <Chip
+                label={run.status.toUpperCase()}
+                size="small"
+                color={run.status === "success" ? "success" : run.status === "failed" ? "error" : run.status === "running" ? "primary" : run.status === "cancelled" ? "warning" : "default"}
+                variant="outlined"
+                sx={{ height: 20, fontSize: "0.65rem" }}
+              />
+            )}
+          </Stack>
+          {run && (() => {
+            const summaryStage = run.stages.find((s) => s.id === "summary");
+            const totalMs = summaryStage?.output
+              ? (summaryStage.output.total_duration_ms as number | null) ?? null
+              : run.stages.reduce((a, s) => a + (s.duration_ms ?? 0), 0) || null;
+            const endTs = totalMs != null ? run.started_at + totalMs / 1000 : null;
+            return (
+              <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
+                <Typography variant="caption" color="text.disabled">
+                  <Box component="span" sx={{ display: "none" }}>{tick}</Box>
+                  started {fmtDatetime(run.started_at)}
+                </Typography>
+                {endTs != null && run.status !== "running" && (
+                  <>
+                    <Typography variant="caption" color="text.disabled">→</Typography>
+                    <Typography variant="caption" color="text.disabled">
+                      ended {fmtDatetime(endTs)}
+                    </Typography>
+                  </>
+                )}
+                {totalMs != null && (
+                  <Typography variant="caption" color="text.disabled">
+                    · {fmt(totalMs)}
+                  </Typography>
+                )}
+                {run.status === "running" && (
+                  <Typography variant="caption" color="text.disabled">
+                    · {timeAgo(run.started_at)}
+                  </Typography>
+                )}
+              </Stack>
+            );
+          })()}
         </Stack>
         <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
           <Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
@@ -660,16 +723,30 @@ export default function Pipeline() {
               {connected ? "Live" : "Disconnected"}
             </Typography>
           </Stack>
-          <Button
-            size="small"
-            variant="outlined"
-            onClick={triggerRun}
-            disabled={triggering || run?.status === "running"}
-            startIcon={<PlayArrowOutlinedIcon />}
-            sx={{ height: 30 }}
-          >
-            {triggering ? "Starting…" : run?.status === "running" ? "Running…" : "Run Now"}
-          </Button>
+          {run?.status === "running" ? (
+            <Button
+              size="small"
+              variant="outlined"
+              color="error"
+              onClick={stopRun}
+              disabled={stopping}
+              startIcon={<StopOutlinedIcon />}
+              sx={{ height: 30 }}
+            >
+              {stopping ? "Stopping…" : "Stop"}
+            </Button>
+          ) : (
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={triggerRun}
+              disabled={triggering}
+              startIcon={<PlayArrowOutlinedIcon />}
+              sx={{ height: 30 }}
+            >
+              {triggering ? "Starting…" : "Run Now"}
+            </Button>
+          )}
         </Stack>
       </Stack>
 

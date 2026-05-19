@@ -6,10 +6,12 @@ from collections import deque
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
 from config.settings import settings  # initialises Vertex AI env vars on import
+from agent.activity_bus import bus as activity_bus
 from agent.pipeline import PipelineRunner
 from graph.knowledge_graph import KnowledgeGraph
 from connectors.gitlab_client import GitLabClient
@@ -79,6 +81,7 @@ async def run_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    activity_bus.set_loop(asyncio.get_event_loop())
     await graph.setup_indexes()
     loop_task = asyncio.create_task(run_loop())
     yield
@@ -142,9 +145,116 @@ async def graph_full():
     }
 
 
+@app.delete("/graph/demo")
+async def clear_demo_data():
+    """Delete all demo-flagged entries from the knowledge graph."""
+    return await graph.delete_demo_data()
+
+
+@app.get("/graph/demo")
+async def has_demo_data():
+    """Returns whether any demo-flagged data is present."""
+    return {"has_demo": await graph.has_demo_data()}
+
+
+@app.get("/project")
+async def project_info():
+    """Real GitLab project metadata — name, namespace, URL, branch, stars, forks."""
+    return await asyncio.to_thread(gitlab.get_project_info)
+
+
+@app.get("/developers")
+async def all_developers():
+    """All developers including demo-flagged entries (used by the mock repo view)."""
+    devs = await graph.developers.find({}, {"_id": 0}).to_list(None)
+    return {"developers": devs}
+
+
+@app.get("/pipeline/{run_id}/events")
+async def get_run_events(run_id: str):
+    """Stored activity events for a completed run (used by replay)."""
+    events = await graph.list_activity_events(run_id)
+    return {"run_id": run_id, "events": events}
+
+
+@app.post("/onboard/{username}")
+async def trigger_onboard(username: str):
+    """Directly generate an onboarding pack for a developer (bypasses full pipeline)."""
+    from connectors.mcp_server import generate_onboarding_pack
+    result = await generate_onboarding_pack(username)
+    return result
+
+
+@app.post("/offboard/{username}")
+async def trigger_offboard(username: str):
+    """Directly generate an offboarding artifact for a developer."""
+    from connectors.mcp_server import generate_offboarding_artifact
+    result = await generate_offboarding_artifact(username)
+    return result
+
+
+@app.post("/demo/seed/{scenario}")
+async def seed_demo(scenario: str):
+    """Seed demo data for a scenario: team | new_joiner | fading | sole_owner."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from scripts.seed_scenarios import (
+        scenario_full_team,
+        scenario_new_joiner,
+        scenario_fading_contributor,
+        scenario_sole_owner,
+        clear_all,
+    )
+    handlers = {
+        "team":       scenario_full_team,
+        "all":        scenario_full_team,
+        "new_joiner": scenario_new_joiner,
+        "fading":     scenario_fading_contributor,
+        "sole_owner": scenario_sole_owner,
+        "clear":      clear_all,
+    }
+    fn = handlers.get(scenario)
+    if fn is None:
+        raise HTTPException(status_code=400, detail=f"Unknown scenario: {scenario}. Valid: {list(handlers)}")
+    await fn()
+    return {"seeded": scenario}
+
+
+class ForkDateBody(BaseModel):
+    date: str | None = None
+
+
+@app.get("/settings/fork-date")
+async def get_fork_date():
+    """Effective fork/repo-start date: MongoDB override if set, else GitLab project created_at."""
+    override = await graph.get_fork_date_override()
+    project_created = None
+    try:
+        proj = await asyncio.to_thread(gitlab.get_project_info)
+        project_created = proj.get("created_at")
+    except Exception:
+        pass
+    return {
+        "override": override,
+        "project_created_at": project_created,
+        "effective": override or project_created,
+    }
+
+
+@app.post("/settings/fork-date")
+async def set_fork_date(body: ForkDateBody):
+    """Set or clear the fork date override stored in MongoDB."""
+    await graph.set_fork_date_override(body.date)
+    return {"set": body.date}
+
+
 @app.get("/actions")
-async def list_actions(limit: int = 200):
+async def list_actions(limit: int = 200, run_id: str | None = None):
     """Agent action log — what the act agent has done across all pipeline runs."""
+    if run_id:
+        actions = await graph.actions.find({"run_id": run_id}, {"_id": 0}).sort("executed_at", -1).to_list(limit)
+        return actions
     return await graph.list_actions(limit=limit)
 
 
@@ -191,6 +301,14 @@ async def pipeline_run():
     return {"status": "started"}
 
 
+@app.post("/pipeline/stop")
+async def pipeline_stop():
+    if not pipeline.is_running:
+        raise HTTPException(status_code=409, detail="Pipeline is not running")
+    pipeline.request_cancel()
+    return {"status": "stop_requested"}
+
+
 @app.get("/pipeline/stream")
 async def pipeline_stream():
     queue = pipeline.subscribe()
@@ -216,6 +334,41 @@ async def pipeline_stream():
                     yield {"comment": "keepalive"}
         finally:
             pipeline.unsubscribe(queue)
+
+    return EventSourceResponse(generator())
+
+
+# ---------------------------------------------------------------------------
+# Activity stream endpoint — structured agent event feed for the UI
+# ---------------------------------------------------------------------------
+
+@app.get("/pipeline/activity")
+async def pipeline_activity():
+    """Return the buffered activity events for the most recent run."""
+    return {"events": activity_bus.history()}
+
+
+@app.get("/pipeline/activity/stream")
+async def pipeline_activity_stream():
+    """SSE stream of structured agent activity events.
+
+    On connect, replays the current run's buffer so the client catches up,
+    then streams new events in real-time as the pipeline and agents run.
+    """
+    queue = activity_bus.subscribe()
+
+    async def generator():
+        for event in activity_bus.history():
+            yield {"data": json.dumps(event)}
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=15)
+                    yield {"data": json.dumps(event)}
+                except asyncio.TimeoutError:
+                    yield {"comment": "keepalive"}
+        finally:
+            activity_bus.unsubscribe(queue)
 
     return EventSourceResponse(generator())
 

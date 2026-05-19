@@ -13,6 +13,7 @@ import vertexai
 from google.adk.agents import Agent
 from vertexai.preview.reasoning_engines import AdkApp
 
+from agent.activity_bus import bus as _activity_bus
 from agent.json_utils import try_parse_json as _try_parse_json
 from config.settings import settings
 
@@ -39,12 +40,28 @@ Knowledge graph collections: developers, modules, tasks, contributions
 Only plan actions where there is clear evidence from the data. Do not invent data.
 Do not create more than 3-4 new issues per run to avoid noise.
 
+ISSUE DESCRIPTION QUALITY RULES (apply to ALL create_issue actions):
+- Be concrete and data-driven. Cite specific module names, file counts, commit
+  counts, or contributor names from the evidence. Never be vague.
+- State the risk plainly in one sentence. Do not repeat it.
+- Recommended actions must name specific modules, files, or people — not just
+  "identify a second engineer" or similar generic instructions.
+- Do NOT include meta-commentary about the pipeline, the agent, or what the
+  subject is already doing. Write as if a human engineer composed the issue.
+- No sentences of the form "While X is doing Y, Z is also important." They are
+  circular and add no information. State Z directly.
+- End with a concrete, ordered action list (1, 2, 3…) referencing actual data.
+
 PLANNING GUIDANCE BY CONCERN TYPE:
 
-knowledge_concentration / multi_module_overload / fading_contributor:
-  Consider creating an issue titled "Knowledge Transfer: [subject]" describing
-  what would be lost and recommending a pairing or handoff action. Suggest
-  candidate assignees from the graph where possible.
+knowledge_concentration / multi_module_overload / sole_contributor / fading_contributor:
+  Create an issue titled "Knowledge Transfer: [subject]". The description must:
+  - Name the specific modules/files at risk and why (e.g., "owns 87% of commits
+    to src/auth/ and src/pipeline/ with no other reviewer in the last 6 months").
+  - Name 1-2 specific candidate engineers from the graph who could be cross-trained.
+  - List concrete onboarding steps: which modules to shadow, which MRs to review,
+    which documentation to write.
+  Suggest candidate assignees from the graph where possible.
 
 fragile_documentation:
   Consider creating an issue to write or update the README/architecture doc
@@ -61,7 +78,12 @@ stalled_work:
   active member.
 
 undeclared_ownership / nominal_ownership:
-  Consider an issue proposing CODEOWNERS edits.
+  Create an issue proposing CODEOWNERS edits. The description must:
+  - Name every specific path that needs an owner (e.g. `internal/`, `scripts/`).
+  - Name the specific person to assign as owner — use the top internal committer
+    for each path from the knowledge graph. Do not say "starting with X" or
+    "propose candidates" — commit to a specific owner per path.
+  - Include a ready-to-copy CODEOWNERS snippet the team can apply directly.
 
 ci_instability:
   Consider an issue tagging the most active contributor for the affected area.
@@ -120,7 +142,7 @@ root_agent = Agent(
 )
 
 
-def _run_through_adk(prompt: str) -> str:
+def _run_through_adk(prompt: str, stage_id: str = "plan") -> str:
     app = AdkApp(agent=root_agent)
     session = app.create_session(user_id=_USER_ID)
     chunks: list[str] = []
@@ -132,11 +154,16 @@ def _run_through_adk(prompt: str) -> str:
         ):
             if not isinstance(event, dict):
                 continue
-            parts = (event.get("content") or {}).get("parts") or []
+            content = event.get("content") if isinstance(event, dict) else getattr(event, "content", None)
+            parts = (content.get("parts") if isinstance(content, dict) else getattr(content, "parts", None)) or []
             for p in parts:
-                text = p.get("text")
+                text = p.get("text") if isinstance(p, dict) else getattr(p, "text", None)
                 if text:
-                    chunks.append(text)
+                    chunks.append(str(text))
+                    stripped = str(text).strip()
+                    # Skip pure JSON output — already surfaced as structured action_planned events.
+                    if stripped and not stripped.startswith(("{", "[")):
+                        _activity_bus.emit({"type": "agent_text", "stage_id": stage_id, "text": stripped})
     finally:
         try:
             app.delete_session(user_id=_USER_ID, session_id=session["id"])

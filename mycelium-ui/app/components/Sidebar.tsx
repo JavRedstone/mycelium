@@ -16,18 +16,26 @@ import AccountTreeOutlinedIcon from "@mui/icons-material/AccountTreeOutlined";
 import BarChartOutlinedIcon from "@mui/icons-material/BarChartOutlined";
 import BiotechOutlinedIcon from "@mui/icons-material/BiotechOutlined";
 import BoltOutlinedIcon from "@mui/icons-material/BoltOutlined";
+import ChatOutlinedIcon from "@mui/icons-material/ChatOutlined";
+import FolderOutlinedIcon from "@mui/icons-material/FolderOutlined";
+import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import HubOutlinedIcon from "@mui/icons-material/HubOutlined";
 import PlayArrowOutlinedIcon from "@mui/icons-material/PlayArrowOutlined";
 import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 import TerminalOutlinedIcon from "@mui/icons-material/TerminalOutlined";
+import TimelineOutlinedIcon from "@mui/icons-material/TimelineOutlined";
 
 const NAV_ITEMS = [
+  { label: "Repository", href: "/repo", icon: <FolderOutlinedIcon fontSize="small" /> },
+  { label: "Repo History", href: "/history", icon: <HistoryOutlinedIcon fontSize="small" /> },
   { label: "Pipeline", href: "/pipeline", icon: <PlayArrowOutlinedIcon fontSize="small" /> },
+  { label: "Timeline", href: "/timeline", icon: <TimelineOutlinedIcon fontSize="small" /> },
+  { label: "Agent Activity", href: "/activity", icon: <ChatOutlinedIcon fontSize="small" /> },
+  { label: "Logs", href: "/logs", icon: <TerminalOutlinedIcon fontSize="small" /> },
   { label: "Knowledge Graph", href: "/graph", icon: <AccountTreeOutlinedIcon fontSize="small" /> },
   { label: "Investigations", href: "/investigations", icon: <BiotechOutlinedIcon fontSize="small" /> },
   { label: "Analytics", href: "/analytics", icon: <BarChartOutlinedIcon fontSize="small" /> },
   { label: "Actions", href: "/actions", icon: <BoltOutlinedIcon fontSize="small" /> },
-  { label: "Logs", href: "/logs", icon: <TerminalOutlinedIcon fontSize="small" /> },
   { label: "Configuration", href: "/config", icon: <SettingsOutlinedIcon fontSize="small" /> },
 ];
 
@@ -136,42 +144,31 @@ export default function Sidebar() {
           Connected
         </Typography>
         <Stack spacing={0.75}>
-          <Chip
-            label="Gemini"
-            size="small"
-            variant="outlined"
-            sx={{
-              height: 20,
-              fontSize: "0.68rem",
-              color: "primary.light",
-              borderColor: "primary.dark",
-              justifyContent: "flex-start",
-            }}
-          />
-          <Chip
-            label="GitLab MCP"
-            size="small"
-            variant="outlined"
-            sx={{
-              height: 20,
-              fontSize: "0.68rem",
-              color: "success.light",
-              borderColor: "success.dark",
-              justifyContent: "flex-start",
-            }}
-          />
-          <Chip
-            label="MongoDB MCP"
-            size="small"
-            variant="outlined"
-            sx={{
-              height: 20,
-              fontSize: "0.68rem",
-              color: "warning.light",
-              borderColor: "warning.dark",
-              justifyContent: "flex-start",
-            }}
-          />
+          {([
+            { label: "Gemini",      dot: "#34a853", color: "primary.light",  border: "primary.dark" },
+            { label: "GitLab MCP",  dot: "#34a853", color: "success.light",  border: "success.dark" },
+            { label: "MongoDB MCP", dot: "#34a853", color: "warning.light",  border: "warning.dark" },
+          ] as const).map(({ label, dot, color, border }) => (
+            <Chip
+              key={label}
+              label={
+                <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
+                  <Box sx={{ width: 7, height: 7, borderRadius: "50%", bgcolor: dot, flexShrink: 0, boxShadow: `0 0 4px ${dot}99` }} />
+                  <span>{label}</span>
+                </Stack>
+              }
+              size="small"
+              variant="outlined"
+              sx={{
+                height: 20,
+                fontSize: "0.68rem",
+                color,
+                borderColor: border,
+                justifyContent: "flex-start",
+                "& .MuiChip-label": { display: "flex", alignItems: "center", px: 1 },
+              }}
+            />
+          ))}
         </Stack>
       </Box>
     </Box>

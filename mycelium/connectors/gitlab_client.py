@@ -238,6 +238,14 @@ class GitLabClient:
         python-gitlab's ListMixin intercepts the 'path' kwarg as a URL path
         override rather than passing it as a query parameter, which causes 404.
         """
+        return self.get_directory_contributors_with_history(dir_path, max_commits)
+
+    def get_directory_contributors_with_history(self, dir_path: str, max_commits: int = 500) -> list[dict]:
+        """Like get_directory_contributors but also captures monthly_counts per author.
+
+        Returns list of {name, email, commit_count, external, monthly_counts: {"YYYY-MM": N}}.
+        monthly_counts enables timeline visualization without a second API pass.
+        """
         try:
             seen: dict[str, dict] = {}
             total_collected = 0
@@ -257,24 +265,29 @@ class GitLabClient:
                 key = email or name
                 if not key:
                     continue
-                if key in seen:
-                    seen[key]["commit_count"] += 1
-                else:
+                created_at = commit.get("created_at") or ""
+                year_month = created_at[:7] if len(created_at) >= 7 else ""
+                if key not in seen:
                     seen[key] = {
                         "name": name,
                         "email": email,
-                        "commit_count": 1,
+                        "commit_count": 0,
                         "external": not self._is_member(name, email),
+                        "monthly_counts": {},
                     }
+                seen[key]["commit_count"] += 1
+                if year_month:
+                    mc = seen[key]["monthly_counts"]
+                    mc[year_month] = mc.get(year_month, 0) + 1
                 total_collected += 1
 
             logger.info(
-                "[gitlab] get_directory_contributors(%s): %d commits, %d unique authors",
+                "[gitlab] get_directory_contributors_with_history(%s): %d commits, %d unique authors",
                 dir_path, total_collected, len(seen),
             )
             return list(seen.values())
         except Exception as exc:
-            logger.warning("[gitlab] get_directory_contributors(%s) failed: %s", dir_path, exc)
+            logger.warning("[gitlab] get_directory_contributors_with_history(%s) failed: %s", dir_path, exc)
             return []
 
     def get_codeowners(self) -> dict[str, list[str]]:
@@ -614,6 +627,26 @@ class GitLabClient:
             "is_fork": is_fork,
             "upstream_author_ratio": upstream_ratio,
             "fork_divergence": fork_divergence,
+        }
+
+    def get_project_info(self) -> dict:
+        """Return display metadata about the configured GitLab project."""
+        p = self._project
+        ns = getattr(p, "namespace", {}) or {}
+        return {
+            "id":                   p.id,
+            "name":                 getattr(p, "name", ""),
+            "path":                 getattr(p, "path", ""),
+            "path_with_namespace":  getattr(p, "path_with_namespace", ""),
+            "namespace_name":       ns.get("name", "") if isinstance(ns, dict) else getattr(ns, "name", ""),
+            "namespace_path":       ns.get("path", "") if isinstance(ns, dict) else getattr(ns, "path", ""),
+            "web_url":              getattr(p, "web_url", ""),
+            "default_branch":       self._default_branch,
+            "description":          getattr(p, "description", None),
+            "star_count":           getattr(p, "star_count", 0),
+            "forks_count":          getattr(p, "forks_count", 0),
+            "is_fork":              bool(getattr(p, "forked_from_project", None)),
+            "created_at":           getattr(p, "created_at", None),
         }
 
     # ---------------------------------------------------------------------------

@@ -2,11 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import Box from "@mui/material/Box";
+import IconButton from "@mui/material/IconButton";
 import Paper from "@mui/material/Paper";
 import Stack from "@mui/material/Stack";
+import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import Chip from "@mui/material/Chip";
 import Divider from "@mui/material/Divider";
+import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import TerminalIcon from "@mui/icons-material/Terminal";
 
 type LogEntry = {
@@ -36,16 +39,12 @@ const LEVEL_CHIP_COLOR: Record<string, "default" | "primary" | "warning" | "erro
 
 export default function AgentLog({ height = 320 }: { height?: number }) {
   const [entries, setEntries] = useState<LogEntryKeyed[]>([]);
-  const [autoScroll, setAutoScroll] = useState(true);
-  const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const keyRef = useRef(0);
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
   useEffect(() => {
     const es = new EventSource(`${apiUrl}/logs/stream`);
-    // Reset state on every (re)connect so stale entries don't accumulate
-    // and seq numbers from different server sessions don't collide as React keys.
     es.onopen = () => {
       keyRef.current = 0;
       setEntries([]);
@@ -60,15 +59,10 @@ export default function AgentLog({ height = 320 }: { height?: number }) {
     return () => es.close();
   }, [apiUrl]);
 
-  useEffect(() => {
-    if (autoScroll) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [entries, autoScroll]);
-
-  function onScroll() {
-    const el = containerRef.current;
-    if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-    setAutoScroll(atBottom);
+  function scrollToBottom() {
+    if (containerRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+    }
   }
 
   return (
@@ -82,19 +76,11 @@ export default function AgentLog({ height = 320 }: { height?: number }) {
             {entries.length} entries
           </Typography>
         </Stack>
-        {!autoScroll && (
-          <Typography
-            variant="caption"
-            color="primary.main"
-            sx={{ cursor: "pointer", userSelect: "none" }}
-            onClick={() => {
-              setAutoScroll(true);
-              bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-            }}
-          >
-            ↓ Scroll to bottom
-          </Typography>
-        )}
+        <Tooltip title="Scroll to latest" placement="left" arrow>
+          <IconButton size="small" onClick={scrollToBottom} sx={{ p: 0.5, color: "primary.main" }}>
+            <KeyboardArrowDownIcon sx={{ fontSize: 16 }} />
+          </IconButton>
+        </Tooltip>
       </Stack>
 
       <Paper elevation={0} sx={{ height, overflow: "hidden", display: "flex", flexDirection: "column" }}>
@@ -109,7 +95,6 @@ export default function AgentLog({ height = 320 }: { height?: number }) {
         {/* Log lines */}
         <Box
           ref={containerRef}
-          onScroll={onScroll}
           sx={{
             flex: 1,
             overflowY: "auto",
@@ -159,7 +144,6 @@ export default function AgentLog({ height = 320 }: { height?: number }) {
               );
             })
           )}
-          <div ref={bottomRef} />
         </Box>
       </Paper>
     </Stack>
