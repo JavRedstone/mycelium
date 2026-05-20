@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Box from "@mui/material/Box";
 import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
@@ -12,17 +12,6 @@ import Typography from "@mui/material/Typography";
 
 import RefreshOutlinedIcon from "@mui/icons-material/RefreshOutlined";
 import ScienceOutlinedIcon from "@mui/icons-material/ScienceOutlined";
-
-import {
-  CartesianGrid,
-  Label,
-  ReferenceLine,
-  Scatter,
-  ScatterChart,
-  Tooltip as ChartTooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -58,7 +47,39 @@ type Module = {
   contributors: Contribution[];
 };
 
-// ── colour palette ────────────────────────────────────────────────────────────
+type ContribHistoryRecord = {
+  developer_username: string;
+  module_path: string;
+  year_month: string;
+  commit_count: number;
+  external: boolean;
+  demo?: boolean;
+};
+
+type ActivityBar = {
+  username: string;
+  devName: string;
+  yRow: number;
+  startMs: number;
+  endMs: number;
+  monthCount: number;
+  totalCommits: number;
+  isUpstream: boolean;
+  isPreFork: boolean;
+};
+
+type Tooltip = {
+  clientX: number;
+  clientY: number;
+  devName: string;
+  range: string;
+  commits: number;
+  months: number;
+  isUpstream: boolean;
+  isPreFork: boolean;
+} | null;
+
+// ── palette (fallback dots) ───────────────────────────────────────────────────
 
 const PALETTE = [
   "#1a73e8", "#34a853", "#ea4335", "#fbbc04",
@@ -71,82 +92,73 @@ function moduleColor(path: string, allPaths: string[]): string {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function timeAgoFull(dateStr: string): string {
-  const ms = Date.now() - new Date(dateStr).getTime();
-  const days = Math.floor(ms / 86_400_000);
+function timeAgoFull(ms: number): string {
+  const days = Math.floor((Date.now() - ms) / 86_400_000);
   if (days === 0) return "today";
   if (days === 1) return "yesterday";
-  if (days < 30) return `${days} days ago`;
+  if (days < 30) return `${days}d ago`;
   const months = Math.round(days / 30);
-  return months === 1 ? "1 month ago" : `${months} months ago`;
+  return months === 1 ? "1mo ago" : `${months}mo ago`;
 }
 
-function fmtShortDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString([], { month: "short", day: "numeric" });
+function isConsecutiveMonths(a: string, b: string): boolean {
+  const [ay, am] = a.split("-").map(Number);
+  const [by, bm] = b.split("-").map(Number);
+  return (by - ay) * 12 + (bm - am) === 1;
 }
 
-// ── recharts custom dot shapes ────────────────────────────────────────────────
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type DotProps = { cx?: number; cy?: number; payload?: any };
-
-function ContribDot({ cx = 0, cy = 0, payload }: DotProps) {
-  if (!payload) return null;
-  const isPreFork: boolean = payload.isPreFork;
-  return (
-    <circle
-      cx={cx}
-      cy={cy}
-      r={payload.r as number}
-      fill={payload.color as string}
-      opacity={isPreFork ? 0.3 : (payload.opacity as number)}
-      stroke={isPreFork ? "none" : "rgba(0,0,0,0.35)"}
-      strokeWidth={isPreFork ? 0 : 1.5}
-    />
-  );
+function monthMidMs(yearMonth: string): number {
+  return new Date(yearMonth + "-15").getTime();
 }
 
-function LastSeenMarker({ cx = 0, cy = 0, payload }: DotProps) {
-  if (!payload) return null;
-  const color = (payload.isInactive as boolean) ? "#ea4335" : "#34a853";
-  return <rect x={cx - 1} y={cy - 14} width={2} height={28} fill={color} opacity={0.5} />;
-}
+function computeActivityBars(
+  monthlyByUser: Map<string, Map<string, number>>,
+  allDevs: Developer[],
+  rowIndexFn: (username: string) => number,
+  repoStartMs: number | null,
+): ActivityBar[] {
+  const devByUsername = new Map(allDevs.map((d) => [d.username, d]));
+  const bars: ActivityBar[] = [];
 
-// ── chart tooltip ─────────────────────────────────────────────────────────────
+  for (const [username, monthMap] of monthlyByUser) {
+    const dev = devByUsername.get(username);
+    if (!dev) continue;
+    const yRow = rowIndexFn(username);
+    if (yRow < 0) continue;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function ScatterTooltip({ active, payload }: any) {
-  if (!active || !payload?.length) return null;
-  const p = payload[0]?.payload;
-  if (!p) return null;
+    const sortedMonths = [...monthMap.keys()].sort();
+    if (!sortedMonths.length) continue;
 
-  if (p._isLastSeen) {
-    const iso = new Date(p.x as number).toISOString();
-    return (
-      <Paper sx={{ px: 1.5, py: 1, bgcolor: "#21262d", border: "1px solid rgba(255,255,255,0.1)" }}>
-        <Typography variant="caption" sx={{ fontWeight: 600, color: p.isInactive ? "#ea4335" : "#34a853", display: "block" }}>
-          {p.devName as string}
-        </Typography>
-        <Typography variant="caption" color="text.secondary">
-          Last seen: {fmtShortDate(iso)} ({timeAgoFull(iso)}) · {p.isInactive ? "inactive" : "active"}
-        </Typography>
-      </Paper>
-    );
+    function emitBar(months: string[]) {
+      const startMs = monthMidMs(months[0]);
+      const endMs   = monthMidMs(months[months.length - 1]);
+      const isPreFork = repoStartMs != null ? startMs < repoStartMs : false;
+      if (!isPreFork && dev!.external) return; // upstream only visible pre-fork
+      bars.push({
+        username,
+        devName: dev!.name,
+        yRow,
+        startMs,
+        endMs,
+        monthCount: months.length,
+        totalCommits: months.reduce((s, m) => s + (monthMap.get(m) ?? 0), 0),
+        isUpstream: !!dev!.external,
+        isPreFork,
+      });
+    }
+
+    let run: string[] = [sortedMonths[0]];
+    for (let i = 1; i < sortedMonths.length; i++) {
+      if (isConsecutiveMonths(sortedMonths[i - 1], sortedMonths[i])) {
+        run.push(sortedMonths[i]);
+      } else {
+        emitBar(run);
+        run = [sortedMonths[i]];
+      }
+    }
+    emitBar(run);
   }
-
-  const iso = new Date(p.x as number).toISOString();
-  return (
-    <Paper sx={{ px: 1.5, py: 1, bgcolor: "#21262d", border: "1px solid rgba(255,255,255,0.1)" }}>
-      <Typography variant="caption" sx={{ fontWeight: 600, display: "block" }}>{p.devName as string}</Typography>
-      <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>{p.module as string}/</Typography>
-      <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
-        {p.commitCount as number} commits · {Math.round((p.expertise as number) * 100)}% expertise
-      </Typography>
-      <Typography variant="caption" color="text.disabled" sx={{ display: "block" }}>
-        {p.isPreFork ? "upstream · " : ""}{fmtShortDate(iso)} ({timeAgoFull(iso)})
-      </Typography>
-    </Paper>
-  );
+  return bars;
 }
 
 // ── module status row ─────────────────────────────────────────────────────────
@@ -157,37 +169,29 @@ function ModuleStatusRow({ mod, modulePaths }: { mod: Module; modulePaths: strin
   const primary = internal.length
     ? internal.reduce((a, b) => (a.expertise_score > b.expertise_score ? a : b))
     : null;
-
   const lastTouched = internal
-    .map((c) => c.last_contribution_at ? new Date(c.last_contribution_at).getTime() : 0)
+    .map((c) => (c.last_contribution_at ? new Date(c.last_contribution_at).getTime() : 0))
     .reduce((a, b) => Math.max(a, b), 0);
-  const lastTouchedStr = lastTouched ? new Date(lastTouched).toISOString() : undefined;
   const staleDays = lastTouched ? (Date.now() - lastTouched) / 86_400_000 : Infinity;
   const isStale = staleDays > 60;
-
   return (
     <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", py: 0.75 }}>
       <Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: color, flexShrink: 0 }} />
       <Typography variant="caption" sx={{ fontFamily: "monospace", fontWeight: 600, width: 110, flexShrink: 0, color: isStale ? "#ea4335" : "text.primary" }}>
         {mod.path}/
       </Typography>
-      <Chip
-        label={`bus ${mod.bus_factor}`}
-        size="small"
-        sx={{
-          height: 16, fontSize: "0.6rem",
-          bgcolor: mod.bus_factor <= 0 ? "rgba(234,67,53,0.15)" : mod.bus_factor === 1 ? "rgba(251,188,4,0.12)" : "rgba(52,168,83,0.1)",
-          color: mod.bus_factor <= 0 ? "#ea4335" : mod.bus_factor === 1 ? "#fbbc04" : "#34a853",
-          border: "none",
-          "& .MuiChip-label": { px: 0.75 },
-        }}
-      />
+      <Chip label={`bus ${mod.bus_factor}`} size="small" sx={{
+        height: 16, fontSize: "0.6rem", border: "none",
+        bgcolor: mod.bus_factor <= 0 ? "rgba(234,67,53,0.15)" : mod.bus_factor === 1 ? "rgba(251,188,4,0.12)" : "rgba(52,168,83,0.1)",
+        color: mod.bus_factor <= 0 ? "#ea4335" : mod.bus_factor === 1 ? "#fbbc04" : "#34a853",
+        "& .MuiChip-label": { px: 0.75 },
+      }} />
       <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
         {internal.length} contributor{internal.length !== 1 ? "s" : ""}
         {primary ? ` · led by ${primary.developer_username}` : ""}
       </Typography>
       <Typography variant="caption" color={isStale ? "#ea4335" : "text.disabled"} sx={{ fontFamily: "monospace", fontSize: "0.68rem", flexShrink: 0 }}>
-        {lastTouchedStr ? timeAgoFull(lastTouchedStr) : "—"}
+        {lastTouched ? timeAgoFull(lastTouched) : "—"}
       </Typography>
       {mod.demo && <ScienceOutlinedIcon sx={{ fontSize: 11, color: "#a78bfa", flexShrink: 0 }} />}
     </Stack>
@@ -197,25 +201,32 @@ function ModuleStatusRow({ mod, modulePaths }: { mod: Module; modulePaths: strin
 // ── main component ────────────────────────────────────────────────────────────
 
 export default function RepoHistory() {
-  const [allDevs, setAllDevs] = useState<Developer[]>([]);
-  const [modules, setModules] = useState<Module[]>([]);
+  const [allDevs, setAllDevs]       = useState<Developer[]>([]);
+  const [modules, setModules]       = useState<Module[]>([]);
   const [forkDateInfo, setForkDateInfo] = useState<{ effective?: string | null; override?: string | null }>({});
-  const [loading, setLoading] = useState(true);
+  const [contribHistory, setContribHistory] = useState<ContribHistoryRecord[]>([]);
+  const [loading, setLoading]       = useState(true);
+  const [tooltip, setTooltip]       = useState<Tooltip>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [devRes, graphRes, forkRes] = await Promise.all([
+      const [devRes, graphRes, forkRes, histRes] = await Promise.all([
         fetch(`${API}/developers`),
         fetch(`${API}/graph`),
         fetch(`${API}/settings/fork-date`),
+        fetch(`${API}/graph/contribution-history`),
       ]);
-      const devData = await devRes.json();
-      const graphData = await graphRes.json();
-      const forkData = forkRes.ok ? await forkRes.json() : {};
+      const [devData, graphData, forkData, histData] = await Promise.all([
+        devRes.json(), graphRes.json(),
+        forkRes.ok ? forkRes.json() : {},
+        histRes.ok ? histRes.json() : [],
+      ]);
       setAllDevs(devData.developers ?? []);
       setModules(graphData.modules ?? []);
       setForkDateInfo(forkData);
+      setContribHistory(Array.isArray(histData) ? histData : []);
     } finally {
       setLoading(false);
     }
@@ -223,15 +234,21 @@ export default function RepoHistory() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Scroll timeline to the right (most recent activity) after data loads
+  useEffect(() => {
+    if (!loading && scrollRef.current) {
+      scrollRef.current.scrollLeft = scrollRef.current.scrollWidth;
+    }
+  }, [loading]);
+
   if (loading) {
     return <Box sx={{ display: "flex", justifyContent: "center", py: 8 }}><CircularProgress size={28} /></Box>;
   }
 
-  // Split into internal and upstream authors
-  const internalDevs = allDevs.filter((d) => !d.external);
+  const internalDevs  = allDevs.filter((d) => !d.external);
   const upstreamAuthors = allDevs.filter((d) => d.external);
 
-  if (internalDevs.length === 0 && upstreamAuthors.length === 0) {
+  if (!internalDevs.length && !upstreamAuthors.length) {
     return (
       <Paper variant="outlined" sx={{ p: 4, textAlign: "center", borderColor: "rgba(255,255,255,0.08)" }}>
         <Typography variant="body2" color="text.disabled">
@@ -241,56 +258,50 @@ export default function RepoHistory() {
     );
   }
 
-  // Determine time range from all timestamps
-  const allTimestamps: number[] = [];
-  for (const dev of allDevs) {
-    if (dev.last_seen) allTimestamps.push(new Date(dev.last_seen).getTime());
-  }
-  for (const mod of modules) {
-    for (const c of mod.contributors) {
-      if (c.last_contribution_at) allTimestamps.push(new Date(c.last_contribution_at).getTime());
-    }
-  }
   const now = Date.now();
-  const oldest = allTimestamps.length ? Math.min(...allTimestamps) : now - 365 * 86_400_000;
+  const modulePaths = [...new Set(modules.map((m) => m.path))].sort();
+
+  // "repository" is a synthetic catch-all — exclude it so 100s of upstream
+  // committers don't flood the Y axis
+  const SYNTHETIC = new Set(["repository"]);
+  const contributingUsernames = new Set([
+    ...modules.filter((m) => !SYNTHETIC.has(m.path)).flatMap((m) => m.contributors.map((c) => c.developer_username)),
+    ...contribHistory.map((r) => r.developer_username),
+  ]);
+
+  // Time range — wide enough to cover all monthly history
+  const allTimestamps: number[] = [now - 180 * 86_400_000]; // minimum 6 months
+  for (const dev of allDevs)
+    if (dev.last_seen) allTimestamps.push(new Date(dev.last_seen).getTime());
+  for (const mod of modules)
+    for (const c of mod.contributors)
+      if (c.last_contribution_at) allTimestamps.push(new Date(c.last_contribution_at).getTime());
+  for (const r of contribHistory)
+    allTimestamps.push(new Date(r.year_month + "-15").getTime());
+
+  const oldest  = Math.min(...allTimestamps);
   const rangeMs = Math.max(now - oldest + 14 * 86_400_000, 180 * 86_400_000);
   const startMs = now - rangeMs;
 
-  const modulePaths = [...new Set(modules.map((m) => m.path))].sort();
-
-  // Only show developers who have at least one contribution in the module data
-  const contributingUsernames = new Set(
-    modules.flatMap((m) => m.contributors.map((c) => c.developer_username))
-  );
-
   const sortedInternal = [...internalDevs]
     .filter((d) => contributingUsernames.has(d.username))
-    .sort((a, b) => {
-      const aMs = a.last_seen ? new Date(a.last_seen).getTime() : 0;
-      const bMs = b.last_seen ? new Date(b.last_seen).getTime() : 0;
-      return bMs - aMs;
-    });
+    .sort((a, b) => (new Date(b.last_seen ?? 0).getTime()) - (new Date(a.last_seen ?? 0).getTime()));
+
   const sortedUpstream = [...upstreamAuthors]
     .filter((d) => contributingUsernames.has(d.username))
-    .sort((a, b) => {
-      const aMs = a.last_seen ? new Date(a.last_seen).getTime() : 0;
-      const bMs = b.last_seen ? new Date(b.last_seen).getTime() : 0;
-      return bMs - aMs;
-    });
+    .sort((a, b) => (new Date(b.last_seen ?? 0).getTime()) - (new Date(a.last_seen ?? 0).getTime()))
+    .slice(0, 15);
 
   const hasUpstream = sortedUpstream.length > 0;
-
-  // Y axis layout: internal rows 0..N-1, separator gap at N, upstream rows N+1..N+U
   const N = sortedInternal.length;
   const U = sortedUpstream.length;
-  const separatorY = N; // gap row — no data, just a reference line
+  const totalRows = N + (hasUpstream ? U + 1 : 0);
 
-  function rowIndex(dev: Developer): number {
-    const ii = sortedInternal.findIndex((d) => d.username === dev.username);
+  function rowIndexByUsername(username: string): number {
+    const ii = sortedInternal.findIndex((d) => d.username === username);
     if (ii >= 0) return ii;
-    const ui = sortedUpstream.findIndex((d) => d.username === dev.username);
-    if (ui >= 0) return N + 1 + ui;
-    return -1;
+    const ui = sortedUpstream.findIndex((d) => d.username === username);
+    return ui >= 0 ? N + 1 + ui : -1;
   }
 
   const yTicks = [
@@ -298,83 +309,102 @@ export default function RepoHistory() {
     ...(hasUpstream ? sortedUpstream.map((_, i) => N + 1 + i) : []),
   ];
 
-  function tickLabel(i: number): string {
-    if (i < N) return sortedInternal[i]?.name ?? "";
-    return sortedUpstream[i - N - 1]?.name ?? "";
-  }
-
-  const totalRows = N + (hasUpstream ? U + 1 : 0);
-  const yDomain = [-0.5, totalRows - 0.5];
-
-  // Fork / repo-start reference line
-  const repoStartMs = forkDateInfo.effective ? new Date(forkDateInfo.effective).getTime() : null;
+  const repoStartMs    = forkDateInfo.effective ? new Date(forkDateInfo.effective).getTime() : null;
   const repoStartLabel = forkDateInfo.override ? "fork date (demo)" : "repo start";
 
-  // Build scatter series data per module
-  const moduleSeriesData: Record<string, object[]> = Object.fromEntries(modulePaths.map((p) => [p, []]));
-  // Last-seen markers
-  const lastSeenData: object[] = [];
+  // ── Monthly activity bars ─────────────────────────────────────────────────
 
-  for (const mod of modules) {
-    for (const c of mod.contributors) {
-      if (!c.last_contribution_at) continue;
-      const x = new Date(c.last_contribution_at).getTime();
+  const hasMonthlyData = contribHistory.length > 0;
 
-      // Find the developer to get Y position
-      const dev = allDevs.find((d) => d.username === c.developer_username);
-      if (!dev) continue;
+  const monthlyByUser = new Map<string, Map<string, number>>();
+  for (const r of contribHistory) {
+    const m = monthlyByUser.get(r.developer_username) ?? new Map<string, number>();
+    m.set(r.year_month, (m.get(r.year_month) ?? 0) + r.commit_count);
+    monthlyByUser.set(r.developer_username, m);
+  }
 
-      const yPos = rowIndex(dev);
-      if (yPos < 0) continue;
+  const activityBars = hasMonthlyData
+    ? computeActivityBars(monthlyByUser, allDevs, rowIndexByUsername, repoStartMs)
+    : [];
 
-      const isPreFork = repoStartMs != null ? x < repoStartMs : false;
+  // Fallback: per-module dots when no monthly history available
+  type FallbackDot = { cx: number; cy: number; r: number; fill: string; opacity: number; stroke: string; strokeWidth: number };
+  const fallbackDots: FallbackDot[] = [];
 
-      // Post-fork external: skip (upstream authors shouldn't have post-fork contributions)
-      if (!isPreFork && dev.external) continue;
+  // ── SVG layout ────────────────────────────────────────────────────────────
 
-      const inactiveDays = dev.last_seen ? (Date.now() - new Date(dev.last_seen).getTime()) / 86_400_000 : 0;
+  const Y_PANEL        = 160;
+  const MARGIN_TOP     = 8;
+  const MARGIN_BOTTOM  = 4;
+  const X_AXIS_H       = 28;
+  const ROW_HEIGHT     = 36;
+  const BAR_H          = 16;
+  const chartHeight    = Math.max(160, totalRows * ROW_HEIGHT + MARGIN_TOP + MARGIN_BOTTOM + X_AXIS_H);
+  const chartDataH     = chartHeight - MARGIN_TOP - MARGIN_BOTTOM - X_AXIS_H;
+  const monthCount     = Math.ceil(rangeMs / (30 * 86_400_000));
+  const dataWidth      = Math.max(700, monthCount * 90);
+  const PLOT_W         = dataWidth - 32;
 
-      (moduleSeriesData[c.module_path] ??= []).push({
-        x,
-        y: yPos,
-        r: Math.max(4, Math.min(9, Math.round(c.expertise_score * 7) + 4)),
-        color: moduleColor(c.module_path, modulePaths),
-        opacity: inactiveDays > 60 ? 0.4 : 0.85,
-        isPreFork,
-        module: c.module_path,
-        devName: dev.name,
-        expertise: c.expertise_score,
-        commitCount: c.commit_count,
-      });
+  function rowCY(tick: number): number {
+    return MARGIN_TOP + (tick + 0.5) / totalRows * chartDataH;
+  }
+
+  function msToX(ms: number): number {
+    return Math.max(0, Math.min(PLOT_W, ((ms - startMs) / rangeMs) * PLOT_W));
+  }
+
+  // X axis tick marks — one per N months depending on zoom
+  const tickEvery = Math.max(1, Math.round(monthCount / Math.floor(dataWidth / 70)));
+  const xTicks: { ms: number; label: string }[] = [];
+  {
+    const d = new Date(startMs);
+    d.setDate(1); d.setHours(0, 0, 0, 0);
+    while (d.getTime() <= now + 30 * 86_400_000) {
+      xTicks.push({ ms: d.getTime(), label: d.toLocaleDateString([], { month: "short", year: "2-digit" }) });
+      d.setMonth(d.getMonth() + tickEvery);
     }
   }
 
-  // Last-seen markers for internal devs only (active/inactive line)
-  for (const [i, dev] of sortedInternal.entries()) {
-    if (!dev.last_seen) continue;
-    const ms = new Date(dev.last_seen).getTime();
-    lastSeenData.push({
-      x: ms,
-      y: i,
-      isInactive: (Date.now() - ms) / 86_400_000 > 60,
-      devName: dev.name,
-      _isLastSeen: true,
+  const gridY1    = MARGIN_TOP;
+  const gridY2    = chartHeight - X_AXIS_H - MARGIN_BOTTOM;
+  const labelY    = chartHeight - 6;
+
+  // Fallback dots (used only if no monthly data)
+  if (!hasMonthlyData) {
+    for (const mod of modules) {
+      for (const c of mod.contributors) {
+        if (!c.last_contribution_at) continue;
+        const dev = allDevs.find((d) => d.username === c.developer_username);
+        if (!dev) continue;
+        const yi = rowIndexByUsername(dev.username);
+        if (yi < 0) continue;
+        const xMs = new Date(c.last_contribution_at).getTime();
+        const isPreFork = repoStartMs != null ? xMs < repoStartMs : false;
+        if (!isPreFork && dev.external) continue;
+        const inactiveDays = dev.last_seen ? (Date.now() - new Date(dev.last_seen).getTime()) / 86_400_000 : 0;
+        fallbackDots.push({
+          cx: msToX(xMs),
+          cy: rowCY(yi),
+          r: Math.max(4, Math.min(9, Math.round(c.expertise_score * 7) + 4)),
+          fill: moduleColor(mod.path, modulePaths),
+          opacity: isPreFork ? 0.3 : (inactiveDays > 60 ? 0.4 : 0.85),
+          stroke: isPreFork ? "none" : "rgba(0,0,0,0.35)",
+          strokeWidth: isPreFork ? 0 : 1.5,
+        });
+      }
+    }
+  }
+
+  // Last-seen markers (vertical line = when contributor was last active)
+  const lastSeenMarkers = sortedInternal
+    .map((dev, i) => ({ dev, i }))
+    .filter(({ dev }) => !!dev.last_seen)
+    .map(({ dev, i }) => {
+      const ms = new Date(dev.last_seen!).getTime();
+      return { x: msToX(ms), cy: rowCY(i), isInactive: (Date.now() - ms) / 86_400_000 > 60 };
     });
-  }
 
-  const Y_PANEL = 160;
-  const MARGIN_TOP = 8;
-  const MARGIN_BOTTOM = 8;
-  const chartHeight = Math.max(160, totalRows * 36 + 40);
-  const chartDataHeight = chartHeight - MARGIN_TOP - MARGIN_BOTTOM;
-  const monthCount = Math.ceil(rangeMs / (30 * 86_400_000));
-  const dataWidth = Math.max(700, monthCount * 90);
-
-  function labelPixelY(tick: number): number {
-    return MARGIN_TOP + (tick + 0.5) / totalRows * chartDataHeight;
-  }
-
-  // Sort modules most recently active first for the table
+  // Module table
   const sortedModules = [...modules].sort((a, b) => {
     const latest = (m: Module) =>
       Math.max(...m.contributors.filter((c) => !c.external).map((c) => c.last_contribution_at ? new Date(c.last_contribution_at).getTime() : 0), 0);
@@ -383,23 +413,35 @@ export default function RepoHistory() {
 
   return (
     <Stack spacing={3}>
-      {/* Legend */}
+      {/* ── Legend ── */}
       <Stack direction="row" spacing={2} sx={{ flexWrap: "wrap", alignItems: "center" }} useFlexGap>
-        {modulePaths.map((path) => (
-          <Stack key={path} direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
-            <Box sx={{ width: 10, height: 10, borderRadius: "50%", bgcolor: moduleColor(path, modulePaths), flexShrink: 0 }} />
-            <Typography variant="caption" color="text.secondary" sx={{ fontFamily: "monospace", fontSize: "0.72rem" }}>
-              {path}/
-            </Typography>
-          </Stack>
-        ))}
+        {hasMonthlyData ? (
+          <>
+            <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
+              <Box sx={{ width: 20, height: 10, borderRadius: "2px", bgcolor: "#34d399", opacity: 0.72, flexShrink: 0 }} />
+              <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.72rem" }}>internal</Typography>
+            </Stack>
+            <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
+              <Box sx={{ width: 20, height: 10, borderRadius: "2px", bgcolor: "#a78bfa", opacity: 0.5, flexShrink: 0 }} />
+              <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.72rem" }}>upstream (pre-fork)</Typography>
+            </Stack>
+            <Typography variant="caption" color="text.disabled" sx={{ fontSize: "0.68rem" }}>· bars span contiguous active months</Typography>
+          </>
+        ) : (
+          modulePaths.map((path) => (
+            <Stack key={path} direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
+              <Box sx={{ width: 10, height: 10, borderRadius: "50%", bgcolor: moduleColor(path, modulePaths), flexShrink: 0 }} />
+              <Typography variant="caption" color="text.secondary" sx={{ fontFamily: "monospace", fontSize: "0.72rem" }}>{path}/</Typography>
+            </Stack>
+          ))
+        )}
         <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
           <Box sx={{ width: 2, height: 12, bgcolor: "#34a853", opacity: 0.6, flexShrink: 0 }} />
-          <Typography variant="caption" color="text.disabled" sx={{ fontSize: "0.68rem" }}>last seen (active)</Typography>
+          <Typography variant="caption" color="text.disabled" sx={{ fontSize: "0.68rem" }}>last active</Typography>
         </Stack>
         <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
           <Box sx={{ width: 2, height: 12, bgcolor: "#ea4335", opacity: 0.6, flexShrink: 0 }} />
-          <Typography variant="caption" color="text.disabled" sx={{ fontSize: "0.68rem" }}>last seen (inactive)</Typography>
+          <Typography variant="caption" color="text.disabled" sx={{ fontSize: "0.68rem" }}>last active (60d+)</Typography>
         </Stack>
         <Box sx={{ flex: 1 }} />
         <IconButton size="small" onClick={load} sx={{ color: "text.disabled" }}>
@@ -407,54 +449,26 @@ export default function RepoHistory() {
         </IconButton>
       </Stack>
 
-      {/* Contributor activity — sticky Y axis + scrollable chart */}
+      {/* ── Timeline chart ── */}
       <Paper variant="outlined" sx={{ borderColor: "rgba(255,255,255,0.08)", borderRadius: 2, overflow: "hidden" }}>
         <Box sx={{ px: 2.5, py: 1.5, borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-          <Typography variant="subtitle2" color="text.secondary">Contributor activity</Typography>
+          <Typography variant="subtitle2" color="text.secondary">Contributor activity timeline</Typography>
         </Box>
 
         <Box sx={{ display: "flex", overflow: "hidden" }}>
-          {/* ── Sticky Y axis panel ── */}
-          <Box
-            sx={{
-              width: Y_PANEL,
-              flexShrink: 0,
-              position: "relative",
-              height: chartHeight,
-              bgcolor: "background.paper",
-              borderRight: "1px solid rgba(255,255,255,0.06)",
-              zIndex: 2,
-            }}
-          >
+          {/* Sticky Y axis */}
+          <Box sx={{ width: Y_PANEL, flexShrink: 0, position: "relative", height: chartHeight, bgcolor: "background.paper", borderRight: "1px solid rgba(255,255,255,0.06)", zIndex: 2 }}>
             {yTicks.map((tick) => {
               const isUpstream = hasUpstream && tick >= N + 1;
+              const label = tick < N ? sortedInternal[tick]?.name : sortedUpstream[tick - N - 1]?.name;
               return (
-                <Typography
-                  key={tick}
-                  sx={{
-                    position: "absolute",
-                    top: labelPixelY(tick),
-                    right: 8,
-                    transform: "translateY(-50%)",
-                    fontSize: "0.68rem",
-                    lineHeight: 1,
-                    color: isUpstream ? "#8b949e" : "#c9d1d9",
-                    fontStyle: isUpstream ? "italic" : "normal",
-                    whiteSpace: "nowrap",
-                    maxWidth: Y_PANEL - 12,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    userSelect: "none",
-                  }}
-                >
-                  {tickLabel(tick)}
+                <Typography key={tick} sx={{ position: "absolute", top: rowCY(tick), right: 8, transform: "translateY(-50%)", fontSize: "0.68rem", lineHeight: 1, color: isUpstream ? "#8b949e" : "#c9d1d9", fontStyle: isUpstream ? "italic" : "normal", whiteSpace: "nowrap", maxWidth: Y_PANEL - 12, overflow: "hidden", textOverflow: "ellipsis", userSelect: "none" }}>
+                  {label}
                 </Typography>
               );
             })}
-
-            {/* Separator + "upstream authors" micro-label */}
             {hasUpstream && (() => {
-              const sepY = labelPixelY(N - 0.5 + 0.5); // midpoint of gap row
+              const sepY = rowCY(N - 0.5 + 0.5);
               return (
                 <>
                   <Box sx={{ position: "absolute", top: sepY, left: 0, right: 0, borderTop: "1px dashed rgba(255,255,255,0.1)" }} />
@@ -466,90 +480,131 @@ export default function RepoHistory() {
             })()}
           </Box>
 
-          {/* ── Scrollable data area ── */}
-          <Box sx={{ overflowX: "auto", flex: 1 }}>
+          {/* Scrollable SVG */}
+          <Box
+            ref={scrollRef}
+            sx={{
+              overflowX: "auto",
+              flex: 1,
+              "&::-webkit-scrollbar": { height: 5 },
+              "&::-webkit-scrollbar-track": { bgcolor: "rgba(255,255,255,0.03)" },
+              "&::-webkit-scrollbar-thumb": {
+                bgcolor: "rgba(255,255,255,0.18)",
+                borderRadius: 3,
+                "&:hover": { bgcolor: "rgba(255,255,255,0.32)" },
+              },
+            }}
+          >
             <Box sx={{ width: dataWidth }}>
-              <ScatterChart width={dataWidth} height={chartHeight} margin={{ top: MARGIN_TOP, right: 32, bottom: MARGIN_BOTTOM, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                <XAxis
-                  dataKey="x"
-                  type="number"
-                  scale="time"
-                  domain={[startMs, now]}
-                  tickFormatter={(ms: number) =>
-                    new Date(ms).toLocaleDateString([], { month: "short", year: "2-digit" })
-                  }
-                  tick={{ fill: "#8b949e", fontSize: 11 }}
-                  axisLine={{ stroke: "rgba(255,255,255,0.08)" }}
-                  tickLine={false}
-                  tickCount={6}
-                />
-                {/* Y axis hidden — labels rendered in sticky HTML panel */}
-                <YAxis
-                  dataKey="y"
-                  type="number"
-                  domain={yDomain}
-                  ticks={yTicks}
-                  reversed
-                  width={0}
-                  tick={false}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <ChartTooltip content={<ScatterTooltip />} cursor={false} />
+              <svg
+                width={dataWidth}
+                height={chartHeight}
+                style={{ display: "block" }}
+                onMouseLeave={() => setTooltip(null)}
+              >
+                {/* Alternating row fills */}
+                {yTicks.map((tick, i) => (
+                  <rect key={tick} x={0} y={rowCY(tick) - ROW_HEIGHT / 2} width={dataWidth} height={ROW_HEIGHT}
+                    fill={i % 2 === 0 ? "rgba(255,255,255,0.013)" : "transparent"} />
+                ))}
+
+                {/* Vertical grid lines + X axis labels */}
+                {xTicks.map(({ ms, label }, i) => {
+                  const x = msToX(ms);
+                  return (
+                    <g key={i}>
+                      <line x1={x} y1={gridY1} x2={x} y2={gridY2} stroke="rgba(255,255,255,0.05)" strokeWidth={1} />
+                      <text x={x} y={labelY} textAnchor="middle" fill="#8b949e" fontSize={11} fontFamily="sans-serif">{label}</text>
+                    </g>
+                  );
+                })}
+
+                {/* X axis baseline */}
+                <line x1={0} y1={gridY2} x2={PLOT_W} y2={gridY2} stroke="rgba(255,255,255,0.08)" strokeWidth={1} />
+
+                {/* Internal / upstream separator */}
+                {hasUpstream && (
+                  <line x1={0} y1={rowCY(N - 0.5 + 0.5)} x2={PLOT_W} y2={rowCY(N - 0.5 + 0.5)}
+                    stroke="rgba(255,255,255,0.08)" strokeDasharray="4 4" />
+                )}
 
                 {/* Fork / repo-start reference line */}
-                {repoStartMs != null && repoStartMs >= startMs && (
-                  <ReferenceLine
-                    x={repoStartMs}
-                    stroke="rgba(255,255,255,0.5)"
-                    strokeWidth={1.5}
-                    strokeDasharray="6 3"
-                  >
-                    <Label
-                      value={repoStartLabel}
-                      position="insideTopRight"
-                      style={{ fill: "rgba(255,255,255,0.45)", fontSize: 10, fontFamily: "monospace" }}
-                      offset={6}
+                {repoStartMs != null && repoStartMs >= startMs && (() => {
+                  const fx = msToX(repoStartMs);
+                  return (
+                    <g>
+                      <line x1={fx} y1={gridY1} x2={fx} y2={gridY2} stroke="rgba(255,255,255,0.5)" strokeWidth={1.5} strokeDasharray="6 3" />
+                      <text x={fx + 5} y={gridY1 + 13} fill="rgba(255,255,255,0.45)" fontSize={10} fontFamily="monospace">{repoStartLabel}</text>
+                    </g>
+                  );
+                })()}
+
+                {/* ── Activity bars (monthly mode) ── */}
+                {activityBars.map((bar, i) => {
+                  const x1    = msToX(bar.startMs);
+                  const x2    = msToX(bar.endMs);
+                  const rawW  = x2 - x1;
+                  const w     = Math.max(6, rawW);
+                  // center single-point bars on the midpoint instead of left-aligning
+                  const xRect = rawW > 0 ? x1 : x1 - w / 2;
+                  const cy    = rowCY(bar.yRow);
+                  const fill    = bar.isUpstream ? "#a78bfa" : "#34d399";
+                  const opacity = bar.isPreFork ? 0.45 : 0.72;
+                  // date range string for tooltip
+                  const d0 = new Date(bar.startMs);
+                  const d1 = new Date(bar.endMs - 1);
+                  const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+                  const range = bar.monthCount === 1 ? fmt(d0) : `${fmt(d0)} → ${fmt(d1)}`;
+                  return (
+                    <rect
+                      key={i}
+                      x={xRect} y={cy - BAR_H / 2}
+                      width={w} height={BAR_H}
+                      rx={3} ry={3}
+                      fill={fill} opacity={opacity}
+                      style={{ cursor: "default" }}
+                      onMouseEnter={(e) =>
+                        setTooltip({ clientX: e.clientX, clientY: e.clientY, devName: bar.devName, range, commits: bar.totalCommits, months: bar.monthCount, isUpstream: bar.isUpstream, isPreFork: bar.isPreFork })
+                      }
+                      onMouseMove={(e) =>
+                        setTooltip((prev) => prev ? { ...prev, clientX: e.clientX, clientY: e.clientY } : null)
+                      }
                     />
-                  </ReferenceLine>
-                )}
+                  );
+                })}
 
-                {/* Separator between internal and upstream rows */}
-                {hasUpstream && (
-                  <ReferenceLine
-                    y={separatorY + 0.5}
-                    stroke="rgba(255,255,255,0.08)"
-                    strokeDasharray="4 4"
-                  />
-                )}
-
-                {/* Last-seen markers */}
-                <Scatter
-                  data={lastSeenData}
-                  shape={(props: DotProps) => <LastSeenMarker {...props} />}
-                  isAnimationActive={false}
-                  legendType="none"
-                />
-
-                {/* One series per module */}
-                {modulePaths.map((path) => (
-                  <Scatter
-                    key={path}
-                    name={path}
-                    data={moduleSeriesData[path] ?? []}
-                    shape={(props: DotProps) => <ContribDot {...props} />}
-                    isAnimationActive={false}
-                    legendType="none"
-                  />
+                {/* ── Fallback dots (no monthly history) ── */}
+                {fallbackDots.map((dot, i) => (
+                  <circle key={i} cx={dot.cx} cy={dot.cy} r={dot.r}
+                    fill={dot.fill} opacity={dot.opacity}
+                    stroke={dot.stroke} strokeWidth={dot.strokeWidth} />
                 ))}
-              </ScatterChart>
+
+                {/* ── Last-active markers ── */}
+                {lastSeenMarkers.map((m, i) => (
+                  <rect key={i} x={m.x - 1} y={m.cy - 14} width={2} height={28}
+                    fill={m.isInactive ? "#ea4335" : "#34a853"} opacity={0.55} />
+                ))}
+              </svg>
             </Box>
           </Box>
         </Box>
       </Paper>
 
-      {/* Module last-activity table */}
+      {/* ── Floating tooltip ── */}
+      {tooltip && (
+        <Paper sx={{ position: "fixed", left: tooltip.clientX + 14, top: tooltip.clientY - 16, px: 1.5, py: 1, bgcolor: "#21262d", border: "1px solid rgba(255,255,255,0.1)", zIndex: 9999, pointerEvents: "none", boxShadow: "0 4px 16px rgba(0,0,0,0.5)" }}>
+          <Typography variant="caption" sx={{ fontWeight: 600, display: "block" }}>{tooltip.devName}</Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", fontFamily: "monospace" }}>{tooltip.range}</Typography>
+          <Typography variant="caption" color="text.disabled" sx={{ display: "block" }}>
+            {tooltip.commits} commit{tooltip.commits !== 1 ? "s" : ""}
+            {tooltip.months > 1 ? ` · ${tooltip.months} months` : ""}
+            {" · "}{tooltip.isPreFork ? "upstream" : "internal"}
+          </Typography>
+        </Paper>
+      )}
+
+      {/* ── Module last-activity table ── */}
       <Paper variant="outlined" sx={{ borderColor: "rgba(255,255,255,0.08)", borderRadius: 2, overflow: "hidden" }}>
         <Box sx={{ px: 2.5, py: 1.5, borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
           <Typography variant="subtitle2" color="text.secondary">Module last activity</Typography>

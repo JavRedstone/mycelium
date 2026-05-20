@@ -710,6 +710,46 @@ class PipelineRunner:
         except Exception as exc:
             logger.error("[pipeline] Per-directory knowledge attribution failed: %s", exc)
 
+        # Monthly contribution history — timeline buckets per (developer, module, YYYY-MM)
+        try:
+            from graph.models import ContributionHistory
+            _members_h = self._repo.get("members", [])
+            _by_uname_h = {m.get("username", "").lower(): m for m in _members_h if m.get("username")}
+            _by_name_h = {m.get("name", "").lower(): m for m in _members_h if m.get("name")}
+            for module_path, contribs in self._module_contributors.items():
+                for c in contribs:
+                    monthly_counts = c.get("monthly_counts", {})
+                    if not monthly_counts:
+                        continue
+                    name = c.get("name") or ""
+                    email = c.get("email") or ""
+                    is_external = bool(c.get("external", False))
+                    username = None
+                    if not is_external:
+                        key = name.lower()
+                        if key in _by_uname_h:
+                            username = _by_uname_h[key].get("username")
+                        elif key in _by_name_h:
+                            username = _by_name_h[key].get("username")
+                    if not username:
+                        username = email.split("@", 1)[0] if email else (name.replace(" ", "_")[:64] or "unknown")
+                    for year_month, count in monthly_counts.items():
+                        if not year_month:
+                            continue
+                        record = ContributionHistory(
+                            developer_username=username,
+                            module_path=module_path,
+                            year_month=year_month,
+                            commit_count=count,
+                            external=is_external,
+                        )
+                        try:
+                            await self._graph.upsert_contribution_history(record)
+                        except Exception as exc:
+                            logger.error("[pipeline] Contribution history upsert failed %s/%s/%s: %s", username, module_path, year_month, exc)
+        except Exception as exc:
+            logger.error("[pipeline] Monthly contribution history storage failed: %s", exc)
+
         # Seed CODEOWNERS into module ownership (declared owners = ground truth, score 1.0)
         try:
             from graph.models import ModuleNode, ContributionEdge

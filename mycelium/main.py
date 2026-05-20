@@ -249,6 +249,12 @@ async def set_fork_date(body: ForkDateBody):
     return {"set": body.date}
 
 
+@app.get("/graph/contribution-history")
+async def contribution_history(module_path: str | None = None, developer_username: str | None = None):
+    """Monthly commit counts per (developer, module) for the repo history timeline."""
+    return await graph.get_contribution_history(module_path=module_path, developer_username=developer_username)
+
+
 @app.get("/actions")
 async def list_actions(limit: int = 200, run_id: str | None = None):
     """Agent action log — what the act agent has done across all pipeline runs."""

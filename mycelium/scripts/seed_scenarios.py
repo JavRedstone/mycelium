@@ -60,6 +60,7 @@ async def _delete_by_usernames(usernames: list[str]):
         return
     await db()["developers"].delete_many({"username": {"$in": usernames}, "demo": True})
     await db()["contributions"].delete_many({"developer_username": {"$in": usernames}, "demo": True})
+    await db()["contribution_history"].delete_many({"developer_username": {"$in": usernames}, "demo": True})
 
 
 async def _delete_by_modules(paths: list[str]):
@@ -121,6 +122,39 @@ async def _seed_contribution(
             "demo": True,
         },
     )
+
+
+def _month_offset(months_ago: int) -> str:
+    """Return YYYY-MM string for N months before now."""
+    d = _now() - timedelta(days=30 * months_ago)
+    return d.strftime("%Y-%m")
+
+
+def _month_range_data(start_months_ago: int, end_months_ago: int, counts: list[int]) -> dict[str, int]:
+    """Map YYYY-MM → commit_count from start_months_ago down to end_months_ago (inclusive)."""
+    months_back = range(start_months_ago, end_months_ago - 1, -1)
+    return {_month_offset(m): c for m, c in zip(months_back, counts)}
+
+
+async def _seed_monthly_history(
+    username: str,
+    module_path: str,
+    monthly_data: dict[str, int],
+    external: bool = False,
+) -> None:
+    for year_month, count in monthly_data.items():
+        await db()["contribution_history"].update_one(
+            {"developer_username": username, "module_path": module_path, "year_month": year_month},
+            {"$set": {
+                "developer_username": username,
+                "module_path": module_path,
+                "year_month": year_month,
+                "commit_count": count,
+                "external": external,
+                "demo": True,
+            }},
+            upsert=True,
+        )
 
 
 async def _set_fork_date(date: datetime | None) -> None:
@@ -289,6 +323,37 @@ async def scenario_full_team():
     await _seed_contribution("sofia.mueller", "test",   commit_count=287, lines_changed=6780, expertise_score=0.91, last_contribution_at=sixteen_months, external=True)
     await _seed_contribution("sofia.mueller", "shared", commit_count=88,  lines_changed=1640, expertise_score=0.54, last_contribution_at=sixteen_months, external=True)
 
+    # ── Monthly contribution history (timeline data for Repo History chart) ──────
+
+    # alex.chen: consistently active all 12 months post-fork
+    await _seed_monthly_history("alex.chen", "internal", _month_range_data(11, 0, [16,18,12,15,17,14,16,13,14,15,17,14]))
+    await _seed_monthly_history("alex.chen", "app",      _month_range_data(11, 0, [9,11,7,9,12,8,8,10,9,7,11,10]))
+    await _seed_monthly_history("alex.chen", "shared",   _month_range_data(11, 0, [7,9,6,8,8,9,7,6,8,9,7,8]))
+
+    # priya.sharma: active months 11→6 post-fork, then silent (fading contributor)
+    await _seed_monthly_history("priya.sharma", "scripts", _month_range_data(11, 6, [13,15,12,11,14,13]))
+    await _seed_monthly_history("priya.sharma", "shared",  _month_range_data(11, 7, [5,6,4,5,6]))
+
+    # marco.torres: new joiner — only the last 2 months
+    await _seed_monthly_history("marco.torres", "test", _month_range_data(1, 0, [2, 1]))
+
+    # lisa.park: consistently active all 12 months post-fork
+    await _seed_monthly_history("lisa.park", "test",   _month_range_data(11, 0, [12,14,11,13,10,12,11,13,12,11,13,11]))
+    await _seed_monthly_history("lisa.park", "shared", _month_range_data(11, 0, [8,9,7,8,9,8,7,8,9,8,8,7]))
+
+    # tim.arch: upstream author, active months 15→12 (pre-fork)
+    await _seed_monthly_history("tim.arch", "app",      _month_range_data(15, 12, [22,26,28,24]), external=True)
+    await _seed_monthly_history("tim.arch", "internal", _month_range_data(15, 12, [18,22,20,21]), external=True)
+    await _seed_monthly_history("tim.arch", "shared",   _month_range_data(14, 12, [14,16,15]),    external=True)
+
+    # remi.pages: upstream, active months 16→14 (pre-fork)
+    await _seed_monthly_history("remi.pages", "scripts", _month_range_data(16, 14, [22,18,20]), external=True)
+    await _seed_monthly_history("remi.pages", "shared",  _month_range_data(15, 14, [9,11]),     external=True)
+
+    # sofia.mueller: upstream, active months 16→12 (pre-fork)
+    await _seed_monthly_history("sofia.mueller", "test",   _month_range_data(16, 12, [25,27,24,26,22]), external=True)
+    await _seed_monthly_history("sofia.mueller", "shared", _month_range_data(15, 12, [7,8,9,7]),        external=True)
+
     # ── Modules ──────────────────────────────────────────────────────────────
 
     await _seed_module("internal", bus_factor=2, owners=["alex.chen"])
@@ -367,7 +432,7 @@ async def scenario_sole_owner():
 async def clear_all():
     filter_ = {"demo": True}
     results = {}
-    for col in ("developers", "modules", "contributions"):
+    for col in ("developers", "modules", "contributions", "contribution_history"):
         r = await db()[col].delete_many(filter_)
         results[col] = r.deleted_count
     await _set_fork_date(None)
