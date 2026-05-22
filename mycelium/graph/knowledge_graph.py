@@ -189,13 +189,21 @@ class KnowledgeGraph:
     # --- Snapshot for agent context ---
 
     async def snapshot(self) -> dict:
-        """Graph snapshot for agent consumption — demo entries excluded."""
+        """Graph snapshot for agent consumption.
+
+        Demo-seeded entries are only included when DEMO_MODE=true is set in the
+        environment AND demo data is actually present in the database. In production
+        (DEMO_MODE unset or false) demo entries are always excluded.
+        """
+        from config.settings import settings
+        demo_active = settings.demo_mode and await self.has_demo_data()
         return {
-            "developers": await self.list_developers(exclude_demo=True),
+            "developers": await self.list_developers(exclude_demo=not demo_active),
             "upstream_authors": await self.list_external_contributors(),
-            "concentrated_modules": await self.list_concentrated_modules(exclude_demo=True),
+            "concentrated_modules": await self.list_concentrated_modules(exclude_demo=not demo_active),
             "open_tasks": await self.list_open_tasks(),
             "recent_findings": await self.list_findings(limit=50),
+            "demo_data_present": demo_active,
         }
 
     async def delete_demo_data(self) -> dict:

@@ -5,9 +5,16 @@ real repository to accumulate enough history to trigger every concern type.
 
 All seeded entries carry `demo: true` in MongoDB so they are clearly labelled in
 the Knowledge Graph UI (purple "demo" chip) and can be removed in one command.
-They are **never** passed to agents — the graph snapshot the pipeline uses
-filters `demo: true` out before reasoning, so synthetic contributors never
-appear in generated GitLab issues.
+
+Whether demo data reaches the pipeline agents is controlled by the `DEMO_MODE`
+environment variable:
+
+| `DEMO_MODE` | Behaviour |
+|---|---|
+| `false` (default) | Demo entries are filtered out of the graph snapshot — agents only see real data. Safe for production. |
+| `true` | Demo entries are included in the graph snapshot and a context note is injected into analyst/planner prompts — agents reason over the full seeded team. Use for demos and development runs. |
+
+The `/demo/seed/{scenario}` API endpoint also returns `403` when `DEMO_MODE=false`.
 
 ---
 
@@ -69,13 +76,19 @@ is always fresh. You can re-seed between pipeline runs without leftover state.
 
 The `demo` flag propagates through the entire stack:
 
-1. **MongoDB** — `demo: true` field on `developers`, `modules`, `contributions`
+1. **MongoDB** — `demo: true` field on `developers`, `modules`, `contributions`, `contribution_history`
 2. **Upsert safety** — pipeline `upsert_*` methods use `$setOnInsert` for `demo`,
    so a pipeline run never overwrites `demo: true` to `false` on seeded entries
-3. **Agent context** — `snapshot()`, `list_developers()`, and
-   `list_concentrated_modules()` all filter `{"demo": {"$ne": true}}` before
-   handing data to agents — synthetic users never appear in generated issues
-4. **UI** — the Knowledge Graph page shows a purple "demo" chip on every
+3. **Agent context** — controlled by `DEMO_MODE`:
+   - `DEMO_MODE=false` (default): `snapshot()`, `list_developers()`, and
+     `list_concentrated_modules()` all filter `{"demo": {"$ne": true}}` — synthetic
+     users never reach agents or appear in generated GitLab issues
+   - `DEMO_MODE=true`: demo entries are included in the snapshot and a note is
+     appended to analyst and planner prompts instructing them to treat demo entries
+     as real contributors
+4. **Seed endpoint guard** — `POST /demo/seed/{scenario}` returns `403 Forbidden`
+   when `DEMO_MODE=false`, preventing accidental seeding in production
+5. **UI** — the Knowledge Graph page shows a purple "demo" chip on every
    seeded contributor, contributor row, and React Flow node; a banner appears
    when any demo data is present; a "Clear demo data" button calls
    `DELETE /graph/demo`

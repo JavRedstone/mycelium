@@ -177,13 +177,21 @@ def plan(interpretation: dict, repo_snapshot: dict, graph_snapshot: dict) -> dic
 
     interpretation is the analyst output: {"synthesis": "...", "findings": [...]}.
     """
+    from config.settings import settings
     context = {
         "interpretation": interpretation,
         "repository": repo_snapshot,
         "knowledge_graph": graph_snapshot,
     }
+    demo_note = (
+        "\n\nNOTE — DEMO MODE: some entries in knowledge_graph carry demo: true. "
+        "Treat them as real contributors and modules; plan actions for them as you "
+        "would for any other team member."
+        if settings.demo_mode and graph_snapshot.get("demo_data_present")
+        else ""
+    )
     prompt = (
-        f"Context:\n{json.dumps(context, indent=2, default=str)}\n\n"
+        f"Context:\n{json.dumps(context, indent=2, default=str)}{demo_note}\n\n"
         "Return ONLY a JSON object matching the schema in your instructions."
     )
 

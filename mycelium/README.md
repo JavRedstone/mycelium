@@ -127,6 +127,7 @@ Copy `.env.example` to `.env` (or create one) and fill in:
 | `GITLAB_TOKEN` | yes | Personal access token (`api` scope). |
 | `GITLAB_PROJECT_ID` | yes | Numeric project ID (Settings → General → Project ID). |
 | `AGENT_LOOP_INTERVAL_SECONDS` | no | Seconds between autonomous runs (default `300`). |
+| `DEMO_MODE` | no | Set to `true` to include demo-seeded data in agent snapshots and activate the `/demo/seed` endpoint. Default `false` — keep `false` in production. |
 
 **Authenticate to Google Cloud** (ADC for local runs):
 
@@ -188,7 +189,7 @@ python cli.py inspect module scripts
 # Inspect a developer — expertise profile and module ownership
 python cli.py inspect developer alex.chen
 
-# Seed demo data (team | new_joiner | fading | sole_owner)
+# Seed demo data — requires DEMO_MODE=true in .env (team | new_joiner | fading | sole_owner)
 python cli.py demo seed team
 
 # Clear all demo entries from the graph
@@ -369,13 +370,18 @@ Mycelium includes a seed system for populating MongoDB with realistic synthetic
 team data — useful for demos, testing, and developing without waiting for a real
 repository to accumulate multi-month history.
 
-All seeded entries are flagged `demo: true` in MongoDB. They are:
+All seeded entries are flagged `demo: true` in MongoDB. Whether they influence
+the pipeline agents is controlled by the `DEMO_MODE` environment variable.
+
+| `DEMO_MODE` | Agent behaviour |
+|---|---|
+| `false` (default) | Demo entries are excluded from all graph snapshots — agents only reason over real data. Safe for production. |
+| `true` | Demo entries are included in the snapshot and a note is injected into analyst/planner prompts instructing them to treat demo contributors as real. Use during demos and development. |
+
+All seeded entries are:
 
 - **Visible in the UI** — purple "demo" chip on every contributor row, module
   card, and React Flow node where a demo entry is involved
-- **Excluded from agent context** — `snapshot()`, `list_developers()`, and
-  `list_concentrated_modules()` all filter `{"demo": {"$ne": true}}`. Synthetic
-  contributors never appear in generated GitLab issues.
 - **Protected from pipeline overwrites** — `upsert_developer()` / `upsert_module()`
   / `upsert_contribution()` use `$setOnInsert` for the `demo` field, so a real
   pipeline run never flips `demo: true` to `false` on seeded entries.
@@ -391,6 +397,7 @@ module coverage matrix, and scenario commands.
 |---|---|---|
 | `GET` | `/graph/demo` | Returns `{"has_demo": true/false}` |
 | `DELETE` | `/graph/demo` | Deletes all `demo: true` documents from all collections |
+| `POST` | `/demo/seed/{scenario}` | Seeds a scenario (`team`, `new_joiner`, `fading`, `sole_owner`). **Requires `DEMO_MODE=true`** — returns `403` otherwise. |
 
 ---
 
@@ -416,7 +423,7 @@ python deployment/deploy.py --delete --resource_id <projects/.../reasoningEngine
 gcloud run deploy mycelium \
   --source . \
   --region us-central1 \
-  --set-env-vars "GOOGLE_CLOUD_PROJECT=$GOOGLE_CLOUD_PROJECT,GOOGLE_CLOUD_LOCATION=us-central1,GEMINI_MODEL=gemini-2.5-flash,MONGODB_DB=mycelium,GOOGLE_GENAI_USE_VERTEXAI=True" \
+  --set-env-vars "GOOGLE_CLOUD_PROJECT=$GOOGLE_CLOUD_PROJECT,GOOGLE_CLOUD_LOCATION=us-central1,GEMINI_MODEL=gemini-2.5-flash,MONGODB_DB=mycelium,GOOGLE_GENAI_USE_VERTEXAI=True,DEMO_MODE=false" \
   --set-secrets "MONGODB_URI=mongodb-uri:latest,GITLAB_TOKEN=gitlab-token:latest,GITLAB_PROJECT_ID=gitlab-project-id:latest"
 ```
 

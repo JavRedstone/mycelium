@@ -49,6 +49,12 @@ class Settings:
     # The manual POST /pipeline/run endpoint still works regardless.
     pipeline_loop_enabled: bool = os.getenv("PIPELINE_LOOP_ENABLED", "true").lower() in ("1", "true", "yes")
 
+    # --- Demo mode ---
+    # When true: demo-seeded data is visible to pipeline agents, agent prompts
+    # receive a note about demo entries, and the /demo/seed endpoint is active.
+    # Set false (the default) in production so agents only operate on real data.
+    demo_mode: bool = os.getenv("DEMO_MODE", "false").lower() in ("1", "true", "yes")
+
 
 settings = Settings()
 

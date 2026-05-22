@@ -221,20 +221,18 @@ export default function RunHistory() {
           }}
         >
           {/* Date label row (offset by LABEL_W) */}
-          <Box sx={{ display: "flex", pl: `${LABEL_W}px`, mb: 0.5, minWidth: "max-content", alignItems: "center" }}>
+          <Box sx={{ display: "flex", pl: `${LABEL_W}px`, mb: 0.5, minWidth: "max-content", alignItems: "flex-end" }}>
             {sorted.map((run, i) => (
-              <Box key={run.run_id} sx={{ width: COL_W, flexShrink: 0, display: "flex", justifyContent: "center", height: 14 }}>
+              <Box key={run.run_id} sx={{ width: COL_W, flexShrink: 0, display: "flex", justifyContent: "center", height: 52 }}>
                 {dateLabels[i] && (
                   <Typography sx={{
-                    fontSize: "0.55rem",
-                    color: "rgba(255,255,255,0.35)",
-                    lineHeight: 1,
+                    fontSize: "0.58rem",
+                    color: "rgba(255,255,255,0.45)",
+                    lineHeight: 1.1,
                     whiteSpace: "nowrap",
                     fontWeight: 600,
                     writingMode: "vertical-rl",
                     transform: "rotate(180deg)",
-                    height: 14,
-                    overflow: "hidden",
                   }}>
                     {dateLabels[i]}
                   </Typography>

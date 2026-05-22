@@ -29,6 +29,7 @@ loaded automatically via `python-dotenv`.
 | `GITLAB_URL` | `https://gitlab.com` | GitLab host (change for self-hosted instances) |
 | `AGENT_LOOP_INTERVAL_SECONDS` | `300` | How often the pipeline loops (seconds) |
 | `PIPELINE_LOOP_ENABLED` | `true` | Set to `false` to disable the auto-loop (manual `POST /pipeline/run` still works) |
+| `DEMO_MODE` | `false` | Set to `true` to include demo-seeded data in agent context and activate the `/demo/seed` endpoint. Keep `false` in production so agents only operate on real data. |
 
 ### Vertex AI routing
 
@@ -54,4 +55,7 @@ GITLAB_PROJECT_ID=12345678
 
 PIPELINE_LOOP_ENABLED=true
 AGENT_LOOP_INTERVAL_SECONDS=300
+
+# Set true to include demo-seeded data in agent context (for demos/dev)
+DEMO_MODE=false
 ```

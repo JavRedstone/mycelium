@@ -119,6 +119,7 @@ async def config():
         "mongodb_db": settings.mongodb_db,
         "pipeline_loop_enabled": settings.pipeline_loop_enabled,
         "agent_loop_interval_seconds": settings.agent_loop_interval,
+        "demo_mode": settings.demo_mode,
     }
 
 
@@ -195,7 +196,12 @@ async def trigger_offboard(username: str):
 
 @app.post("/demo/seed/{scenario}")
 async def seed_demo(scenario: str):
-    """Seed demo data for a scenario: team | new_joiner | fading | sole_owner."""
+    """Seed demo data for a scenario: team | new_joiner | fading | sole_owner.
+
+    Requires DEMO_MODE=true. Returns 403 when demo mode is disabled.
+    """
+    if not settings.demo_mode:
+        raise HTTPException(status_code=403, detail="Demo mode is disabled (set DEMO_MODE=true to enable)")
     import sys
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parent))

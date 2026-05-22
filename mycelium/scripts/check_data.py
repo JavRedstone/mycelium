@@ -162,6 +162,14 @@ async def check_repo(client):
 async def check_history(client):
     print(page_hdr("Repo History page", "📈"))
 
+    # Check demo_mode from config (affects whether demo data reaches agents)
+    _, cfg = await get(client, "/config")
+    demo_mode = bool(cfg.get("demo_mode")) if isinstance(cfg, dict) else False
+    if demo_mode:
+        print(f"    {info(f'{MAGENTA}DEMO_MODE=true{RESET} — demo data visible to pipeline agents')}")
+    else:
+        print(f"    {dim('DEMO_MODE=false — demo data excluded from pipeline agents')}")
+
     # /developers
     status, data = await get(client, "/developers")
     devs = (data.get("developers", []) if isinstance(data, dict) else []) if status == 200 else []
@@ -228,6 +236,8 @@ async def check_history(client):
             print_kv("date range",  f"{months[0]}  →  {months[-1]}")
         print_kv("demo records",  f"{MAGENTA}{demo_count}{RESET}" if demo_count else "0")
         print_kv("real records",  f"{GREEN}{real_count}{RESET}" if real_count else dim("0 (run pipeline to populate)"))
+        if demo_count and not demo_mode:
+            print(f"    {warn('Demo data present but DEMO_MODE=false — agents will NOT see these records')}")
         if demo_count and not real_count:
             print(f"    {warn('Only demo data — timeline shows seeded data, not real commits')}")
         elif not records:

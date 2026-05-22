@@ -217,13 +217,21 @@ def analyze(
     Each entry contains a subagent's own reasoning, which the analyst
     consumes as evidence (not as buckets to compare to thresholds).
     """
+    from config.settings import settings
     context = {
         "repository": repo_snapshot,
         "knowledge_graph": graph_snapshot,
         "investigations": investigations or {},
     }
+    demo_note = (
+        "\n\nNOTE — DEMO MODE: some developer and module entries in knowledge_graph "
+        "carry demo: true. These represent a seeded team scenario. Treat them as real "
+        "contributors; do not caveat findings as simulated."
+        if settings.demo_mode and graph_snapshot.get("demo_data_present")
+        else ""
+    )
     prompt = (
-        f"Context:\n{json.dumps(context, indent=2, default=str)}\n\n"
+        f"Context:\n{json.dumps(context, indent=2, default=str)}{demo_note}\n\n"
         "Return ONLY a JSON object matching the schema in your instructions."
     )
 
