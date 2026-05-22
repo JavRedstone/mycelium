@@ -27,6 +27,7 @@ import ErrorOutlinedIcon from "@mui/icons-material/ErrorOutlined";
 import AccessTimeIcon from "@mui/icons-material/AccessTime";
 import FolderOpenOutlinedIcon from "@mui/icons-material/FolderOpenOutlined";
 import BiotechOutlinedIcon from "@mui/icons-material/BiotechOutlined";
+import ScienceOutlinedIcon from "@mui/icons-material/ScienceOutlined";
 import Md from "./Md";
 import AgentTrace, { type TraceEvent } from "./AgentTrace";
 
@@ -312,13 +313,43 @@ function InvestigateDetail({ output }: { output: Record<string, unknown> }) {
 
 function ObserveGraphDetail({ output }: { output: Record<string, unknown> }) {
   const upstreamTracked = (output.upstream_authors_tracked as number) ?? 0;
+  const demoMode = output.demo_mode as boolean | undefined;
+  const demoDataPresent = output.demo_data_present as boolean | undefined;
   return (
-    <Grid container spacing={2}>
-      <Grid size={3}><MetricCard label="Developers Tracked" value={output.developers_tracked} /></Grid>
-      <Grid size={3}><MetricCard label="Upstream Authors" value={upstreamTracked} highlight={upstreamTracked > 0} /></Grid>
-      <Grid size={3}><MetricCard label="Concentrated Modules" value={output.concentrated_modules} /></Grid>
-      <Grid size={3}><MetricCard label="Recent Findings" value={output.recent_findings} /></Grid>
-    </Grid>
+    <Stack spacing={2}>
+      <Grid container spacing={2}>
+        <Grid size={3}><MetricCard label="Developers Tracked" value={output.developers_tracked} /></Grid>
+        <Grid size={3}><MetricCard label="Upstream Authors" value={upstreamTracked} highlight={upstreamTracked > 0} /></Grid>
+        <Grid size={3}><MetricCard label="Concentrated Modules" value={output.concentrated_modules} /></Grid>
+        <Grid size={3}><MetricCard label="Recent Findings" value={output.recent_findings} /></Grid>
+      </Grid>
+      {demoMode !== undefined && (
+        <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+          <Chip
+            icon={<ScienceOutlinedIcon sx={{ fontSize: "13px !important" }} />}
+            label={demoMode ? "Demo mode on" : "Demo mode off"}
+            size="small"
+            variant="outlined"
+            sx={{ height: 20, fontSize: "0.68rem", ...(demoMode ? { color: "#a78bfa", borderColor: "#7c3aed" } : { color: "text.disabled", borderColor: "rgba(255,255,255,0.12)" }) }}
+          />
+          {demoMode && demoDataPresent && (
+            <Typography variant="caption" color="text.disabled">
+              seeded contributors included in agent context
+            </Typography>
+          )}
+          {demoMode && !demoDataPresent && (
+            <Typography variant="caption" color="text.disabled">
+              no demo data present — only real data used
+            </Typography>
+          )}
+          {!demoMode && (
+            <Typography variant="caption" color="text.disabled">
+              demo-seeded data excluded from agent context
+            </Typography>
+          )}
+        </Stack>
+      )}
+    </Stack>
   );
 }
 
@@ -615,7 +646,15 @@ export default function Pipeline() {
   const [triggering, setTriggering] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [tick, setTick] = useState(0);
+  const [demoMode, setDemoMode] = useState<boolean | null>(null);
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+  useEffect(() => {
+    fetch(`${apiUrl}/config`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { if (d) setDemoMode(!!d.demo_mode); })
+      .catch(() => {});
+  }, [apiUrl]);
 
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 5000);
@@ -679,6 +718,15 @@ export default function Pipeline() {
                 color={run.status === "success" ? "success" : run.status === "failed" ? "error" : run.status === "running" ? "primary" : run.status === "cancelled" ? "warning" : "default"}
                 variant="outlined"
                 sx={{ height: 20, fontSize: "0.65rem" }}
+              />
+            )}
+            {demoMode && (
+              <Chip
+                icon={<ScienceOutlinedIcon sx={{ fontSize: "13px !important" }} />}
+                label="Demo mode"
+                size="small"
+                variant="outlined"
+                sx={{ height: 20, fontSize: "0.65rem", color: "#a78bfa", borderColor: "#7c3aed" }}
               />
             )}
           </Stack>

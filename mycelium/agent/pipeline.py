@@ -498,6 +498,7 @@ class PipelineRunner:
         }
 
     async def _observe_graph(self) -> dict:
+        from config.settings import settings
         self._graph_data = await self._graph.snapshot()
         return {
             "developers_tracked": len(self._graph_data.get("developers", [])),
@@ -505,6 +506,8 @@ class PipelineRunner:
             "concentrated_modules": len(self._graph_data.get("concentrated_modules", [])),
             "open_tasks_tracked": len(self._graph_data.get("open_tasks", [])),
             "recent_findings": len(self._graph_data.get("recent_findings", [])),
+            "demo_mode": settings.demo_mode,
+            "demo_data_present": bool(self._graph_data.get("demo_data_present", False)),
         }
 
     async def _interpret(self) -> dict:

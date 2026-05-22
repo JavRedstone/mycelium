@@ -18,6 +18,7 @@ import HubOutlinedIcon from "@mui/icons-material/HubOutlined";
 import PauseCircleOutlinedIcon from "@mui/icons-material/PauseCircleOutlined";
 import PlayCircleOutlinedIcon from "@mui/icons-material/PlayCircleOutlined";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import ScienceOutlinedIcon from "@mui/icons-material/ScienceOutlined";
 import StorageOutlinedIcon from "@mui/icons-material/StorageOutlined";
 
 // ---------------------------------------------------------------------------
@@ -32,6 +33,7 @@ type Config = {
   mongodb_db: string;
   pipeline_loop_enabled: boolean;
   agent_loop_interval_seconds: number;
+  demo_mode: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -193,6 +195,30 @@ export default function ConfigPanel() {
           {/* MongoDB */}
           <Section icon={<StorageOutlinedIcon fontSize="small" />} title="MongoDB">
             <Row label="Database" value={cfg.mongodb_db} mono />
+          </Section>
+
+          {/* Demo mode */}
+          <Section icon={<ScienceOutlinedIcon fontSize="small" />} title="Demo Mode">
+            <Row
+              label="DEMO_MODE"
+              value={
+                <Chip
+                  icon={<ScienceOutlinedIcon sx={{ fontSize: "14px !important" }} />}
+                  label={cfg.demo_mode ? "Enabled" : "Disabled"}
+                  size="small"
+                  color={cfg.demo_mode ? "secondary" : "default"}
+                  variant="outlined"
+                  sx={{ height: 22, fontSize: "0.7rem", ...(cfg.demo_mode && { color: "#a78bfa", borderColor: "#7c3aed" }) }}
+                />
+              }
+            />
+            <Box sx={{ py: 1.25 }}>
+              <Typography variant="caption" color="text.disabled">
+                {cfg.demo_mode
+                  ? "Demo data is visible to pipeline agents. Seeded contributors appear in generated findings and issues."
+                  : "Demo data is excluded from pipeline agents. Set DEMO_MODE=true in .env to include seeded team data in agent context."}
+              </Typography>
+            </Box>
           </Section>
 
           {/* Pipeline loop */}
