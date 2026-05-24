@@ -20,6 +20,7 @@ const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 type Developer = {
   username: string;
   name: string;
+  first_seen?: string;
   last_seen?: string;
   active?: boolean;
   demo?: boolean;
@@ -66,6 +67,7 @@ type ActivityBar = {
   totalCommits: number;
   isUpstream: boolean;
   isPreFork: boolean;
+  isInactive: boolean;
 };
 
 type Tooltip = {
@@ -101,14 +103,29 @@ function timeAgoFull(ms: number): string {
   return months === 1 ? "1mo ago" : `${months}mo ago`;
 }
 
+/** ISO date string "YYYY-MM-DD" from a millisecond timestamp — used for line labels. */
+function fmtDateIso(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
 function isConsecutiveMonths(a: string, b: string): boolean {
   const [ay, am] = a.split("-").map(Number);
   const [by, bm] = b.split("-").map(Number);
   return (by - ay) * 12 + (bm - am) === 1;
 }
 
-function monthMidMs(yearMonth: string): number {
-  return new Date(yearMonth + "-15").getTime();
+// Returns the exact first millisecond of the given month.
+function monthStartMs(yearMonth: string): number {
+  return new Date(yearMonth + "-01T00:00:00.000").getTime();
+}
+
+// Returns the first millisecond of the month AFTER the given one (exclusive end),
+// so a bar drawn [start, end) covers the full calendar month exactly.
+function monthEndMs(yearMonth: string): number {
+  const [y, m] = yearMonth.split("-").map(Number);
+  const nextMonth = m === 12 ? 1 : m + 1;
+  const nextYear  = m === 12 ? y + 1 : y;
+  return new Date(`${nextYear}-${String(nextMonth).padStart(2, "0")}-01T00:00:00.000`).getTime();
 }
 
 function computeActivityBars(
@@ -129,12 +146,20 @@ function computeActivityBars(
     const sortedMonths = [...monthMap.keys()].sort();
     if (!sortedMonths.length) continue;
 
+    const INACTIVE_DAYS = 60;
+    const isInactive = dev.last_seen
+      ? (Date.now() - new Date(dev.last_seen).getTime()) / 86_400_000 > INACTIVE_DAYS
+      : true;
+
+    // Collect this developer's bars separately so we can snap the final one.
+    const devBars: ActivityBar[] = [];
+
     function emitBar(months: string[]) {
-      const startMs = monthMidMs(months[0]);
-      const endMs   = monthMidMs(months[months.length - 1]);
+      const startMs = monthStartMs(months[0]);
+      const endMs   = monthEndMs(months[months.length - 1]);
       const isPreFork = repoStartMs != null ? startMs < repoStartMs : false;
       if (!isPreFork && dev!.external) return; // upstream only visible pre-fork
-      bars.push({
+      devBars.push({
         username,
         devName: dev!.name,
         yRow,
@@ -144,6 +169,7 @@ function computeActivityBars(
         totalCommits: months.reduce((s, m) => s + (monthMap.get(m) ?? 0), 0),
         isUpstream: !!dev!.external,
         isPreFork,
+        isInactive,
       });
     }
 
@@ -157,6 +183,41 @@ function computeActivityBars(
       }
     }
     emitBar(run);
+
+    // Snap the left edge of the earliest bar to the developer's exact first_seen
+    // date, mirroring the right-edge snap to last_seen.
+    if (dev.first_seen && devBars.length > 0) {
+      const firstSeenMs = new Date(dev.first_seen).getTime();
+      const earliestBar = devBars.reduce((a, b) => (a.startMs <= b.startMs ? a : b));
+      if (firstSeenMs > earliestBar.startMs && firstSeenMs <= earliestBar.endMs) {
+        earliestBar.startMs = firstSeenMs;
+      }
+    }
+
+    // For internal devs: any bar that straddles the fork date gets its left edge
+    // snapped to the fork date (contributions become "internal" at that moment).
+    // Runs after the first_seen snap so fork-date always wins over an earlier exact date.
+    if (repoStartMs != null && !dev!.external) {
+      for (const bar of devBars) {
+        if (bar.startMs < repoStartMs && bar.endMs > repoStartMs) {
+          bar.startMs  = repoStartMs;
+          bar.isPreFork = false;
+        }
+      }
+    }
+
+    // Snap the right edge of the most recent bar to the developer's exact last_seen
+    // date so it aligns with the vertical marker on the chart.
+    if (devBars.length > 0 && dev.last_seen) {
+      const lastSeenMs = new Date(dev.last_seen).getTime();
+      const latestBar = devBars.reduce((a, b) => (a.endMs >= b.endMs ? a : b));
+      // Only snap if last_seen falls within or at the bar's range.
+      if (lastSeenMs >= latestBar.startMs && lastSeenMs <= latestBar.endMs) {
+        latestBar.endMs = lastSeenMs;
+      }
+    }
+
+    bars.push(...devBars);
   }
   return bars;
 }
@@ -207,6 +268,7 @@ export default function RepoHistory() {
   const [contribHistory, setContribHistory] = useState<ContribHistoryRecord[]>([]);
   const [loading, setLoading]       = useState(true);
   const [tooltip, setTooltip]       = useState<Tooltip>(null);
+  const [hoveredBar, setHoveredBar] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
@@ -334,7 +396,7 @@ export default function RepoHistory() {
   // ── SVG layout ────────────────────────────────────────────────────────────
 
   const Y_PANEL        = 160;
-  const MARGIN_TOP     = 8;
+  const MARGIN_TOP     = 30;   // extra headroom for two-line labels above global vertical lines
   const MARGIN_BOTTOM  = 4;
   const X_AXIS_H       = 28;
   const ROW_HEIGHT     = 36;
@@ -395,13 +457,20 @@ export default function RepoHistory() {
     }
   }
 
-  // Last-seen markers (vertical line = when contributor was last active)
+  // Last-seen markers (vertical line + annotation = when contributor was last active)
   const lastSeenMarkers = sortedInternal
     .map((dev, i) => ({ dev, i }))
     .filter(({ dev }) => !!dev.last_seen)
     .map(({ dev, i }) => {
       const ms = new Date(dev.last_seen!).getTime();
-      return { x: msToX(ms), cy: rowCY(i), isInactive: (Date.now() - ms) / 86_400_000 > 60 };
+      const daysAgo = (Date.now() - ms) / 86_400_000;
+      const isInactive = daysAgo > 60;
+      // Build a short annotation that goes to the right of the marker line.
+      const timeLabel = timeAgoFull(ms);
+      const annotation = isInactive
+        ? `${timeLabel} · no recent commits`
+        : timeLabel;
+      return { x: msToX(ms), cy: rowCY(i), isInactive, annotation };
     });
 
   // Module table
@@ -418,12 +487,20 @@ export default function RepoHistory() {
         {hasMonthlyData ? (
           <>
             <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
-              <Box sx={{ width: 20, height: 10, borderRadius: "2px", bgcolor: "#34d399", opacity: 0.72, flexShrink: 0 }} />
-              <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.72rem" }}>internal</Typography>
+              <Box sx={{ width: 20, height: 10, borderRadius: "2px", bgcolor: "#4ade80", opacity: 0.88, flexShrink: 0 }} />
+              <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.72rem" }}>active</Typography>
             </Stack>
             <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
-              <Box sx={{ width: 20, height: 10, borderRadius: "2px", bgcolor: "#a78bfa", opacity: 0.5, flexShrink: 0 }} />
-              <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.72rem" }}>upstream (pre-fork)</Typography>
+              <Box sx={{ width: 20, height: 10, borderRadius: "2px", bgcolor: "#f87171", opacity: 0.88, flexShrink: 0 }} />
+              <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.72rem" }}>no recent commits</Typography>
+            </Stack>
+            <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
+              <Box sx={{ width: 20, height: 10, borderRadius: "2px", bgcolor: "#94a3b8", opacity: 0.5, flexShrink: 0 }} />
+              <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.72rem" }}>pre-fork</Typography>
+            </Stack>
+            <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
+              <Box sx={{ width: 2, height: 12, bgcolor: "#f87171", opacity: 0.35, flexShrink: 0 }} />
+              <Typography variant="caption" color="text.disabled" sx={{ fontSize: "0.68rem" }}>60d cutoff</Typography>
             </Stack>
             <Typography variant="caption" color="text.disabled" sx={{ fontSize: "0.68rem" }}>· bars span contiguous active months</Typography>
           </>
@@ -437,11 +514,7 @@ export default function RepoHistory() {
         )}
         <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
           <Box sx={{ width: 2, height: 12, bgcolor: "#34a853", opacity: 0.6, flexShrink: 0 }} />
-          <Typography variant="caption" color="text.disabled" sx={{ fontSize: "0.68rem" }}>last active</Typography>
-        </Stack>
-        <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
-          <Box sx={{ width: 2, height: 12, bgcolor: "#ea4335", opacity: 0.6, flexShrink: 0 }} />
-          <Typography variant="caption" color="text.disabled" sx={{ fontSize: "0.68rem" }}>last active (60d+)</Typography>
+          <Typography variant="caption" color="text.disabled" sx={{ fontSize: "0.68rem" }}>last seen</Typography>
         </Stack>
         <Box sx={{ flex: 1 }} />
         <IconButton size="small" onClick={load} sx={{ color: "text.disabled" }}>
@@ -500,7 +573,7 @@ export default function RepoHistory() {
                 width={dataWidth}
                 height={chartHeight}
                 style={{ display: "block" }}
-                onMouseLeave={() => setTooltip(null)}
+                onMouseLeave={() => { setTooltip(null); setHoveredBar(null); }}
               >
                 {/* Alternating row fills */}
                 {yTicks.map((tick, i) => (
@@ -533,8 +606,11 @@ export default function RepoHistory() {
                   const fx = msToX(repoStartMs);
                   return (
                     <g>
+                      {/* Category label — sits at the top of the reserved headroom */}
+                      <text x={fx} y={gridY1 - 17} textAnchor="middle" fill="rgba(255,255,255,0.35)" fontSize={8} fontFamily="monospace">{repoStartLabel}</text>
+                      {/* Exact date — just above the line start */}
+                      <text x={fx} y={gridY1 - 5} textAnchor="middle" fill="rgba(255,255,255,0.55)" fontSize={9} fontFamily="monospace" fontWeight="bold">{fmtDateIso(repoStartMs)}</text>
                       <line x1={fx} y1={gridY1} x2={fx} y2={gridY2} stroke="rgba(255,255,255,0.5)" strokeWidth={1.5} strokeDasharray="6 3" />
-                      <text x={fx + 5} y={gridY1 + 13} fill="rgba(255,255,255,0.45)" fontSize={10} fontFamily="monospace">{repoStartLabel}</text>
                     </g>
                   );
                 })()}
@@ -543,13 +619,21 @@ export default function RepoHistory() {
                 {activityBars.map((bar, i) => {
                   const x1    = msToX(bar.startMs);
                   const x2    = msToX(bar.endMs);
-                  const rawW  = x2 - x1;
-                  const w     = Math.max(6, rawW);
-                  // center single-point bars on the midpoint instead of left-aligning
-                  const xRect = rawW > 0 ? x1 : x1 - w / 2;
+                  const w     = Math.max(4, x2 - x1); // always non-zero; bars span full months
+                  const xRect = x1;
                   const cy    = rowCY(bar.yRow);
-                  const fill    = bar.isUpstream ? "#a78bfa" : "#34d399";
-                  const opacity = bar.isPreFork ? 0.45 : 0.72;
+                  // pre-fork → gray  |  inactive post-fork → red  |  active → vivid green
+                  const fill = bar.isPreFork
+                    ? "#94a3b8"
+                    : bar.isInactive
+                      ? "#f87171"
+                      : "#4ade80";
+                  const baseOpacity = bar.isPreFork ? 0.5 : 0.88;
+                  // Brighten hovered bar; dim all others when any bar is hovered
+                  const opacity =
+                    hoveredBar === null ? baseOpacity :
+                    hoveredBar === i    ? Math.min(1, baseOpacity + 0.12) :
+                                         baseOpacity * 0.3;
                   // date range string for tooltip
                   const d0 = new Date(bar.startMs);
                   const d1 = new Date(bar.endMs - 1);
@@ -562,13 +646,18 @@ export default function RepoHistory() {
                       width={w} height={BAR_H}
                       rx={3} ry={3}
                       fill={fill} opacity={opacity}
-                      style={{ cursor: "default" }}
-                      onMouseEnter={(e) =>
-                        setTooltip({ clientX: e.clientX, clientY: e.clientY, devName: bar.devName, range, commits: bar.totalCommits, months: bar.monthCount, isUpstream: bar.isUpstream, isPreFork: bar.isPreFork })
-                      }
+                      style={{ cursor: "default", transition: "opacity 0.1s" }}
+                      onMouseEnter={(e) => {
+                        setHoveredBar(i);
+                        setTooltip({ clientX: e.clientX, clientY: e.clientY, devName: bar.devName, range, commits: bar.totalCommits, months: bar.monthCount, isUpstream: bar.isUpstream, isPreFork: bar.isPreFork });
+                      }}
                       onMouseMove={(e) =>
                         setTooltip((prev) => prev ? { ...prev, clientX: e.clientX, clientY: e.clientY } : null)
                       }
+                      onMouseLeave={() => {
+                        setHoveredBar(null);
+                        setTooltip(null);
+                      }}
                     />
                   );
                 })}
@@ -580,11 +669,49 @@ export default function RepoHistory() {
                     stroke={dot.stroke} strokeWidth={dot.strokeWidth} />
                 ))}
 
-                {/* ── Last-active markers ── */}
-                {lastSeenMarkers.map((m, i) => (
-                  <rect key={i} x={m.x - 1} y={m.cy - 14} width={2} height={28}
-                    fill={m.isInactive ? "#ea4335" : "#34a853"} opacity={0.55} />
-                ))}
+                {/* ── Global 60-day inactivity cutoff line ── */}
+                {(() => {
+                  const cutoffMs = Date.now() - 60 * 86_400_000;
+                  if (cutoffMs < startMs) return null;
+                  const cx = msToX(cutoffMs);
+                  return (
+                    <g>
+                      <text x={cx} y={gridY1 - 17} textAnchor="middle"
+                        fill="rgba(248,113,113,0.4)" fontSize={8} fontFamily="monospace">
+                        inactivity cutoff
+                      </text>
+                      <text x={cx} y={gridY1 - 5} textAnchor="middle"
+                        fill="rgba(248,113,113,0.6)" fontSize={9} fontFamily="monospace" fontWeight="bold">
+                        {fmtDateIso(cutoffMs)}
+                      </text>
+                      <line x1={cx} y1={gridY1} x2={cx} y2={gridY2}
+                        stroke="rgba(248,113,113,0.35)" strokeWidth={1} strokeDasharray="4 3" />
+                    </g>
+                  );
+                })()}
+
+                {/* ── Last-active markers + annotation ── */}
+                {lastSeenMarkers.map((m, i) => {
+                  const color = m.isInactive ? "#ea4335" : "#34a853";
+                  return (
+                    <g key={i}>
+                      {/* Vertical tick */}
+                      <rect x={m.x - 1} y={m.cy - 14} width={2} height={28}
+                        fill={color} opacity={0.6} />
+                      {/* Annotation to the right */}
+                      <text
+                        x={m.x + 5}
+                        y={m.cy + 4}
+                        fill={color}
+                        fontSize={9}
+                        fontFamily="monospace"
+                        opacity={0.75}
+                      >
+                        {m.annotation}
+                      </text>
+                    </g>
+                  );
+                })}
               </svg>
             </Box>
           </Box>

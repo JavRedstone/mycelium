@@ -41,10 +41,21 @@ class KnowledgeGraph:
 
     async def upsert_developer(self, dev: DeveloperNode):
         doc = dev.model_dump()
-        doc.pop("demo", None)  # never overwrite demo=True set by the seed script
+        doc.pop("demo", None)        # never overwrite demo=True set by the seed script
+        # first_seen / last_seen use $min/$max so runs never overwrite a better value
+        # with None, and incremental runs keep the historical extremes.
+        doc.pop("first_seen", None)
+        doc.pop("last_seen", None)
+
+        update: dict = {"$set": doc, "$setOnInsert": {"demo": False}}
+        if dev.first_seen is not None:
+            update["$min"] = {"first_seen": dev.first_seen}
+        if dev.last_seen is not None:
+            update["$max"] = {"last_seen": dev.last_seen}
+
         await self.developers.update_one(
             {"username": dev.username},
-            {"$set": doc, "$setOnInsert": {"demo": False}},
+            update,
             upsert=True,
         )
 

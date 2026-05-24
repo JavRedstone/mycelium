@@ -97,6 +97,11 @@ const STATUS_LABEL: Record<StageStatus, string> = {
   skipped: "Skipped",
 };
 
+/** Pluralize: n(3, "module") → "3 modules", n(1, "module") → "1 module" */
+function n(count: number, word: string, pluralForm?: string): string {
+  return `${count} ${count === 1 ? word : (pluralForm ?? word + "s")}`;
+}
+
 export const STAGE_ICONS: Record<string, React.ReactElement> = {
   observe_repo: <VisibilityOutlinedIcon fontSize="small" />,
   map_modules: <FolderOpenOutlinedIcon fontSize="small" />,
@@ -117,21 +122,28 @@ function stageSummary(stage: Stage): string | null {
   const o = stage.output;
   switch (stage.id) {
     case "observe_repo":
-      return `${o.commit_contributors ?? 0} contributors · ${o.upstream_authors ?? 0} upstream`;
+      return `${n(o.commit_contributors as number ?? 0, "contributor")} · ${o.upstream_authors ?? 0} upstream`;
     case "map_modules":
-      return `${o.modules_discovered ?? 0} modules · ${o.total_attributions ?? 0} author attributions`;
-    case "investigate":
-      return `${o.member_investigations ?? 0} member · ${o.module_investigations ?? 0} module · ${o.drift_investigated ? "1 drift" : "no drift"}`;
+      return `${n(o.modules_discovered as number ?? 0, "module")} · ${n(o.total_attributions as number ?? 0, "author attribution")}`;
+    case "investigate": {
+      const members = o.member_investigations as number ?? 0;
+      const modules = o.module_investigations as number ?? 0;
+      return `${n(members, "member")} · ${n(modules, "module")} · ${o.drift_investigated ? "drift" : "no drift"}`;
+    }
     case "observe_graph":
-      return `${o.developers_tracked ?? 0} devs · ${o.upstream_authors_tracked ?? 0} upstream · ${o.concentrated_modules ?? 0} concentrated`;
+      return `${n(o.developers_tracked as number ?? 0, "dev")} · ${o.upstream_authors_tracked ?? 0} upstream · ${o.concentrated_modules ?? 0} concentrated`;
     case "interpret":
-      return `${o.finding_count ?? 0} findings · ${(o.concern_types as string[])?.length ?? 0} concern types`;
+      return `${n(o.finding_count as number ?? 0, "finding")} · ${n((o.concern_types as string[])?.length ?? 0, "concern type")}`;
     case "plan":
-      return `${o.actions_planned ?? 0} actions · ${o.graph_updates_planned ?? 0} graph updates`;
-    case "act":
-      return `${o.executed ?? 0} executed · ${o.failed ?? 0} failed · ${(o.mcp_calls as unknown[])?.length ?? 0} MCP calls`;
+      return `${n(o.actions_planned as number ?? 0, "action")} · ${n(o.graph_updates_planned as number ?? 0, "graph update")}`;
+    case "act": {
+      const executed = o.executed as number ?? 0;
+      const failed = o.failed as number ?? 0;
+      const mcpCalls = (o.mcp_calls as unknown[])?.length ?? 0;
+      return `${executed} executed · ${failed} failed · ${n(mcpCalls, "MCP call")}`;
+    }
     case "learn":
-      return `${o.updated ?? 0}/${o.total ?? 0} records · ${o.findings_saved ?? 0} findings saved`;
+      return `${o.updated ?? 0}/${o.total ?? 0} records · ${n(o.findings_saved as number ?? 0, "finding")} saved`;
     case "summary":
       return `${o.stages_succeeded ?? 0}/${o.stages_total ?? 0} stages · ${fmt(o.total_duration_ms as number)}`;
     default:
@@ -243,16 +255,18 @@ function InvestigateDetail({ output }: { output: Record<string, unknown> }) {
   const modules = (output.modules as Array<Record<string, unknown>>) ?? [];
 
   if (memberCount === 0 && moduleCount === 0 && !driftInvestigated) {
+    const noModules = (output.modules as Array<unknown>)?.length === 0 || moduleCount === 0;
     return (
       <Stack spacing={1.5}>
         <Grid container spacing={2}>
           <Grid size={4}><MetricCard label="Member Investigations" value={0} /></Grid>
-          <Grid size={4}><MetricCard label="Module Investigations" value={moduleCount} /></Grid>
-          <Grid size={4}><MetricCard label="Drift" value={driftInvestigated ? "Yes" : "No"} /></Grid>
+          <Grid size={4}><MetricCard label="Module Investigations" value={0} /></Grid>
+          <Grid size={4}><MetricCard label="Drift" value="No" /></Grid>
         </Grid>
         <Typography variant="body2" color="text.disabled">
-          No high-attention members detected this run — no member investigators were spawned.
-          Module investigators ran for each discovered code directory.
+          {noModules
+            ? "No code directories were discovered — no investigators were spawned. Check that the pipeline service account has repository read access."
+            : "No high-attention members or modules flagged this run — no investigators were spawned."}
         </Typography>
       </Stack>
     );

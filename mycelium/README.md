@@ -124,10 +124,29 @@ Copy `.env.example` to `.env` (or create one) and fill in:
 | `MONGODB_URI` | yes | Atlas connection string (`mongodb+srv://…`). |
 | `MONGODB_DB` | no | Database name (default `mycelium`). |
 | `GITLAB_URL` | no | GitLab instance URL (default `https://gitlab.com`). |
-| `GITLAB_TOKEN` | yes | Personal access token (`api` scope). |
+| `GITLAB_TOKEN` | yes | Service account token (`api` scope) — see **GitLab Service Account** below. |
 | `GITLAB_PROJECT_ID` | yes | Numeric project ID (Settings → General → Project ID). |
+| `GITLAB_BOT_USERNAME` | no | Service account username (default `mycelium-bot`). Change if you chose a different username. |
 | `AGENT_LOOP_INTERVAL_SECONDS` | no | Seconds between autonomous runs (default `300`). |
 | `DEMO_MODE` | no | Set to `true` to include demo-seeded data in agent snapshots and activate the `/demo/seed` endpoint. Default `false` — keep `false` in production. |
+
+**GitLab Service Account** (recommended — keeps bot actions separate from human actions):
+
+All automated GitLab writes (issue creation, comments, edits, closes) should run
+under a dedicated project service account, not a personal token. This makes
+automated actions immediately distinguishable in the issue tracker and scopes the
+token to a single project.
+
+1. In your GitLab project: **Settings → Members → Service accounts → Create service account**
+   - Name: `Mycelium`, Username: `mycelium-bot`
+2. Add the service account to the project with **Developer** access
+   *(needed to edit and close issues created by others)*
+3. Generate a **Personal Access Token** for the service account with `api` scope
+4. Use that token as `GITLAB_TOKEN` in your `.env`
+
+What this enables in code:
+- `get_members()` excludes the bot so it never appears as a tracked team member
+- `get_open_issues()` sets `bot_authored: true` on issues the bot created, so the planner knows it can freely edit or supersede them without touching human-authored issues
 
 **Authenticate to Google Cloud** (ADC for local runs):
 
@@ -222,16 +241,68 @@ The agent loop starts automatically on startup and runs every
 
 ### API Endpoints
 
+Grouped by what they power in the UI. All defined in [`main.py`](main.py).
+
+**Health / Configuration**
+
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/health` | Liveness check |
-| `GET` | `/graph` | Full knowledge graph: modules with per-directory contributor lists |
-| `GET` | `/snapshot` | Raw graph snapshot (developers, upstream authors, high-risk modules, open tasks) |
-| `POST` | `/pipeline/run` | Trigger a pipeline run immediately |
-| `GET` | `/pipeline/current` | Current run state (all stages + outputs) |
-| `GET` | `/pipeline/history` | Last 20 run summaries |
-| `GET` | `/pipeline/stream` | SSE stream of real-time pipeline events (used by the UI) |
-| `GET` | `/logs/stream` | SSE stream of log entries (used by the UI) |
+| `GET` | `/health` | Liveness check — returns `{"status": "ok"}`. |
+| `GET` | `/config` | Non-sensitive runtime settings (GCP project, region, Gemini model, GitLab URL/project, MongoDB DB, pipeline-loop flag/interval, demo mode). Drives the Configuration page and gates demo controls in the UI. |
+| `GET` | `/project` | GitLab project metadata — name, namespace, URL, default branch, stars, forks. |
+
+**Knowledge graph (read)**
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/graph` | Full graph: developers, upstream authors, modules with per-module contribution lists, concentrated modules, recent findings. The Knowledge Graph and Repository pages read this. |
+| `GET` | `/snapshot` | Compact graph snapshot (no per-module contribution edges) used by the agents and lighter UI views. |
+| `GET` | `/developers` | All developers — internal + upstream — including demo-flagged entries. |
+| `GET` | `/developers/busfactor?username=…` | Per-module breakdown for one developer: their expertise share, the bus-factor threshold position (internal), or the dark-knowledge view (external). Query param (not path) because GitLab usernames can contain slashes. Powers the bus-factor drawer. |
+| `GET` | `/graph/contribution-history?module_path=&developer_username=` | Monthly commit counts per `(developer, module, year_month)` — the backbone of the Repo History timeline. |
+
+**Settings (graph-level overrides)**
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/settings/fork-date` | Effective fork date — the override stored in MongoDB or the upstream GitLab `project.created_at` fallback. |
+| `POST` | `/settings/fork-date` | Set or clear the override (`{"date": "YYYY-MM-DD"}` or `{"date": null}`). |
+
+**Pipeline control**
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/pipeline/run` | Kick off a pipeline run immediately. Returns `409` if a run is already in flight. |
+| `POST` | `/pipeline/stop` | Cooperatively cancel the running pipeline. |
+| `GET` | `/pipeline/current` | Snapshot of the in-flight run (stage list, statuses, outputs). |
+| `GET` | `/pipeline/history?limit=50` | Recent run summaries, MongoDB-backed with in-memory fallback. |
+| `GET` | `/pipeline/{run_id}/events` | All activity events captured for a specific historical run — used by the Timeline replay. |
+| `GET` | `/pipeline/stream` | **SSE** — pushes pipeline-run state changes (stage transitions, summaries). |
+| `GET` | `/pipeline/activity` | Buffered structured activity events for the most recent run. |
+| `GET` | `/pipeline/activity/stream` | **SSE** — live structured agent activity (thinking, tool calls, subagent spawns). |
+| `GET` | `/logs/stream` | **SSE** — raw uvicorn + Python log lines, in-memory buffer of last 500. |
+
+**Agent output**
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/actions?limit=200&run_id=` | What the act agent has actually done in GitLab (issue creates, comments, edits, closes). Powers the Actions page. |
+| `GET` | `/findings?limit=200&run_id=` | Qualitative continuity findings produced by the analyst. Powers Investigations and parts of the Knowledge Graph. |
+
+**Direct agent triggers (bypass full pipeline)**
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/onboard/{username}` | Generate an onboarding pack for a developer and post it to GitLab. |
+| `POST` | `/offboard/{username}` | Generate an offboarding/handoff artifact for a leaving developer. |
+
+**Demo data (gated by `DEMO_MODE=true`)**
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/graph/demo` | `{"has_demo": bool, "demo_mode": bool}` — both flags drive UI button visibility. |
+| `POST` | `/demo/seed/{scenario}` | Seed `team` / `new_joiner` / `fading` / `sole_owner` / `clear`. Returns `403` if demo mode is disabled. |
+| `DELETE` | `/graph/demo` | Delete every `demo: true` document across collections. Returns `403` if demo mode is disabled. |
 
 ---
 
@@ -284,6 +355,170 @@ mycelium/
 
 ---
 
+## Module Function Reference
+
+The key functions inside each Python module, grouped by responsibility.
+For full signatures and behaviour, read the source — this is an
+orientation map, not exhaustive API docs.
+
+### `main.py` — FastAPI server + agent loop
+
+- `lifespan(_app)` — startup hook: registers the activity-bus event loop, sets up MongoDB indexes, schedules `run_loop()` as a background task; cancels everything on shutdown.
+- `run_loop()` — autonomous pipeline scheduler. Calls `pipeline.run()` every `AGENT_LOOP_INTERVAL_SECONDS` until cancelled. No-op when `PIPELINE_LOOP_ENABLED=false`.
+- The endpoint functions are thin adapters that delegate to `graph.*` (MongoDB), `pipeline.*` (runs), `gitlab.*` (project metadata), or `activity_bus.*` (SSE streams). One helper class `_UILogHandler` injects every uvicorn/Python log line into an in-memory deque the `/logs/stream` endpoint streams over SSE.
+
+### `agent/pipeline.py` — the 9-stage orchestrator
+
+The full pipeline lives on `PipelineRunner`. Stages run sequentially; each
+records timings, status, and a JSON payload that flows to subsequent stages
+and the UI via `_broadcast()`.
+
+| Stage | Method | What it does |
+|---|---|---|
+| 1. Observe Repo | `_observe_repo()` | Pulls members, commits, contributors, issues, MRs, CI status, fork divergence via `gitlab_client`. |
+| 2. Map Modules | `_observe_modules()` | Walks top-level directories, captures per-directory commit attribution and monthly histograms. |
+| 3. Investigate | `_investigate()` | Spawns concurrent investigator subagents (member / module / drift) based on `_detect_high_attention_members()`. |
+| 4. Observe Graph | `_observe_graph()` | Reads the current MongoDB graph state to mix into the analyst prompt. |
+| 5. Analyze | `_interpret()` | Calls `analyst_agent.analyze_async()` — qualitative reasoning. |
+| 6. Plan | `_plan_stage()` | Calls `planner_agent.plan_async()` — translates findings into proposed actions. |
+| 7. Execute | `_act()` | Calls `act_agent.act()` — runs ADK + MCP loop to actually create/update GitLab issues. |
+| 8. Persist | `_learn()` | Writes developer/module/contribution updates, monthly history records, and findings to MongoDB; refreshes bus factors via `_refresh_bus_factors()`. |
+| 9. Summary | `_summary()` | Writes `pipeline_runs` document with stage outputs + activity events. |
+
+Cross-cutting:
+- `subscribe()` / `unsubscribe()` / `_broadcast()` — SSE fan-out queues for `/pipeline/stream`.
+- `request_cancel()` — cooperative cancellation; checked between stages.
+- `_parse_iso_dt(s)` — module-level helper converting GitLab's ISO-8601 strings (with `"Z"` suffix or `"+00:00"`) into `datetime`, used when propagating `first_seen` / `last_seen` from commit data to `DeveloperNode`.
+
+### `agent/analyst_agent.py` — qualitative risk reasoning
+
+- `analyze(repo_snapshot, graph_snapshot, investigator_findings)` — sync entry point.
+- `analyze_async(...)` — async wrapper used by the pipeline.
+- `_run_through_adk(prompt, stage_id)` — runs the prompt through ADK + Vertex AI Gemini, falling back to a plain Gemini call if Agent Engine is unreachable. Streams thinking text into `activity_bus` so the UI shows it live.
+- `_fallback_risk_assessment(...)` — last-resort numeric summary (no LLM) when both ADK and direct Gemini fail.
+- In demo mode (`settings.demo_mode and graph contains demo: true`) injects a `demo_note` that explicitly forbids sole-contributor findings derived from raw git counts — see `mycelium-ui/.../KnowledgeGraph.tsx` for why this matters.
+
+### `agent/planner_agent.py` — corrective-action planning
+
+- `plan(interpretation, repo_snapshot, graph_snapshot)` — sync entry.
+- `plan_async(...)` — async wrapper.
+- Same ADK-then-Gemini-then-fallback pattern as the analyst. Output is a list of proposed GitLab actions (create issue / comment / assign / close) that the act agent will execute.
+
+### `agent/act_agent.py` — multi-turn execution via dual MCP
+
+- `build_root_agent()` — assembles the ADK `Agent` with three `MCPToolset` instances: Mycelium MCP, GitLab MCP, MongoDB MCP. Returns an `AdkApp`-ready agent.
+- `_gitlab_toolset() / _mongodb_toolset() / _mycelium_toolset()` — toolset factories. Each one configures connection + tool allowlists.
+- `act(interpretation, repo_snapshot, plan)` — runs the agent loop. The agent first queries MongoDB to confirm graph state, then creates GitLab issues, comments, and assignments. Every tool call is captured via `_collect_tool_calls()` and `_collect_trace()` and pushed to `activity_bus` for the UI.
+- `_direct_execute_actions(...)` — fallback path that executes planned actions directly through `gitlab_client` when MCP is unavailable.
+- `_audit_boundary(...)` — guard that prevents the agent from touching issues not authored by the bot user.
+
+### `agent/investigator.py` — concurrent subagent investigations
+
+- `investigate_member(username, ...)` — reads the directories a high-attention person uniquely touches, samples their commits and surrounding docs, judges what knowledge actually leaves with them.
+- `investigate_module(path, ...)` — recursive adaptive-depth read: starts at the module root, decides how deep to go based on what it finds (READMEs, docstring density, config files), returns a transferability judgment.
+- `investigate_drift()` — reads actual upstream commits the fork hasn't merged, judges urgency from content (security patch vs typo).
+- `_read_directory_files(...)` — controlled directory traversal with file-size limits.
+- `_format_files_for_prompt(tree)` — pretty-prints a file tree for prompt context.
+- `_count_files(tree)` — used to decide recursion depth.
+
+### `agent/activity_bus.py` — SSE fan-out for agent events
+
+- `bus.publish(event)` — broadcast a structured agent event.
+- `bus.subscribe()` / `bus.unsubscribe(q)` — per-client async queue.
+- `bus.history()` — buffered events for the most recent run (lets clients catch up on connect).
+
+### `connectors/gitlab_client.py` — read + write layer
+
+- `get_members()` — project members, with `mycelium-bot` filtered so it never appears as a "tracked" person.
+- `get_open_issues()` — open issues, with `bot_authored: true` on the ones the service account created (so planner can edit them safely).
+- `get_open_merge_requests()` — open MRs + approvals.
+- `get_recent_commits(since)` — flat commit list.
+- `get_commit_contributors(ref)` — unique authors with commit counts and `external` flag.
+- `get_repository_tree(path, recursive)` — directory listing.
+- `get_top_level_dirs()` — root directory names (drives Map Modules).
+- `get_directory_contributors(path, max_commits)` — per-directory commit attribution.
+- `get_directory_contributors_with_history(path, max_commits)` — same plus `monthly_counts: {YYYY-MM: N}` *and* exact `first_commit_at` / `last_commit_at` per author. The exact dates flow through to `DeveloperNode.first_seen` / `last_seen` and let the timeline draw bars that snap to the actual commit dates instead of month boundaries.
+- `get_codeowners()` — parsed `CODEOWNERS` file from common locations.
+- `get_pipeline_status(ref, limit)` — CI pipeline list.
+- `_is_member(name, email)` — internal lookup that decides `external` flag based on the cached member set. Membership cache is invalidated by `invalidate_cache()`.
+
+### `connectors/mcp_server.py` — Mycelium's custom MCP server
+
+Surfaces three tool families to the act agent: knowledge-graph reads
+(modules, developers, contributions), GitLab writes (issue/comment/assign),
+and continuity artefact generators (onboarding pack, offboarding artifact).
+
+### `graph/models.py` — Pydantic graph entities
+
+`DeveloperNode`, `ModuleNode`, `ContributionEdge`, `ContributionHistory`,
+`TaskNode`, `Finding`, `ActionRecord`. Datetime fields are `Optional` and
+default to `None`; the upsert logic in `KnowledgeGraph` uses `$min` / `$max`
+to preserve the best value across pipeline runs (so a later run can't
+clobber an earlier exact `first_seen` with `None`).
+
+### `graph/knowledge_graph.py` — MongoDB Motor wrapper
+
+Async I/O for every collection. Key methods grouped by area:
+
+- **Developers** — `upsert_developer`, `get_developer`, `list_developers`, `list_external_contributors`, `list_upstream_authors`. `upsert_developer` uses `$min` on `first_seen` and `$max` on `last_seen` so incremental runs widen the observed window monotonically.
+- **Modules** — `upsert_module`, `get_module`, `list_modules`, `list_concentrated_modules`.
+- **Contributions** — `upsert_contribution`, `get_module_contributors`, `get_developer_modules`.
+- **Contribution history** — `upsert_contribution_history`, `get_contribution_history` (the monthly buckets the timeline reads).
+- **Tasks** — `upsert_task`, `list_open_tasks`.
+- **Findings / actions** — `insert_finding` / `list_findings`, `insert_action` / `list_actions`.
+- **Pipeline runs** — `save_run`, `get_latest_run`, `list_runs`.
+- **Activity events** — `save_activity_events`, `list_activity_events` (for run replay).
+- **Settings** — `get_fork_date_override`, `set_fork_date_override`.
+- **Demo lifecycle** — `delete_demo_data` (bulk-removes everything flagged `demo: true`), `has_demo_data`.
+- **Snapshot** — `snapshot()` composes the canonical agent-facing view.
+
+### `risk/forecasting.py` — bus factor measurement
+
+- `compute_bus_factor(contributions)` — sorts internal contributors by `expertise_score` desc, walks until cumulative coverage reaches 80%, returns the count. Returns `0` if no internal contributors exist (dark knowledge zone). Used by `pipeline._refresh_bus_factors()` and the `/developers/busfactor` endpoint.
+
+### `checks/show.py` — read-only data inspector (also a CLI subcommand)
+
+- `inspect_module(graph, path)` — module → contributors with bus-factor bars.
+- `inspect_developer(graph, username)` — developer → modules they hold + threshold position.
+- `inspect_busfactor(graph)` — every module sorted by bus factor with per-contributor bars (CLI mirror of the UI Knowledge Graph view).
+- `_bus_factor_breakdown(contribs)` — shared helper that annotates each contributor with `share_pct`, `cumulative_pct`, `in_bus`.
+
+### `scripts/seed_scenarios.py` — demo team seeder
+
+Four scenario functions plus `clear_all()`. Each function seeds developers,
+contributions, modules, contribution history, and a fork-date override
+flagged `demo: true`. Used by `POST /demo/seed/{scenario}` and by the
+"Seed demo data" menu in the Knowledge Graph UI.
+
+| Scenario | Use case |
+|---|---|
+| `team` | Full 4-person team with mixed bus factors — the default demo. |
+| `new_joiner` | One person hasn't accumulated expertise yet. |
+| `fading` | A senior contributor going quiet — sets up the analyst's "fading_contributor" finding. |
+| `sole_owner` | One person owns a critical module alone — bus factor 1 scenario. |
+
+---
+
+## UI ↔ Backend Mapping
+
+Quick lookup: which UI page reads which endpoint(s).
+
+| UI page | Backend endpoints |
+|---|---|
+| `/repo` (Repository) | `GET /graph`, `GET /developers` |
+| `/history` (Repo History) | `GET /developers`, `GET /graph`, `GET /settings/fork-date`, `GET /graph/contribution-history` |
+| `/graph` (Knowledge Graph) | `GET /graph`, `GET /config` (for demo gate), `GET /graph/demo`, `GET /developers/busfactor?username=…`, `POST /demo/seed/{scenario}`, `DELETE /graph/demo` |
+| `/pipeline` (Pipeline) | `GET /pipeline/current`, `GET /pipeline/history`, `POST /pipeline/run`, `POST /pipeline/stop`, `GET /pipeline/stream` (SSE), `GET /logs/stream` (SSE) |
+| `/activity` (Agent Activity) | `GET /pipeline/activity`, `GET /pipeline/activity/stream` (SSE) |
+| `/logs` (Agent Logs) | `GET /logs/stream` (SSE) |
+| `/actions` (Actions) | `GET /actions` |
+| `/timeline` (Timeline) | `GET /pipeline/history`, `GET /actions`, `GET /findings`, `GET /pipeline/{run_id}/events` |
+| `/investigations` (Investigations) | `GET /findings` |
+| `/analytics` (Analytics) | `GET /graph`, `GET /findings`, `GET /actions` |
+| `/config` (Configuration) | `GET /config`, `GET /settings/fork-date`, `POST /settings/fork-date` |
+
+---
+
 ## Architecture
 
 | Concern | Technology |
@@ -303,64 +538,124 @@ mycelium/
 
 ## Key Concepts
 
-**Bus factor** — how many developers need to leave before a module loses all
-active knowledge holders. Computed from internal (project member) committers
-only; upstream authors do not count.
+**Bus factor** — the minimum number of internal contributors whose combined commit
+expertise covers at least 80% of a module's total expertise. Computed from
+project members only; upstream authors do not count. A bus factor of 1 means one
+person's departure drops the module below 80% internal coverage.
 
 **Upstream authors** — contributors who appear in commit history but are not
 current project members. Common in forks of open-source projects. They wrote
-the code but are unreachable for knowledge transfer. Their modules are scored
-with a dark-knowledge penalty.
+the code but are unreachable for knowledge transfer. Their modules are flagged
+as dark knowledge zones.
 
 **Dark knowledge zone** — a module where the majority of commits were made by
 upstream authors. The code works, but its context and design intent lives
 outside the team.
 
-**Continuity risk score** — 0.0–1.0. Combines bus factor, upstream author
-concentration, CODEOWNERS drift, and pipeline health signals.
-
 ---
 
-## Bus Factor: Internal Committers Only
+## Bus Factor: Definition and Design Decisions
+
+### What it measures
+
+```
+bus_factor(module) = min number of internal contributors
+                     whose combined expertise_score covers >= 80% of module total
+```
+
+Contributors are sorted by expertise score descending. The bus factor is the
+index at which the cumulative sum first reaches 80%. This is a **count of
+people**, not a score.
+
+### The 80% threshold
+
+The 80% threshold is borrowed from empirical software engineering research on
+contributor concentration:
+
+- Ferreira et al. (2019) *"An Analysis of the Bus Factor in Open Source
+  Projects"* studies both 50% and 80% thresholds across hundreds of OSS
+  projects. They find 80% is the more useful threshold because:
+  - 50% triggers too easily (any module with one dominant committer flags, even
+    if three others have partial knowledge)
+  - 90%–100% triggers too late (misses genuinely fragile situations where one
+    person holds the large majority of understanding)
+  - 80% maps naturally to the **Pareto principle**: in practice, 80% of
+    meaningful understanding of a module is held by a small number of its
+    authors, and losing that group is what creates operational risk
+
+- The remaining 20% is recoverable: a developer unfamiliar with a module can
+  read the code, documentation, and commit history to reconstruct understanding.
+  The 80% threshold approximates the point at which that reconstruction cost
+  becomes prohibitive.
+
+- Alternative thresholds we considered:
+
+  | Threshold | Problem |
+  |---|---|
+  | 50% | Flags any module with one dominant committer regardless of team depth — too noisy |
+  | 90% | Only triggers on near-total concentration — misses the practical risk zone |
+  | 100% | Requires sole contributor — ignores 2-person fragility |
+  | 80% | Covers the practical "hit by a bus" scenario: one person's departure breaks the team's ability to work confidently in the module |
+
+### Why internal-only
 
 Bus factor is calculated from **internal project members only**. External
-contributors (upstream authors of a fork) are excluded regardless of their
-commit count.
-
-### Why
+contributors (upstream authors of a fork) are excluded regardless of commit
+count.
 
 If a module's entire commit history was written by upstream contributors who
-are not on your team, those people cannot transfer knowledge to you. They are
-already gone. Their commits represent knowledge that exists only in the code
-and has no organizational owner. Counting them toward bus factor would give a
-false sense of safety.
+are not on your team, those people cannot transfer knowledge to you — they are
+already gone. Counting them toward bus factor would give a false sense of
+safety. Their commits represent knowledge that exists only in the code, with no
+organizational owner.
 
 ### Example
 
 Suppose `grzesiek.bizon` has 153 commits to `internal/` in a forked project's
 history. If `grzesiek.bizon` is an upstream author (not a current project
-member), the pipeline marks them as `external=True`. When bus factor for
+member), the pipeline marks them `external=True`. When bus factor for
 `internal/` is computed:
 
-```
-internal contributors = [c for c in contributions if not c.external and c.commit_count > 0]
-bus_factor(internal/) = len(internal contributors) = 0
+```python
+internal = [c for c in contributions if not c.external and c.commit_count > 0]
+bus_factor = compute_bus_factor(internal)   # returns 0 — no internal committers
 ```
 
 Bus factor is 0 even though 153 commits exist. The module is a **dark knowledge
 zone** — fully functional but organizationally orphaned.
 
-This shows up in the Knowledge Graph UI: `internal/` has a bus_factor of 0 with
-`grzesiek.bizon` listed under "Upstream Authors" (not "Contributors"), and the
-module card shows a dark-knowledge warning.
+This shows up in the Knowledge Graph UI: `internal/` has `bus_factor=0` with
+`grzesiek.bizon` listed under "Upstream Authors", and the module card shows a
+dark-knowledge warning.
+
+### Expertise score
+
+Each contributor's `expertise_score` is their proportional share of a module's
+total commit count (normalised to 1.0 for the top contributor). This is a
+structural fact, not a judgment. The analyst agent uses bus factor as one signal
+among many when it reasons about actual risk.
 
 ### What the agent does with this
 
-The analyst and planner agents receive bus_factor as a measurement signal, not a
-decision rule. Bus_factor=0 for a module does not automatically create an issue.
-The agents reason: is this module being actively changed? Does it have any docs?
-Is there a fork-path to understanding it? The issue (if created) reflects that
-full picture, not just the number.
+Bus factor is a **measurement**, not a decision rule. Bus factor 1 does not
+automatically create an issue. The analyst reasons: is this module being
+actively changed? Are there docs? Is the sole committer still active? The
+planner decides whether to act and what form the action takes.
+
+A bus factor of 1 on a module with excellent documentation and a stable,
+long-tenured author is different from bus factor 1 on an undocumented module
+whose sole contributor has been inactive for 60 days. The number alone cannot
+distinguish these. The agent can.
+
+### CLI inspection
+
+```bash
+# Bus-factor breakdown for every module (sorted from most concentrated)
+python checks/show.py --busfactor
+
+# Drill into one developer: which modules are they in the 80% threshold for?
+python checks/show.py --dev <username>
+```
 
 ---
 

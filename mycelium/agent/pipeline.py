@@ -5,6 +5,7 @@ import time
 import uuid
 from collections import deque
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from typing import Awaitable, Callable, Optional
 
 from agent import analyst_agent, planner_agent, investigator
@@ -14,6 +15,17 @@ from connectors.gitlab_client import GitLabClient
 from graph.knowledge_graph import KnowledgeGraph
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_iso_dt(s: str | None) -> datetime | None:
+    """Parse an ISO-8601 datetime string from GitLab into a datetime, or return None."""
+    if not s:
+        return None
+    try:
+        # GitLab returns e.g. "2024-03-15T09:22:01.000+00:00" or "2024-03-15T09:22:01Z"
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 class _PipelineCancelled(Exception):
@@ -620,6 +632,8 @@ class PipelineRunner:
                     name=(name or email or username),
                     active=not is_external,
                     external=is_external,
+                    first_seen=_parse_iso_dt(c.get("first_commit_at")),
+                    last_seen=_parse_iso_dt(c.get("last_commit_at")),
                 )
                 try:
                     await self._graph.upsert_developer(dev)
@@ -686,6 +700,8 @@ class PipelineRunner:
                         name=(name or email or username),
                         active=not is_external,
                         external=is_external,
+                        first_seen=_parse_iso_dt(c.get("first_commit_at")),
+                        last_seen=_parse_iso_dt(c.get("last_commit_at")),
                     )
                     try:
                         await self._graph.upsert_developer(dev)

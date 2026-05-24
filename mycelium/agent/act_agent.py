@@ -89,7 +89,10 @@ OPERATIONAL CONSTRAINTS:
 - Do not mention tool errors to the user. If a tool fails, skip and move on.
 - Do not ask for clarification — decide autonomously.
 - Do not invent severity scores or buckets. Reason from finding narratives.
-- Do NOT skip planned actions unless the exact same issue already exists.
+- For create_issue: skip if an issue with the same or a closely matching title
+  already exists in the project (check via get_gitlab_project_state if needed).
+- For add_comment: skip if the comment body would only restate information
+  already visible in the issue title or its most recent comment.
 
 You have three tool surfaces:
 
@@ -97,7 +100,7 @@ You have three tool surfaces:
    Pre-scoped to the authorized project — no project argument needed.
    READ:  get_concerns, get_module_experts, get_orphaned_modules,
           suggest_assignee, get_gitlab_project_state
-   WRITE: create_issue, add_comment, assign_issue
+   WRITE: create_issue, add_comment, assign_issue, edit_issue, close_issue
    ARTIFACTS: generate_onboarding_pack(new_member_username),
               generate_offboarding_artifact(departing_member_username)
 
@@ -106,6 +109,9 @@ You have three tool surfaces:
    Use generate_offboarding_artifact when a finding's concern_type is
    fading_contributor, offboarding_risk, or sole_contributor with low
    transferability reported by the investigator.
+
+   edit_issue: correct an existing issue's description in place (Tier 1 fix).
+   close_issue: close a superseded issue — always add a linking comment first.
 
 2. GitLab MCP tools — supplementary surface (may be unavailable).
    When using these tools, pass ONLY the authorized project_path from the
@@ -119,17 +125,23 @@ Execution loop — follow this EXACTLY:
    - create_issue   → call create_issue with the title and description from the plan
    - add_comment    → call add_comment
    - assign_issue   → call assign_issue
+   - edit_issue     → call edit_issue(iid, description, title?) to correct an issue in place
+   - close_issue    → call close_issue(iid) to close a superseded issue
    - generate_onboarding_pack / generate_offboarding_artifact → call Mycelium MCP
-2. If a tool call fails, skip that action and proceed to the next.
-3. Stop after processing every action in the plan.
+2. When executing a supersede sequence (create + comment + close), execute them IN ORDER:
+   create the new issue first, then comment on the old with the new iid, then close the old.
+3. If a tool call fails, skip that action and proceed to the next.
+4. Stop after processing every action in the plan.
 
 CRITICAL — DO NOT:
-  ✗ Call get_gitlab_project_state before executing (this causes premature termination)
-  ✗ Skip a create_issue because you judge the situation as "already covered"
   ✗ Substitute your own assessment for the planner's decisions
+  ✗ Create a duplicate issue when one with the same title already exists
+  ✗ Add a comment that only restates the issue title — omit it instead
   ✗ Confuse the TOPIC of an issue (which may reference an upstream repo) with
     the TARGET of the write — all issues are created IN your authorized project,
     even if their title or description discusses upstream changes
+  ✗ Close an issue without first posting a linking comment pointing to its replacement
+  ✗ Create a replacement issue and leave the old one open (fragmentation)
 """
 
 _PROMPT_TEMPLATE = """\
@@ -153,14 +165,22 @@ Current repository snapshot:
 {repo}
 
 EXECUTION INSTRUCTIONS:
-1. Call create_issue (Mycelium MCP) for EACH action in the plan above — right now.
+1. Call the corresponding Mycelium MCP tool for EACH action in the plan above — right now.
+   Action kind → tool:
+     create_issue   → create_issue(title, description, labels, assignee_username)
+     add_comment    → add_comment(iid, body)
+     assign_issue   → assign_issue(iid, assignee_username)
+     edit_issue     → edit_issue(iid, description, title?)
+     close_issue    → close_issue(iid)
 2. Issue titles may reference upstream repos (e.g. "javredstone-mcp/gitlab-pages") as
    TOPICS. The write target is always your authorized project. This is NOT a boundary
    violation — you are tracking the topic in your own project's issue tracker.
 3. If a tool call fails, skip it and continue to the next action.
 4. Do NOT call get_gitlab_project_state first — execute immediately.
 5. Do NOT substitute your own assessment for the planner's decisions.
-6. When using GitLab MCP tools (if Mycelium MCP is unavailable), pass
+6. For supersede sequences: execute create_issue first, note its iid, then add_comment on the old
+   issue referencing the new iid, then close_issue the old one — in that exact order.
+7. When using GitLab MCP tools (if Mycelium MCP is unavailable), pass
    project_path="{project_path}" — never any other project path.
 """
 
@@ -489,6 +509,22 @@ async def _direct_execute_actions(
             )
         return await asyncio.to_thread(_run)
 
+    async def _edit_issue(params: dict) -> dict:
+        def _run() -> dict:
+            return _GitLabClient().edit_issue(
+                issue_iid=int(params.get("iid", 0)),
+                description=params.get("description", ""),
+                title=params.get("title") or None,
+            )
+        return await asyncio.to_thread(_run)
+
+    async def _close_issue(params: dict) -> dict:
+        def _run() -> dict:
+            return _GitLabClient().close_issue(
+                issue_iid=int(params.get("iid", 0)),
+            )
+        return await asyncio.to_thread(_run)
+
     async def _onboarding_pack(params: dict) -> dict:
         from connectors.mcp_server import generate_onboarding_pack
         username = params.get("new_member_username") or params.get("username", "")
@@ -503,6 +539,8 @@ async def _direct_execute_actions(
         "create_issue":               _create_issue,
         "add_comment":                _add_comment,
         "assign_issue":               _assign_issue,
+        "edit_issue":                 _edit_issue,
+        "close_issue":                _close_issue,
         "generate_onboarding_pack":   _onboarding_pack,
         "generate_offboarding_artifact": _offboarding_artifact,
     }

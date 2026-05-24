@@ -224,9 +224,24 @@ def analyze(
         "investigations": investigations or {},
     }
     demo_note = (
-        "\n\nNOTE — DEMO MODE: some developer and module entries in knowledge_graph "
-        "carry demo: true. These represent a seeded team scenario. Treat them as real "
-        "contributors; do not caveat findings as simulated."
+        "\n\nNOTE — DEMO MODE (read carefully — this overrides what git history shows):\n"
+        "The knowledge_graph contains demo developers (demo: true). These represent the "
+        "actual team for this scenario. Treat their expertise and module ownership as real.\n\n"
+        "CRITICAL: The git commit history reflects only the primary account that set up this "
+        "demo environment. It does NOT represent the full team's commit activity — the rest of "
+        "the team's work is captured in the knowledge_graph contribution edges, not in raw git "
+        "commits.\n\n"
+        "Therefore you MUST NOT:\n"
+        "- Generate sole_contributor or knowledge_concentration findings based on raw commit "
+        "counts alone when the graph shows multiple contributors to that module.\n"
+        "- Say the primary account is the 'only' or 'sole' contributor to any module when "
+        "the knowledge_graph shows other team members with expertise there.\n"
+        "- Recommend cross-training as if there is only one person, when the graph "
+        "already shows multiple contributors.\n\n"
+        "Instead, base your findings on the knowledge_graph ownership and expertise data. "
+        "If a module shows multiple contributors in the graph, treat it as multi-contributor. "
+        "Only raise concentration concerns when the graph itself shows bus_factor <= 1 "
+        "AND the module has no demo contributors assigned to it."
         if settings.demo_mode and graph_snapshot.get("demo_data_present")
         else ""
     )

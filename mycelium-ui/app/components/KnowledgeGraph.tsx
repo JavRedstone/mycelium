@@ -10,6 +10,13 @@ import Button from "@mui/material/Button";
 import LinearProgress from "@mui/material/LinearProgress";
 import Grid from "@mui/material/Grid";
 import Divider from "@mui/material/Divider";
+import Drawer from "@mui/material/Drawer";
+import IconButton from "@mui/material/IconButton";
+import Tooltip from "@mui/material/Tooltip";
+import Menu from "@mui/material/Menu";
+import MenuItem from "@mui/material/MenuItem";
+import ListItemText from "@mui/material/ListItemText";
+import ListItemIcon from "@mui/material/ListItemIcon";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutlined";
 import ScienceOutlinedIcon from "@mui/icons-material/ScienceOutlined";
@@ -18,6 +25,13 @@ import WarningAmberOutlinedIcon from "@mui/icons-material/WarningAmberOutlined";
 import PersonOutlineOutlinedIcon from "@mui/icons-material/PersonOutlineOutlined";
 import AccountTreeOutlinedIcon from "@mui/icons-material/AccountTreeOutlined";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
+import CloseIcon from "@mui/icons-material/Close";
+import CallSplitOutlinedIcon from "@mui/icons-material/CallSplitOutlined";
+import StarOutlinedIcon from "@mui/icons-material/StarOutlined";
+import ChevronRightOutlinedIcon from "@mui/icons-material/ChevronRightOutlined";
+import FiberManualRecordIcon from "@mui/icons-material/FiberManualRecord";
+import AddCircleOutlinedIcon from "@mui/icons-material/AddCircleOutlined";
+import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 
 import {
   ReactFlow,
@@ -72,6 +86,300 @@ type GraphData = {
   concentrated_modules?: Module[];
   recent_findings?: Finding[];
 };
+
+type BusfactorEntry = {
+  username: string;
+  expertise_score: number;
+  share_pct: number;
+  cumulative_pct: number;
+  in_bus_factor: boolean;
+  commit_count: number;
+  external?: boolean;
+};
+
+type BusfactorModule = {
+  module_path: string;
+  bus_factor: number;
+  dev_expertise_score: number;
+  dev_share_pct: number;
+  dev_in_bus_factor: boolean;
+  total_internal_contributors: number;
+  total_external_contributors: number;
+  breakdown: BusfactorEntry[];
+};
+
+type BusfactorData = {
+  username: string;
+  name: string;
+  external: boolean;
+  demo: boolean;
+  modules: BusfactorModule[];
+};
+
+// ---------------------------------------------------------------------------
+// Bus-factor drawer — shown when a developer name is clicked
+// ---------------------------------------------------------------------------
+function BusfactorDrawer({
+  username,
+  open,
+  onClose,
+  apiUrl,
+}: {
+  username: string | null;
+  open: boolean;
+  onClose: () => void;
+  apiUrl: string;
+}) {
+  const [data, setData] = useState<BusfactorData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open || !username) { setData(null); return; }
+    setLoading(true);
+    setError(null);
+    fetch(`${apiUrl}/developers/busfactor?username=${encodeURIComponent(username)}`)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((d) => setData(d as BusfactorData))
+      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load"))
+      .finally(() => setLoading(false));
+  }, [open, username, apiUrl]);
+
+  const BAR_WIDTH = 160; // px for the share bar
+
+  return (
+    <Drawer
+      anchor="right"
+      open={open}
+      onClose={onClose}
+      slotProps={{
+        paper: {
+          sx: {
+            width: 520,
+            bgcolor: "background.default",
+            borderLeft: "1px solid rgba(255,255,255,0.08)",
+            p: 0,
+          },
+        },
+      }}
+    >
+      {/* Header */}
+      <Box sx={{ px: 2.5, py: 2, borderBottom: "1px solid rgba(255,255,255,0.07)", display: "flex", alignItems: "center", gap: 1 }}>
+        <CallSplitOutlinedIcon sx={{ fontSize: 16, color: "primary.light", flexShrink: 0 }} />
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography variant="subtitle2" sx={{ fontFamily: "var(--font-google-sans-code)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {username}
+          </Typography>
+          {data && (
+            <Typography variant="caption" color="text.disabled">
+              {data.name !== username ? data.name + " · " : ""}
+              {data.external ? "upstream author — dark knowledge view" : "bus-factor impact"}
+              {data.demo ? " · demo" : ""}
+            </Typography>
+          )}
+        </Box>
+        <IconButton size="small" onClick={onClose} sx={{ color: "text.disabled" }}>
+          <CloseIcon sx={{ fontSize: 16 }} />
+        </IconButton>
+      </Box>
+
+      <Box sx={{ px: 2.5, py: 2, overflowY: "auto", height: "calc(100vh - 72px)" }}>
+        {loading && <LinearProgress sx={{ borderRadius: 1, mb: 2 }} />}
+        {error && <Typography variant="body2" color="error.main">{error}</Typography>}
+
+        {data && !loading && (
+          <>
+            {/* Context banner — different for upstream vs internal */}
+            {data.external ? (
+              <Paper elevation={0} sx={{ p: 1.5, mb: 2.5, bgcolor: "rgba(250,123,23,0.06)", border: "1px solid rgba(250,123,23,0.2)", borderRadius: 1.5 }}>
+                <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
+                  <WarningAmberOutlinedIcon sx={{ fontSize: 13, color: "#fa7b17", flexShrink: 0, mt: 0.25 }} />
+                  <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.6 }}>
+                    <strong>Upstream author</strong> — not a current project member.
+                    Their commits are <strong>excluded from bus-factor calculations</strong> because they cannot transfer knowledge to the team.
+                    Bars show their share of <em>all</em> commits to each module (internal + upstream combined).
+                    The team members who do hold each module are listed below each bar.
+                  </Typography>
+                </Stack>
+              </Paper>
+            ) : (
+              <Paper elevation={0} sx={{ p: 1.5, mb: 2.5, bgcolor: "rgba(66,133,244,0.06)", border: "1px solid rgba(66,133,244,0.15)", borderRadius: 1.5 }}>
+                <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
+                  <InfoOutlinedIcon sx={{ fontSize: 13, color: "primary.light", flexShrink: 0, mt: 0.25 }} />
+                  <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.6 }}>
+                    <strong>Bus factor</strong> = minimum internal contributors (by expertise) covering ≥80% of a module.
+                    Rows marked <StarOutlinedIcon sx={{ fontSize: 10, color: "#4285f4", verticalAlign: "middle", mx: 0.25 }} /> are inside that 80% threshold — losing them drops coverage below 80%.
+                    Bars show each person&apos;s share of internal expertise for that module.
+                  </Typography>
+                </Stack>
+              </Paper>
+            )}
+
+            {data.modules.length === 0 && (
+              <Typography variant="body2" color="text.disabled">
+                No module contributions recorded yet.
+              </Typography>
+            )}
+
+            <Stack spacing={2}>
+              {data.modules.map((mod) => {
+                const inBus = mod.dev_in_bus_factor;
+                const isUpstream = data.external;
+                const accentColor = isUpstream ? "#fa7b17" : inBus ? "#fa7b17" : "#4285f4";
+                const busColor = mod.bus_factor === 0 ? "#ea4335" : mod.bus_factor === 1 ? "#fa7b17" : mod.bus_factor === 2 ? "#fbbc04" : "#34a853";
+                const noInternal = mod.total_internal_contributors === 0;
+
+                return (
+                  <Paper
+                    key={mod.module_path}
+                    elevation={0}
+                    sx={{
+                      p: 1.75,
+                      bgcolor: "rgba(255,255,255,0.02)",
+                      border: "1px solid",
+                      borderColor: isUpstream
+                        ? "rgba(250,123,23,0.15)"
+                        : inBus ? "rgba(250,123,23,0.22)" : "rgba(255,255,255,0.06)",
+                      borderRadius: 2,
+                    }}
+                  >
+                    {/* Module header */}
+                    <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 1.25, flexWrap: "wrap" }} useFlexGap>
+                      {!isUpstream && (
+                        <Chip
+                          label={`bus ${mod.bus_factor}`}
+                          size="small"
+                          sx={{ bgcolor: busColor + "18", color: busColor, border: `1px solid ${busColor}44`, height: 18, fontSize: "0.6rem", fontWeight: 700, flexShrink: 0 }}
+                        />
+                      )}
+                      <Typography
+                        variant="body2"
+                        sx={{ fontFamily: "var(--font-google-sans-code)", fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                      >
+                        {mod.module_path}/
+                      </Typography>
+                      {!isUpstream && inBus && (
+                        <Tooltip title={`${username} is inside the 80% threshold — their departure reduces this module's internal coverage below 80%`}>
+                          <Chip
+                            label="in threshold"
+                            size="small"
+                            icon={<WarningAmberOutlinedIcon sx={{ fontSize: "10px !important" }} />}
+                            sx={{ height: 18, fontSize: "0.6rem", flexShrink: 0, color: "#fa7b17", borderColor: "#fa7b1744", bgcolor: "#fa7b1711", border: "1px solid" }}
+                          />
+                        </Tooltip>
+                      )}
+                      <Typography variant="caption" color="text.disabled" sx={{ flexShrink: 0 }}>
+                        {mod.dev_share_pct.toFixed(1)}%
+                        {isUpstream ? " of all commits" : " of internal expertise"}
+                      </Typography>
+                    </Stack>
+
+                    {/* Contributor rows */}
+                    {noInternal && !isUpstream ? (
+                      <Typography variant="caption" color="text.disabled" sx={{ pl: "22px", display: "block" }}>
+                        No internal contributors — all knowledge is upstream.
+                      </Typography>
+                    ) : noInternal && isUpstream ? (
+                      <Typography variant="caption" color="text.disabled" sx={{ pl: "22px", display: "block" }}>
+                        No internal contributors hold this module — entirely upstream knowledge.
+                      </Typography>
+                    ) : (
+                      <Stack spacing={0.5}>
+                        {mod.breakdown.map((b) => {
+                          const isSubject = !isUpstream && b.username === username;
+                          const rowColor = isSubject ? accentColor : "rgba(255,255,255,0.35)";
+                          return (
+                            <Stack key={b.username} direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
+                              <Box sx={{ minWidth: 14, flexShrink: 0, display: "flex", alignItems: "center" }}>
+                                {b.in_bus_factor
+                                  ? <StarOutlinedIcon sx={{ fontSize: 11, color: "#4285f4" }} />
+                                  : <FiberManualRecordIcon sx={{ fontSize: 5, color: "rgba(255,255,255,0.15)" }} />
+                                }
+                              </Box>
+                              <Typography
+                                variant="caption"
+                                sx={{
+                                  fontFamily: "var(--font-google-sans-code)",
+                                  color: rowColor,
+                                  fontWeight: isSubject ? 700 : 400,
+                                  minWidth: 120,
+                                  maxWidth: 120,
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                  flexShrink: 0,
+                                }}
+                              >
+                                {b.username}
+                              </Typography>
+                              <Box sx={{ flex: 1, minWidth: 60, position: "relative" }}>
+                                <Box sx={{ height: 5, borderRadius: 1, bgcolor: "rgba(255,255,255,0.05)", overflow: "hidden" }}>
+                                  <Box
+                                    sx={{
+                                      height: "100%",
+                                      width: `${Math.min(100, b.share_pct)}%`,
+                                      bgcolor: isSubject ? accentColor : "rgba(255,255,255,0.18)",
+                                      borderRadius: 1,
+                                      transition: "width 0.3s ease",
+                                    }}
+                                  />
+                                </Box>
+                                {/* 80% threshold marker (only meaningful for internal view) */}
+                                {!isUpstream && (
+                                  <Box sx={{ position: "absolute", top: 0, left: "80%", height: "100%", width: "1px", bgcolor: "rgba(255,255,255,0.18)", pointerEvents: "none" }} />
+                                )}
+                              </Box>
+                              <Typography
+                                variant="caption"
+                                sx={{ fontFamily: "var(--font-google-sans-code)", color: rowColor, minWidth: 38, textAlign: "right", flexShrink: 0 }}
+                              >
+                                {b.share_pct.toFixed(1)}%
+                              </Typography>
+                              {!isUpstream && (
+                                <Typography variant="caption" color="text.disabled" sx={{ minWidth: 42, textAlign: "right", flexShrink: 0 }}>
+                                  {b.cumulative_pct.toFixed(0)}% cum
+                                </Typography>
+                              )}
+                            </Stack>
+                          );
+                        })}
+                        {/* Footer annotation */}
+                        <Box sx={{ pl: "22px", mt: 0.25 }}>
+                          <Typography variant="caption" color="text.disabled" sx={{ fontSize: "0.58rem" }}>
+                            {isUpstream ? (
+                              <>
+                                {mod.total_internal_contributors === 0
+                                  ? "No internal contributors — dark knowledge zone"
+                                  : `${mod.total_internal_contributors} internal contributor${mod.total_internal_contributors !== 1 ? "s" : ""} currently hold this module`}
+                                {mod.total_external_contributors > 1
+                                  ? ` · ${mod.total_external_contributors} upstream authors total`
+                                  : ""}
+                              </>
+                            ) : (
+                              <>
+                                {mod.total_internal_contributors} internal contributor{mod.total_internal_contributors !== 1 ? "s" : ""}
+                                {mod.bus_factor > 0
+                                  ? ` · ${mod.bus_factor} cover${mod.bus_factor === 1 ? "s" : ""} ≥80%`
+                                  : " · no internal coverage"}
+                                {mod.total_external_contributors > 0
+                                  ? ` · ${mod.total_external_contributors} upstream`
+                                  : ""}
+                              </>
+                            )}
+                          </Typography>
+                        </Box>
+                      </Stack>
+                    )}
+                  </Paper>
+                );
+              })}
+            </Stack>
+          </>
+        )}
+      </Box>
+    </Drawer>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Concentration helpers — bus_factor is a measurement, not a score.
@@ -282,7 +590,15 @@ function buildFlowGraph(modules: Module[]): { nodes: Node[]; edges: Edge[]; tota
 // ---------------------------------------------------------------------------
 // Module Knowledge Breakdown — the primary view
 // ---------------------------------------------------------------------------
-function ModuleBreakdown({ modules, findings }: { modules: Module[]; findings: Finding[] }) {
+function ModuleBreakdown({
+  modules,
+  findings,
+  onSelectDev,
+}: {
+  modules: Module[];
+  findings: Finding[];
+  onSelectDev?: (username: string) => void;
+}) {
   // Detect if data is still in the seeding-only state (only "repository" exists)
   const hasOnlyRoot = modules.length <= 1 && modules[0]?.path === "repository";
 
@@ -370,9 +686,31 @@ function ModuleBreakdown({ modules, findings }: { modules: Module[]; findings: F
               >
                 {mod.path}/
               </Typography>
-              <Typography variant="caption" color="text.disabled" sx={{ flexShrink: 0 }}>
-                bus factor {busFactor}
-              </Typography>
+              <Tooltip
+                placement="top"
+                title={
+                  <Box sx={{ maxWidth: 320, py: 0.5 }}>
+                    <Typography variant="caption" sx={{ display: "block", fontWeight: 600, mb: 0.5 }}>
+                      Bus factor — a per-module metric
+                    </Typography>
+                    <Typography variant="caption" sx={{ display: "block", mb: 0.5 }}>
+                      Minimum number of <strong>internal</strong> contributors whose
+                      combined expertise covers ≥80% of this module. Upstream authors
+                      are excluded — they can't transfer knowledge to the team.
+                    </Typography>
+                    <Typography variant="caption" sx={{ display: "block", color: "rgba(255,255,255,0.6)" }}>
+                      <strong>0</strong> = no internal contributors (dark knowledge zone). <strong>1</strong> = one person holds &gt;80% (fragile). Higher = safer.
+                    </Typography>
+                  </Box>
+                }
+              >
+                <Stack direction="row" spacing={0.5} sx={{ alignItems: "center", flexShrink: 0, cursor: "help" }}>
+                  <Typography variant="caption" color="text.disabled">
+                    bus factor {busFactor}
+                  </Typography>
+                  <InfoOutlinedIcon sx={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }} />
+                </Stack>
+              </Tooltip>
               {noInternalKnowledge && (
                 <>
                   <Divider orientation="vertical" flexItem sx={{ borderColor: "rgba(255,255,255,0.08)" }} />
@@ -411,18 +749,39 @@ function ModuleBreakdown({ modules, findings }: { modules: Module[]; findings: F
                 const contribColor = c.external ? "#fa7b17" : "#4285f4";
                 return (
                   <Stack key={c.developer_username} direction="row" spacing={1} sx={{ alignItems: "center" }}>
-                    <Typography
-                      variant="caption"
-                      sx={{ color: i === 0 ? contribColor : "rgba(255,255,255,0.2)", fontWeight: i === 0 ? 700 : 400, minWidth: 14, flexShrink: 0, fontFamily: "var(--font-google-sans-code)" }}
+                    <Box sx={{ minWidth: 14, flexShrink: 0, display: "flex", alignItems: "center" }}>
+                      {i === 0
+                        ? <ChevronRightOutlinedIcon sx={{ fontSize: 13, color: contribColor }} />
+                        : <FiberManualRecordIcon sx={{ fontSize: 5, color: "rgba(255,255,255,0.2)" }} />
+                      }
+                    </Box>
+                    <Tooltip
+                      title={c.external
+                        ? `View upstream knowledge breakdown for ${c.developer_username}`
+                        : `View bus-factor impact for ${c.developer_username}`}
+                      placement="top"
                     >
-                      {i === 0 ? "▶" : "·"}
-                    </Typography>
-                    <Typography
-                      variant="caption"
-                      sx={{ fontFamily: "var(--font-google-sans-code)", color: contribColor, minWidth: 130, maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 0 }}
-                    >
-                      {c.developer_username}
-                    </Typography>
+                      <Typography
+                        variant="caption"
+                        onClick={() => onSelectDev?.(c.developer_username)}
+                        sx={{
+                          fontFamily: "var(--font-google-sans-code)",
+                          color: contribColor,
+                          minWidth: 130,
+                          maxWidth: 130,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          flexShrink: 0,
+                          cursor: onSelectDev ? "pointer" : "default",
+                          textDecoration: onSelectDev ? "underline dotted" : "none",
+                          textDecorationColor: contribColor + "66",
+                          "&:hover": onSelectDev ? { textDecorationColor: contribColor } : {},
+                        }}
+                      >
+                        {c.developer_username}
+                      </Typography>
+                    </Tooltip>
                     <Box sx={{ flex: 1, minWidth: 60 }}>
                       <LinearProgress
                         variant="determinate"
@@ -433,12 +792,26 @@ function ModuleBreakdown({ modules, findings }: { modules: Module[]; findings: F
                         }}
                       />
                     </Box>
-                    <Typography
-                      variant="caption"
-                      sx={{ fontFamily: "var(--font-google-sans-code)", color: contribColor, minWidth: 32, textAlign: "right", flexShrink: 0 }}
+                    <Tooltip
+                      placement="top"
+                      title={
+                        <Box sx={{ maxWidth: 280, py: 0.5 }}>
+                          <Typography variant="caption" sx={{ display: "block", fontWeight: 600, mb: 0.5 }}>
+                            Expertise score: {c.expertise_score.toFixed(2)}
+                          </Typography>
+                          <Typography variant="caption" sx={{ display: "block" }}>
+                            This contributor's share of commits to {mod.path}/, normalized so the top contributor = <strong>1.00</strong>. So 0.50 means about half as many commits as the top contributor.
+                          </Typography>
+                        </Box>
+                      }
                     >
-                      {c.expertise_score.toFixed(2)}
-                    </Typography>
+                      <Typography
+                        variant="caption"
+                        sx={{ fontFamily: "var(--font-google-sans-code)", color: contribColor, minWidth: 32, textAlign: "right", flexShrink: 0, cursor: "help" }}
+                      >
+                        {c.expertise_score.toFixed(2)}
+                      </Typography>
+                    </Tooltip>
                     <Chip
                       label={c.external ? "upstream" : "internal"}
                       size="small"
@@ -638,14 +1011,53 @@ function StructuralOverview({ modules }: { modules: Module[] }) {
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Scenario metadata
+// ---------------------------------------------------------------------------
+const SCENARIOS = [
+  {
+    id: "team",
+    label: "Full team",
+    description: "Alex Chen, Priya Sharma, Marco Torres + full module coverage",
+  },
+  {
+    id: "new_joiner",
+    label: "New joiner",
+    description: "Marco Torres — joined 2 weeks ago, 1 test commit → onboarding pack",
+  },
+  {
+    id: "fading",
+    label: "Fading contributor",
+    description: "Priya Sharma — sole scripts/ owner, 6 months inactive → offboarding",
+  },
+  {
+    id: "sole_owner",
+    label: "Sole owner",
+    description: "Alex Chen — sole holder of app/ and internal/ → knowledge transfer issue",
+  },
+] as const;
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
 export default function KnowledgeGraph() {
   const [data, setData] = useState<GraphData | null>(null);
   const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [demoMode, setDemoMode] = useState<boolean>(false);
   const [clearing, setClearing] = useState(false);
+  const [seeding, setSeeding] = useState(false);
+  const [seedMenuAnchor, setSeedMenuAnchor] = useState<null | HTMLElement>(null);
+  const [selectedDev, setSelectedDev] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  function openDevDrawer(username: string) {
+    setSelectedDev(username);
+    setDrawerOpen(true);
+  }
 
   const fetchGraph = useCallback(async () => {
     setLoading(true);
@@ -663,13 +1075,34 @@ export default function KnowledgeGraph() {
     }
   }, [apiUrl]);
 
+  // Fetch demo_mode from /config once on mount
+  useEffect(() => {
+    fetch(`${apiUrl}/config`)
+      .then((r) => r.json())
+      .then((cfg: Record<string, unknown>) => setDemoMode(cfg.demo_mode === true))
+      .catch(() => {/* silently ignore — demo controls stay hidden */});
+  }, [apiUrl]);
+
   async function clearDemoData() {
     setClearing(true);
     try {
-      await fetch(`${apiUrl}/graph/demo`, { method: "DELETE" });
+      const res = await fetch(`${apiUrl}/graph/demo`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       await fetchGraph();
     } finally {
       setClearing(false);
+    }
+  }
+
+  async function seedScenario(scenario: string) {
+    setSeedMenuAnchor(null);
+    setSeeding(true);
+    try {
+      const res = await fetch(`${apiUrl}/demo/seed/${scenario}`, { method: "POST" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await fetchGraph();
+    } finally {
+      setSeeding(false);
     }
   }
 
@@ -703,17 +1136,55 @@ export default function KnowledgeGraph() {
           )}
         </Stack>
         <Stack direction="row" spacing={1}>
-          {hasDemo && (
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={clearDemoData}
-              disabled={clearing}
-              startIcon={<DeleteOutlineIcon />}
-              sx={{ height: 30, color: "#a78bfa", borderColor: "#7c3aed55", "&:hover": { borderColor: "#a78bfa", bgcolor: "#7c3aed11" } }}
-            >
-              {clearing ? "Clearing…" : "Clear demo data"}
-            </Button>
+          {/* Demo controls — only visible when DEMO_MODE=true on the backend */}
+          {demoMode && (
+            <>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={(e) => setSeedMenuAnchor(e.currentTarget)}
+                disabled={seeding}
+                startIcon={<AddCircleOutlinedIcon />}
+                endIcon={<ArrowDropDownIcon />}
+                sx={{ height: 30, color: "#a78bfa", borderColor: "#7c3aed55", "&:hover": { borderColor: "#a78bfa", bgcolor: "#7c3aed11" } }}
+              >
+                {seeding ? "Seeding…" : "Seed demo data"}
+              </Button>
+              <Menu
+                anchorEl={seedMenuAnchor}
+                open={Boolean(seedMenuAnchor)}
+                onClose={() => setSeedMenuAnchor(null)}
+                slotProps={{ paper: { sx: { bgcolor: "background.default", border: "1px solid rgba(255,255,255,0.1)", minWidth: 260 } } }}
+              >
+                {SCENARIOS.map((s) => (
+                  <MenuItem key={s.id} onClick={() => seedScenario(s.id)} sx={{ py: 1 }}>
+                    <ListItemIcon>
+                      <ScienceOutlinedIcon sx={{ fontSize: 16, color: "#a78bfa" }} />
+                    </ListItemIcon>
+                    <ListItemText
+                      primary={s.label}
+                      secondary={s.description}
+                      slotProps={{
+                        primary: { sx: { fontSize: "0.8rem", color: "#a78bfa" } },
+                        secondary: { sx: { fontSize: "0.68rem" } },
+                      }}
+                    />
+                  </MenuItem>
+                ))}
+              </Menu>
+              {hasDemo && (
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={clearDemoData}
+                  disabled={clearing}
+                  startIcon={<DeleteOutlineIcon />}
+                  sx={{ height: 30, color: "#a78bfa", borderColor: "#7c3aed55", "&:hover": { borderColor: "#a78bfa", bgcolor: "#7c3aed11" } }}
+                >
+                  {clearing ? "Clearing…" : "Clear"}
+                </Button>
+              )}
+            </>
           )}
           <Button size="small" variant="outlined" onClick={fetchGraph} disabled={loading} startIcon={<RefreshIcon />} sx={{ height: 30 }}>
             {loading ? "Loading…" : "Refresh"}
@@ -721,16 +1192,19 @@ export default function KnowledgeGraph() {
         </Stack>
       </Stack>
 
-      {/* Demo data banner */}
-      {hasDemo && (
+      {/* Demo mode banner — shown when demo mode is on, with or without seeded data */}
+      {demoMode && (
         <Paper elevation={0} sx={{ p: 1.5, bgcolor: "#7c3aed11", border: "1px solid #7c3aed44", borderRadius: 2 }}>
           <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
             <ScienceOutlinedIcon sx={{ fontSize: 15, color: "#a78bfa", flexShrink: 0 }} />
             <Typography variant="caption" sx={{ color: "#a78bfa", flex: 1 }}>
-              Demo data active — {demoDevCount > 0 ? `${demoDevCount} developer${demoDevCount !== 1 ? "s" : ""}` : ""}
-              {demoDevCount > 0 && demoModCount > 0 ? " · " : ""}
-              {demoModCount > 0 ? `${demoModCount} module${demoModCount !== 1 ? "s" : ""}` : ""} seeded for simulation.
-              Results shown include synthetic entries. Use <strong>Clear demo data</strong> to remove them.
+              {hasDemo
+                ? <>Demo data active — {demoDevCount > 0 ? `${demoDevCount} developer${demoDevCount !== 1 ? "s" : ""}` : ""}
+                    {demoDevCount > 0 && demoModCount > 0 ? " · " : ""}
+                    {demoModCount > 0 ? `${demoModCount} module${demoModCount !== 1 ? "s" : ""}` : ""} seeded.
+                    Results include synthetic entries.</>
+                : <>Demo mode enabled — no data seeded yet. Use <strong>Seed demo data</strong> to populate a scenario.</>
+              }
             </Typography>
           </Stack>
         </Paper>
@@ -768,6 +1242,14 @@ export default function KnowledgeGraph() {
         </Paper>
       )}
 
+      {/* Bus-factor drawer — opened when a developer name is clicked */}
+      <BusfactorDrawer
+        username={selectedDev}
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        apiUrl={apiUrl}
+      />
+
       {hasGraph && (
         <>
           {/* Primary: module knowledge breakdown */}
@@ -775,10 +1257,10 @@ export default function KnowledgeGraph() {
             <Stack direction="row" spacing={1} sx={{ alignItems: "baseline", mb: 2 }}>
               <Typography variant="subtitle2" color="text.secondary">Module Knowledge Breakdown</Typography>
               <Typography variant="caption" color="text.disabled">
-                who knows what · sorted by concentration · score = relative commit share (1.0 = top contributor)
+                who knows what · sorted by concentration · score = relative commit share · click a name for bus-factor detail
               </Typography>
             </Stack>
-            <ModuleBreakdown modules={data!.modules} findings={recentFindings} />
+            <ModuleBreakdown modules={data!.modules} findings={recentFindings} onSelectDev={openDevDrawer} />
           </Paper>
 
           {/* Secondary: React Flow structural overview + upstream authors */}

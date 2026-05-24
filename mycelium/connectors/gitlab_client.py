@@ -16,12 +16,22 @@ class GitLabClient:
             url=settings.gitlab_url,
             private_token=settings.gitlab_token,
         )
-        self._project = self._gl.projects.get(settings.gitlab_project_id)
-        self._default_branch: str = getattr(self._project, "default_branch", None) or "main"
+        # _project_obj is fetched lazily on first access via the _project property
+        # so that GitLabClient() construction never makes a network call at import time.
+        self._project_obj = None
+        self._default_branch: str = "main"  # updated on first _project access
         # Per-run caches — reset by invalidate_cache() at the start of each pipeline run
         self._cached_member_usernames: set[str] | None = None
         self._cached_member_names: set[str] | None = None
         self._cached_member_emails: set[str] | None = None
+
+    @property
+    def _project(self):
+        """Fetch and cache the GitLab project object on first access."""
+        if self._project_obj is None:
+            self._project_obj = self._gl.projects.get(settings.gitlab_project_id)
+            self._default_branch = getattr(self._project_obj, "default_branch", None) or "main"
+        return self._project_obj
 
     # ---------------------------------------------------------------------------
     # Member caches — built once per run for O(1) membership lookups
@@ -83,9 +93,12 @@ class GitLabClient:
     # ---------------------------------------------------------------------------
 
     def get_members(self) -> list[dict]:
+        from config.settings import settings
+        bot = settings.gitlab_bot_username.lower()
         return [
             {"id": m.id, "username": m.username, "name": m.name, "access_level": m.access_level}
             for m in self._project.members.list(all=True)
+            if m.username.lower() != bot
         ]
 
     def get_recent_commits(self, since: str | None = None, ref: str | None = None) -> list[dict]:
@@ -174,17 +187,26 @@ class GitLabClient:
         ]
 
     def get_open_issues(self) -> list[dict]:
-        return [
-            {
+        from config.settings import settings
+        bot = settings.gitlab_bot_username.lower()
+        result = []
+        for i in self._project.issues.list(state="opened", all=True):
+            # python-gitlab returns author as a dict: {"id": ..., "username": ...}
+            author_obj = getattr(i, "author", None) or {}
+            author_username = (author_obj.get("username") if isinstance(author_obj, dict) else getattr(author_obj, "username", None)) or ""
+            assignee_obj = getattr(i, "assignee", None)
+            assignee_username = (assignee_obj.get("username") if isinstance(assignee_obj, dict) else getattr(assignee_obj, "username", None)) if assignee_obj else None
+            result.append({
                 "id": i.id,
                 "iid": i.iid,
                 "title": i.title,
-                "assignee": i.assignee["username"] if i.assignee else None,
+                "author": author_username or None,
+                "bot_authored": author_username.lower() == bot,
+                "assignee": assignee_username,
                 "labels": i.labels,
                 "created_at": i.created_at,
-            }
-            for i in self._project.issues.list(state="opened", all=True)
-        ]
+            })
+        return result
 
     def get_open_merge_requests(self) -> list[dict]:
         return [
@@ -274,11 +296,18 @@ class GitLabClient:
                         "commit_count": 0,
                         "external": not self._is_member(name, email),
                         "monthly_counts": {},
+                        "first_commit_at": created_at,
+                        "last_commit_at": created_at,
                     }
                 seen[key]["commit_count"] += 1
                 if year_month:
                     mc = seen[key]["monthly_counts"]
                     mc[year_month] = mc.get(year_month, 0) + 1
+                if created_at:
+                    if not seen[key]["first_commit_at"] or created_at < seen[key]["first_commit_at"]:
+                        seen[key]["first_commit_at"] = created_at
+                    if not seen[key]["last_commit_at"] or created_at > seen[key]["last_commit_at"]:
+                        seen[key]["last_commit_at"] = created_at
                 total_collected += 1
 
             logger.info(
@@ -681,3 +710,17 @@ class GitLabClient:
         mr = self._project.mergerequests.get(mr_iid)
         note = mr.notes.create({"body": body})
         return {"note_id": note.id}
+
+    def close_issue(self, issue_iid: int) -> dict:
+        issue = self._project.issues.get(issue_iid)
+        issue.state_event = "close"
+        issue.save()
+        return {"iid": issue_iid, "state": "closed"}
+
+    def edit_issue(self, issue_iid: int, description: str, title: str | None = None) -> dict:
+        issue = self._project.issues.get(issue_iid)
+        issue.description = description
+        if title is not None:
+            issue.title = title
+        issue.save()
+        return {"iid": issue_iid}

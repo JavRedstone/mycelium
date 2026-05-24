@@ -55,6 +55,14 @@ class Settings:
     # Set false (the default) in production so agents only operate on real data.
     demo_mode: bool = os.getenv("DEMO_MODE", "false").lower() in ("1", "true", "yes")
 
+    # --- Service account ---
+    # GitLab username of the project service account used for all automated
+    # write actions (issue creation, comments, assignments, etc.).
+    # Issues authored by this account are tagged bot_authored=True in the
+    # repository snapshot so agents can distinguish automated from human issues,
+    # and the account is excluded from team-member analysis.
+    gitlab_bot_username: str = os.getenv("GITLAB_BOT_USERNAME", "mycelium-bot")
+
 
 settings = Settings()
 

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Mycelium Data Inspector
 =======================
 Shows exactly what the agent sees: GitLab project state + knowledge graph.
@@ -18,7 +18,14 @@ import sys
 from dotenv import load_dotenv
 
 load_dotenv()
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _project_root)
+
+# Python automatically adds the script's own directory (checks/) to sys.path.
+# Remove it so that checks/gitlab/ doesn't shadow the python-gitlab package.
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+while _script_dir in sys.path:
+    sys.path.remove(_script_dir)
 
 from connectors.gitlab_client import GitLabClient
 from graph.knowledge_graph import KnowledgeGraph
@@ -104,7 +111,7 @@ def inspect_gitlab(client: GitLabClient, commit_limit: int) -> None:
                 name.lower() in member_names_lower
                 or name.lower() in member_usernames_lower
             )
-            flag = "" if is_member else "← EXTERNAL"
+            flag = "" if is_member else "[EXTERNAL]"
             author_str = f"{name} <{email}>"
             print(f"    {sha}  {author_str:<38}  {date}  {msg}  {flag}")
 
@@ -296,6 +303,171 @@ async def inspect_graph(graph: KnowledgeGraph) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Bus-factor drill-downs
+# ---------------------------------------------------------------------------
+
+def _bus_factor_breakdown(contributors: list[dict]) -> list[dict]:
+    """Return contributors annotated with their share and cumulative share,
+    plus a flag marking which ones *together* form the bus factor threshold.
+    Mirrors compute_bus_factor logic exactly so numbers match.
+    """
+    internal = [c for c in contributors if not c.get("external", False)]
+    external = [c for c in contributors if c.get("external", False)]
+    all_sorted = sorted(internal, key=lambda c: c["expertise_score"], reverse=True)
+
+    total = sum(c["expertise_score"] for c in all_sorted)
+    threshold_reached = False
+    cumulative = 0.0
+    result = []
+    for c in all_sorted:
+        score = c["expertise_score"]
+        share_pct = (score / total * 100) if total > 0 else 0
+        cumulative += score
+        cum_pct = (cumulative / total * 100) if total > 0 else 0
+        in_bus = not threshold_reached
+        if cum_pct >= 80:
+            threshold_reached = True
+        result.append({**c, "_share_pct": share_pct, "_cum_pct": cum_pct, "_in_bus": in_bus})
+    for c in external:
+        result.append({**c, "_share_pct": 0.0, "_cum_pct": 0.0, "_in_bus": False})
+    return result
+
+
+async def inspect_developer(graph: KnowledgeGraph, username: str) -> None:
+    """Drill-down: show all modules a developer contributes to with bus-factor breakdown."""
+    hdr(f"DEVELOPER DRILL-DOWN: {username}", ch="=")
+
+    dev = await graph.get_developer(username)
+    if dev is None:
+        note(f"Developer '{username}' not found in knowledge graph.", indent=2)
+        note("Tip: run the pipeline first, or check username spelling.", indent=2)
+        return
+
+    note(f"Name:  {dev.get('name') or dev.get('developer_identity') or '—'}", indent=2)
+    ext_flag = "  [upstream/external]" if dev.get("external") else ""
+    demo_flag = "  [demo]" if dev.get("demo") else ""
+    note(f"Type:  {'external' if dev.get('external') else 'internal'}{ext_flag}{demo_flag}", indent=2)
+
+    modules = await graph.get_developer_modules(username)
+    if not modules:
+        blank()
+        note("No module contributions recorded for this developer.", indent=2)
+        return
+
+    blank()
+    note(f"Contributes to {len(modules)} module(s):", indent=2)
+    blank()
+
+    for contrib in modules:
+        path = contrib["module_path"]
+        dev_score = contrib["expertise_score"]
+        dev_commits = contrib.get("commit_count", 0)
+
+        # Get all contributors to this module for bus-factor context
+        all_contribs = await graph.get_module_contributors(path)
+        breakdown = _bus_factor_breakdown(all_contribs)
+
+        total_internal = sum(
+            c["expertise_score"] for c in all_contribs if not c.get("external", False)
+        )
+        bus_factor = sum(1 for c in breakdown if c.get("_in_bus", False))
+
+        dev_share = (dev_score / total_internal * 100) if total_internal > 0 else 0
+
+        # Find this developer's rank among internal contributors
+        internal_sorted = sorted(
+            [c for c in all_contribs if not c.get("external", False)],
+            key=lambda c: c["expertise_score"],
+            reverse=True,
+        )
+        rank = next(
+            (i + 1 for i, c in enumerate(internal_sorted) if c["developer_username"] == username),
+            None,
+        )
+        rank_str = f"  rank #{rank} of {len(internal_sorted)} internal" if rank else ""
+
+        bus_note = "  [IN 80% THRESHOLD]" if any(
+            c["developer_username"] == username and c.get("_in_bus")
+            for c in breakdown
+        ) else ""
+
+        sub(f"{path}")
+        row("expertise_score:", f"{dev_score:.3f}  ({dev_share:.1f}% of module total){rank_str}")
+        row("commits:", str(dev_commits))
+        row("bus_factor:", f"{bus_factor}  (contributors covering ≥80% of expertise){bus_note}")
+
+        # Show full breakdown for this module
+        note("  All contributors (sorted by expertise):", indent=4)
+        bar_width = 20
+        for c in breakdown:
+            u = c["developer_username"]
+            sc = c["expertise_score"]
+            sh = c.get("_share_pct", 0)
+            cm = c.get("_cum_pct", 0)
+            in_bus = c.get("_in_bus", False)
+            ext = " [ext]" if c.get("external") else ""
+            is_you = " [you]" if u == username else ""
+            threshold_marker = " |80%|" if not c.get("external") and abs(cm - 100) < 0.01 and in_bus else ""
+            bar = "█" * int(sh / 100 * bar_width) + "░" * (bar_width - int(sh / 100 * bar_width))
+            bus_marker = "*" if in_bus else " "
+            row(
+                f"  {bus_marker} {u}{ext}",
+                f"[{bar}] {sh:5.1f}%  cum={cm:5.1f}%  score={sc:.3f}{threshold_marker}{is_you}",
+                indent=8,
+            )
+        blank()
+
+    note("Legend: * = counts toward bus-factor (covering first 80% of expertise)", indent=2)
+    note("bus_factor = how many * contributors this module depends on.", indent=2)
+
+
+async def inspect_busfactor(graph: KnowledgeGraph) -> None:
+    """Overview: all modules ranked by bus-factor with per-contributor breakdown."""
+    hdr("BUS FACTOR OVERVIEW — ALL MODULES", ch="=")
+    note("bus_factor = min contributors whose combined expertise covers 80% of commits.", indent=2)
+    note("Lower = more concentrated. * marks contributors in the threshold.", indent=2)
+
+    all_modules = await graph.modules.find({}, {"_id": 0}).sort("bus_factor", 1).to_list(None)
+    if not all_modules:
+        note("No modules tracked yet — run the pipeline first.", indent=2)
+        return
+
+    blank()
+    bar_width = 18
+    for m in all_modules:
+        path = m["path"]
+        bus = m.get("bus_factor", 0)
+
+        all_contribs = await graph.get_module_contributors(path)
+        breakdown = _bus_factor_breakdown(all_contribs)
+
+        concentration = "!" if bus <= 1 else " "
+        sub(f"{concentration} {path}  (bus_factor={bus})")
+
+        if not breakdown:
+            note("(no contribution data)", indent=6)
+            continue
+
+        for c in breakdown:
+            u = c["developer_username"]
+            sh = c.get("_share_pct", 0)
+            cm = c.get("_cum_pct", 0)
+            sc = c["expertise_score"]
+            in_bus = c.get("_in_bus", False)
+            ext = " [ext]" if c.get("external") else ""
+            bar = "█" * int(sh / 100 * bar_width) + "░" * (bar_width - int(sh / 100 * bar_width))
+            bus_marker = "*" if in_bus else " "
+            row(
+                f"  {bus_marker} {u}{ext}",
+                f"[{bar}] {sh:5.1f}%  cum={cm:5.1f}%  score={sc:.3f}",
+                indent=6,
+            )
+
+    blank()
+    note("Legend: * = counts toward 80% threshold  ! = concentrated (bus_factor ≤ 1)", indent=2)
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -356,17 +528,34 @@ async def rescore_graph(graph: KnowledgeGraph) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Mycelium data inspector")
+    parser = argparse.ArgumentParser(
+        description="Mycelium data inspector",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  python checks/show.py                        # full report\n"
+            "  python checks/show.py --gitlab               # GitLab only\n"
+            "  python checks/show.py --graph                # MongoDB graph only\n"
+            "  python checks/show.py --busfactor            # bus-factor breakdown for all modules\n"
+            "  python checks/show.py --dev jsmith           # drill-down for a specific developer\n"
+            "  python checks/show.py --rescore              # recompute bus_factor from graph data\n"
+            "  python checks/show.py --commits 50           # show last 50 commits\n"
+        ),
+    )
     parser.add_argument("--gitlab", action="store_true", help="Show GitLab data only")
     parser.add_argument("--graph", action="store_true", help="Show knowledge graph only")
     parser.add_argument("--rescore", action="store_true", help="Recompute bus_factor measurements from current graph data")
+    parser.add_argument("--busfactor", action="store_true", help="Show bus-factor breakdown for every module")
+    parser.add_argument("--dev", metavar="USERNAME", help="Drill-down: show bus-factor impact for a specific developer")
     parser.add_argument("--commits", type=int, default=20, help="Number of commits to display (default 20)")
     args = parser.parse_args()
 
-    explicit = args.gitlab or args.graph or args.rescore
+    explicit = args.gitlab or args.graph or args.rescore or args.busfactor or bool(args.dev)
     show_gitlab = args.gitlab or not explicit
     show_graph = args.graph or not explicit
     show_rescore = args.rescore
+    show_busfactor = args.busfactor
+    dev_username = args.dev
 
     hdr("MYCELIUM DATA INSPECTOR", ch="=")
     note("Read-only diagnostic. No agent logic runs.", indent=2)
@@ -378,13 +567,18 @@ def main() -> None:
         except Exception as exc:
             note(f"[ERROR] GitLab connection failed: {exc}", indent=2)
 
-    if show_graph or show_rescore:
+    needs_graph = show_graph or show_rescore or show_busfactor or bool(dev_username)
+    if needs_graph:
         try:
             graph = KnowledgeGraph()
             if show_graph:
                 asyncio.run(inspect_graph(graph))
             if show_rescore:
                 asyncio.run(rescore_graph(graph))
+            if show_busfactor:
+                asyncio.run(inspect_busfactor(graph))
+            if dev_username:
+                asyncio.run(inspect_developer(graph, dev_username))
             graph.close()
         except Exception as exc:
             note(f"[ERROR] MongoDB connection failed: {exc}", indent=2)

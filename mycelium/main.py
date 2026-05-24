@@ -80,7 +80,7 @@ async def run_loop():
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_app: FastAPI):  # pyright: ignore[reportUnusedParameter]
     activity_bus.set_loop(asyncio.get_event_loop())
     await graph.setup_indexes()
     loop_task = asyncio.create_task(run_loop())
@@ -96,8 +96,8 @@ app = FastAPI(title="Mycelium — Continuity Engine", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_methods=["GET", "POST"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_methods=["GET", "POST", "DELETE", "PUT", "PATCH", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -148,14 +148,22 @@ async def graph_full():
 
 @app.delete("/graph/demo")
 async def clear_demo_data():
-    """Delete all demo-flagged entries from the knowledge graph."""
+    """Delete all demo-flagged entries from the knowledge graph.
+
+    Requires DEMO_MODE=true. Returns 403 when demo mode is disabled.
+    """
+    if not settings.demo_mode:
+        raise HTTPException(status_code=403, detail="Demo mode is disabled (set DEMO_MODE=true to enable)")
     return await graph.delete_demo_data()
 
 
 @app.get("/graph/demo")
 async def has_demo_data():
-    """Returns whether any demo-flagged data is present."""
-    return {"has_demo": await graph.has_demo_data()}
+    """Returns whether any demo-flagged data is present, plus whether demo mode is enabled."""
+    return {
+        "has_demo": await graph.has_demo_data(),
+        "demo_mode": settings.demo_mode,
+    }
 
 
 @app.get("/project")
@@ -169,6 +177,137 @@ async def all_developers():
     """All developers including demo-flagged entries (used by the mock repo view)."""
     devs = await graph.developers.find({}, {"_id": 0}).to_list(None)
     return {"developers": devs}
+
+
+@app.get("/developers/busfactor")
+async def developer_busfactor(username: str):
+    """Per-developer contribution breakdown.
+
+    For internal members: shows bus-factor threshold position per module.
+    For upstream/external authors: shows their share of total module expertise
+      (internal + external) — they are excluded from bus-factor by design.
+
+    Uses a query param (?username=...) so usernames containing slashes
+    (e.g. GitLab group paths like 'gitlab-org/maintainers/gitlab-pages') work.
+    """
+    from fastapi import HTTPException
+    from risk.forecasting import compute_bus_factor
+
+    dev = await graph.get_developer(username)
+    if dev is None:
+        raise HTTPException(status_code=404, detail=f"Developer '{username}' not found in knowledge graph.")
+
+    is_external = dev.get("external", False)
+    contributions = await graph.get_developer_modules(username)
+    result = []
+
+    for contrib in contributions:
+        path = contrib["module_path"]
+        dev_score = contrib["expertise_score"]
+
+        all_contribs = await graph.get_module_contributors(path)
+        internal = [c for c in all_contribs if not c.get("external", False)]
+        external_contribs = [c for c in all_contribs if c.get("external", False)]
+
+        internal_total = sum(c["expertise_score"] for c in internal)
+        all_total = sum(c["expertise_score"] for c in all_contribs)
+
+        if is_external:
+            # Upstream author view: show share of ALL commit expertise (internal + external).
+            # Bus factor is still shown for context, but this author is not in the threshold.
+            # Breakdown lists internal contributors only so the user can see who does hold knowledge.
+            internal_sorted = sorted(internal, key=lambda c: c["expertise_score"], reverse=True)
+            cumulative = 0.0
+            threshold_reached = False
+            breakdown = []
+            for c in internal_sorted:
+                score = c["expertise_score"]
+                # Share is of internal total so bars add up to 100% and match the bus-factor calculation
+                share_of_internal = (score / internal_total * 100) if internal_total > 0 else 0.0
+                cumulative += score
+                cum_of_internal = (cumulative / internal_total * 100) if internal_total > 0 else 0.0
+                in_bus = not threshold_reached
+                if cum_of_internal >= 80.0:
+                    threshold_reached = True
+                breakdown.append({
+                    "username": c["developer_username"],
+                    "expertise_score": score,
+                    "share_pct": round(share_of_internal, 2),   # % of internal expertise
+                    "cumulative_pct": round(cum_of_internal, 2),
+                    "in_bus_factor": in_bus,
+                    "commit_count": c.get("commit_count", 0),
+                    "external": False,
+                })
+
+            bus_factor = compute_bus_factor(internal)
+            # dev_share is this upstream author's fraction of ALL commits to this module
+            dev_share = (dev_score / all_total * 100) if all_total > 0 else 0.0
+            result.append({
+                "module_path": path,
+                "bus_factor": bus_factor,
+                "dev_expertise_score": round(dev_score, 4),
+                "dev_share_pct": round(dev_share, 2),
+                "dev_in_bus_factor": False,  # upstream authors are never in the threshold
+                "total_internal_contributors": len(internal),
+                "total_external_contributors": len(external_contribs),
+                "breakdown": breakdown,
+            })
+
+        else:
+            # Internal developer view: annotate threshold position in bus-factor ordering.
+            internal_sorted = sorted(internal, key=lambda c: c["expertise_score"], reverse=True)
+            cumulative = 0.0
+            threshold_reached = False
+            breakdown = []
+            for c in internal_sorted:
+                score = c["expertise_score"]
+                share_pct = (score / internal_total * 100) if internal_total > 0 else 0.0
+                cumulative += score
+                cum_pct = (cumulative / internal_total * 100) if internal_total > 0 else 0.0
+                in_bus = not threshold_reached
+                if cum_pct >= 80.0:
+                    threshold_reached = True
+                breakdown.append({
+                    "username": c["developer_username"],
+                    "expertise_score": score,
+                    "share_pct": round(share_pct, 2),
+                    "cumulative_pct": round(cum_pct, 2),
+                    "in_bus_factor": in_bus,
+                    "commit_count": c.get("commit_count", 0),
+                    "external": False,
+                })
+
+            bus_factor = compute_bus_factor(internal)
+            dev_in_bus = any(
+                b["username"] == username and b["in_bus_factor"] for b in breakdown
+            )
+            # dev_share is this developer's fraction of internal-only expertise for this module
+            dev_share = (dev_score / internal_total * 100) if internal_total > 0 else 0.0
+            result.append({
+                "module_path": path,
+                "bus_factor": bus_factor,
+                "dev_expertise_score": round(dev_score, 4),
+                "dev_share_pct": round(dev_share, 2),
+                "dev_in_bus_factor": dev_in_bus,
+                "total_internal_contributors": len(internal),
+                "total_external_contributors": len(external_contribs),
+                "breakdown": breakdown,
+            })
+
+    # Internal: critical (in threshold) first, then by share desc.
+    # External: largest share first (shows the biggest dark-knowledge areas first).
+    if is_external:
+        result.sort(key=lambda m: -m["dev_share_pct"])
+    else:
+        result.sort(key=lambda m: (0 if m["dev_in_bus_factor"] else 1, -m["dev_share_pct"]))
+
+    return {
+        "username": username,
+        "name": dev.get("name") or dev.get("developer_identity") or username,
+        "external": is_external,
+        "demo": dev.get("demo", False),
+        "modules": result,
+    }
 
 
 @app.get("/pipeline/{run_id}/events")

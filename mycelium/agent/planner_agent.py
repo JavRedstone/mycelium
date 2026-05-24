@@ -34,13 +34,85 @@ Per PROJECT_IDEA: there is no scalar risk model. Do NOT reason about scores or
 severity buckets. Reason about whether each finding warrants a concrete GitLab
 action right now, given its narrative and recommended_actions.
 
-GitLab action kinds available: create_issue, assign_issue, add_comment, generate_onboarding_pack, generate_offboarding_artifact
+GitLab action kinds available: create_issue, assign_issue, add_comment, edit_issue, close_issue, generate_onboarding_pack, generate_offboarding_artifact
 Knowledge graph collections: developers, modules, tasks, contributions
 
 Only plan actions where there is clear evidence from the data. Do not invent data.
 Do not create more than 3-4 new issues per run to avoid noise.
 
-ISSUE DESCRIPTION QUALITY RULES (apply to ALL create_issue actions):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+IDEMPOTENCY — read this before planning anything
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The pipeline runs on a loop. Prior runs already created issues. Your first job
+is to compare the analyst's findings against `knowledge_graph.open_tasks` (the
+list of issues already open in GitLab). Then:
+
+CREATING ISSUES
+  - Check `repository.open_issues` (the live GitLab list, includes iid + title
+    + author + bot_authored flag) AND `knowledge_graph.open_tasks`. If any
+    existing issue has a title that covers the same subject and concern type,
+    do NOT create another. One issue per finding — ever, across all runs.
+  - Only create a new issue when no existing issue addresses the finding.
+  - Issues with `bot_authored: true` were created by the service account on a
+    prior run. The bot owns those issues and may freely edit or supersede them.
+  - Issues with `bot_authored: false` were created by a human. Be conservative:
+    prefer add_comment or leave them alone rather than editing or closing them.
+
+COMMENTING ON ISSUES
+  - Do NOT plan add_comment to rephrase or restate what an issue's title already
+    says. That is noise. Do not do it.
+  - Only plan add_comment when ALL of the following are true:
+      1. There is new, concrete, measurable data since the issue was created —
+         e.g. drift count changed from 15 to 30 commits, a member's status
+         changed, a new CVE was identified by the investigator.
+      2. That new data materially changes what the reader needs to know.
+      3. You can name the specific new fact in the comment body.
+  - If you cannot point to a specific new fact, omit the add_comment action.
+
+EMPTY PLANS ARE CORRECT
+  - After the initial issues are filed, most runs should produce
+    {"actions": [], "graph_updates": []}. That is the right and expected outcome.
+  - Do not force actions to justify a pipeline run. Silence is correct when
+    nothing has materially changed since the last run.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ISSUE CORRECTION DECISION TREE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+When an existing issue has incorrect, outdated, or mis-scoped content, choose
+from this ordered decision tree — earlier tiers are always preferred:
+
+TIER 1 — PREFER: edit_issue (edit in place)
+  When to use: the issue topic and title are correct but the description body
+  needs updating — e.g., new file paths discovered, a CODEOWNERS snippet
+  changed, or the action list needs expanding.
+  Plan: one edit_issue action with iid and the corrected description.
+  Do NOT use if the issue already has significant discussion comments — editing
+  the body can confuse readers who have replied to specific passages.
+
+TIER 2 — DEFAULT: keep and fix forward (add_comment)
+  When to use: the issue history and discussion context must be preserved,
+  and the new information is an update rather than a correction.
+  Plan: one add_comment action carrying only the new concrete fact.
+  This is the correct choice for most follow-up runs where data has changed.
+
+TIER 3 — RESERVED: supersede (create new + link + close old)
+  When to use: the original issue has FUNDAMENTALLY incorrect framing that
+  cannot be repaired by editing — e.g., wrong module scope, wrong person
+  named as the risk, or the entire premise has been invalidated.
+  Plan these three actions in order:
+    1. create_issue — new issue with correct scope and full description
+    2. add_comment  — on the OLD issue: "Superseded by #NEW_IID — <one-sentence reason>"
+    3. close_issue  — on the OLD issue (state: closed, superseded)
+  TRACEABILITY RULE: never close an issue without first adding the linking
+  comment. Fragmented trackers (new issue exists but old is still open) are
+  worse than doing nothing.
+  Creating a new issue WITHOUT closing the old one is NEVER acceptable.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ISSUE DESCRIPTION QUALITY RULES (apply to ALL create_issue and edit_issue actions):
 - Be concrete and data-driven. Cite specific module names, file counts, commit
   counts, or contributor names from the evidence. Never be vague.
 - State the risk plainly in one sentence. Do not repeat it.
@@ -113,6 +185,27 @@ Schema:
         "title": "...",
         "description": "...",
         "labels": []
+      }
+    },
+    {
+      "kind": "edit_issue",
+      "params": {
+        "iid": 12,
+        "description": "...",
+        "title": "optional — omit to leave unchanged"
+      }
+    },
+    {
+      "kind": "add_comment",
+      "params": {
+        "iid": 12,
+        "body": "..."
+      }
+    },
+    {
+      "kind": "close_issue",
+      "params": {
+        "iid": 12
       }
     }
   ],

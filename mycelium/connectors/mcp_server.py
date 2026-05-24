@@ -20,6 +20,8 @@ Write tools (GitLab — project is pre-configured, no project_id needed):
     create_issue            — Open a new GitLab issue
     add_comment             — Comment on an issue or MR
     assign_issue            — Assign an issue to a team member
+    edit_issue              — Edit an existing issue's description (and optionally title)
+    close_issue             — Close an existing issue (e.g. superseded)
 """
 from __future__ import annotations
 
@@ -242,7 +244,14 @@ async def get_gitlab_project_state() -> dict:
         return {
             "open_issues": len(issues),
             "issues": [
-                {"iid": i["iid"], "title": i["title"], "labels": i.get("labels", []), "assignee": i.get("assignee")}
+                {
+                    "iid": i["iid"],
+                    "title": i["title"],
+                    "author": i.get("author"),
+                    "bot_authored": i.get("bot_authored", False),
+                    "labels": i.get("labels", []),
+                    "assignee": i.get("assignee"),
+                }
                 for i in issues[:20]
             ],
             "open_merge_requests": len(mrs),
@@ -334,6 +343,56 @@ async def assign_issue(iid: int, assignee_username: str) -> dict:
     def _run() -> dict:
         client = GitLabClient()
         return client.assign_issue(issue_iid=iid, assignee_username=assignee_username)
+
+    return await asyncio.to_thread(_run)
+
+
+@mcp.tool()
+async def edit_issue(
+    iid: int,
+    description: str,
+    title: str | None = None,
+) -> dict:
+    """
+    Edit the description (and optionally title) of an existing GitLab issue.
+
+    Use this to correct or update an issue in place rather than creating a
+    duplicate.  Prefer this over superseding when the topic is right but the
+    content needs updating.
+
+    Args:
+        iid: The internal ID (iid) of the issue to edit.
+        description: New Markdown body for the issue.
+        title: Optional new title. Omit to leave the title unchanged.
+
+    Returns:
+        {"iid": <iid>}
+    """
+    def _run() -> dict:
+        client = GitLabClient()
+        return client.edit_issue(issue_iid=iid, description=description, title=title)
+
+    return await asyncio.to_thread(_run)
+
+
+@mcp.tool()
+async def close_issue(iid: int) -> dict:
+    """
+    Close an existing GitLab issue.
+
+    Use this when an issue has been superseded by a newer issue and the old
+    one should be marked resolved.  Always add a linking comment on the old
+    issue BEFORE closing it so the audit trail is preserved.
+
+    Args:
+        iid: The internal ID (iid) of the issue to close.
+
+    Returns:
+        {"iid": <iid>, "state": "closed"}
+    """
+    def _run() -> dict:
+        client = GitLabClient()
+        return client.close_issue(issue_iid=iid)
 
     return await asyncio.to_thread(_run)
 

@@ -11,7 +11,8 @@ class DeveloperNode(BaseModel):
     active: bool = True
     external: bool = False  # True for upstream/fork authors not in current project members
     expertise: dict[str, float] = Field(default_factory=dict)  # module_path -> score 0-1
-    last_seen: Optional[datetime] = None
+    first_seen: Optional[datetime] = None   # exact date of first observed commit
+    last_seen: Optional[datetime] = None    # exact date of most recent observed commit
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     demo: bool = False  # True for seeded simulation entries — safe to bulk-delete
 
