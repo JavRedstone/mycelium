@@ -12,7 +12,7 @@ export default function ConfigPage() {
             Configuration
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Runtime settings — edit via .env and restart the server to apply changes
+            Runtime settings. Edit via .env and restart the server to apply changes.
           </Typography>
         </Box>
 

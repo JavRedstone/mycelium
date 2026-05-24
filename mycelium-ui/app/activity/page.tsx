@@ -10,7 +10,7 @@ export default function ActivityPage() {
           Activity
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          Live agent trace — thinking, tool calls, and subagent deployments
+          Live agent trace: thinking, tool calls, and subagent deployments
         </Typography>
       </Box>
 

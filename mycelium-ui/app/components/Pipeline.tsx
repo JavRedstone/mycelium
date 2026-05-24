@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Box from "@mui/material/Box";
 import Chip from "@mui/material/Chip";
 import Collapse from "@mui/material/Collapse";
@@ -161,7 +161,7 @@ function MetricCard({ label, value, highlight = false }: { label: string; value:
         {label}
       </Typography>
       <Typography variant="h5" sx={{ fontWeight: 600, mt: 0.5, color: highlight ? "error.main" : "text.primary" }}>
-        {String(value ?? "—")}
+        {String(value ?? "-")}
       </Typography>
     </Paper>
   );
@@ -265,8 +265,8 @@ function InvestigateDetail({ output }: { output: Record<string, unknown> }) {
         </Grid>
         <Typography variant="body2" color="text.disabled">
           {noModules
-            ? "No code directories were discovered — no investigators were spawned. Check that the pipeline service account has repository read access."
-            : "No high-attention members or modules flagged this run — no investigators were spawned."}
+            ? "No code directories were discovered. No investigators were spawned. Check that the pipeline service account has repository read access."
+            : "No high-attention members or modules flagged this run. No investigators were spawned."}
         </Typography>
       </Stack>
     );
@@ -353,7 +353,7 @@ function ObserveGraphDetail({ output }: { output: Record<string, unknown> }) {
           )}
           {demoMode && !demoDataPresent && (
             <Typography variant="caption" color="text.disabled">
-              no demo data present — only real data used
+              no demo data present, only real data used
             </Typography>
           )}
           {!demoMode && (
@@ -562,6 +562,9 @@ function StageRow({ stage, selected, onClick }: { stage: Stage; selected: boolea
   const summary = stageSummary(stage);
   const DetailComponent = DETAIL_COMPONENT[stage.id];
 
+  // A stage is expandable only if it has output to show (skipped/pending/running-without-output → not expandable)
+  const isExpandable = !!stage.output && !!DetailComponent;
+
   const borderColor = selected
     ? stage.status === "failed" ? "error.main" : stage.status === "success" ? "success.main" : stage.status === "running" ? "primary.main" : "primary.dark"
     : stage.status === "failed" ? "error.dark" : stage.status === "success" ? "success.dark" : "divider";
@@ -570,18 +573,18 @@ function StageRow({ stage, selected, onClick }: { stage: Stage; selected: boolea
     <Box>
       <Paper
         elevation={0}
-        onClick={onClick}
+        onClick={isExpandable ? onClick : undefined}
         sx={{
           px: 2,
           py: 1.25,
-          cursor: "pointer",
+          cursor: isExpandable ? "pointer" : "default",
           border: "1px solid",
           borderColor,
           bgcolor: selected ? "rgba(255,255,255,0.05)" : "background.paper",
           position: "relative",
           overflow: "hidden",
           transition: "all 0.15s ease",
-          "&:hover": { bgcolor: "rgba(255,255,255,0.04)" },
+          "&:hover": isExpandable ? { bgcolor: "rgba(255,255,255,0.04)" } : {},
         }}
       >
         {isRunning && <LinearProgress sx={{ position: "absolute", top: 0, left: 0, right: 0, height: 2 }} />}
@@ -616,15 +619,17 @@ function StageRow({ stage, selected, onClick }: { stage: Stage; selected: boolea
               {fmt(stage.duration_ms)}
             </Typography>
           )}
-          <ChevronRightIcon
-            sx={{
-              fontSize: 16,
-              color: "text.disabled",
-              flexShrink: 0,
-              transform: selected ? "rotate(90deg)" : "none",
-              transition: "transform 0.15s",
-            }}
-          />
+          {isExpandable && (
+            <ChevronRightIcon
+              sx={{
+                fontSize: 16,
+                color: "text.disabled",
+                flexShrink: 0,
+                transform: selected ? "rotate(90deg)" : "none",
+                transition: "transform 0.15s",
+              }}
+            />
+          )}
         </Stack>
       </Paper>
 
@@ -659,6 +664,7 @@ export default function Pipeline() {
   const [connected, setConnected] = useState(false);
   const [triggering, setTriggering] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const stoppingRunId = useRef<string | null>(null);
   const [tick, setTick] = useState(0);
   const [demoMode, setDemoMode] = useState<boolean | null>(null);
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -682,8 +688,17 @@ export default function Pipeline() {
       try {
         const data = JSON.parse(e.data) as PipelineRun;
         setRun(data);
-        // Clear stopping state once the run is no longer running.
-        if (data.status !== "running") setStopping(false);
+        // Clear stopping state when the specifically-stopped run terminates, OR when
+        // a different run appears (proving the stopped run must have already ended).
+        // This prevents the auto-loop from prematurely reverting "Stopping…" to "Stop".
+        if (stoppingRunId.current !== null) {
+          const stoppedRunDone = data.run_id === stoppingRunId.current && data.status !== "running";
+          const newRunAppeared  = data.run_id !== stoppingRunId.current;
+          if (stoppedRunDone || newRunAppeared) {
+            stoppingRunId.current = null;
+            setStopping(false);
+          }
+        }
         const running = data.stages.find((s) => s.status === "running");
         if (running) {
           setSelectedStage(running.id);
@@ -710,11 +725,14 @@ export default function Pipeline() {
   }
 
   async function stopRun() {
+    if (!run) return;
+    stoppingRunId.current = run.run_id;
     setStopping(true);
     try {
       await fetch(`${apiUrl}/pipeline/stop`, { method: "POST" });
     } catch {
-      setStopping(false); // only reset on network error; success keeps "Stopping…" until run ends
+      stoppingRunId.current = null;
+      setStopping(false);
     }
   }
 
@@ -785,7 +803,7 @@ export default function Pipeline() {
               {connected ? "Live" : "Disconnected"}
             </Typography>
           </Stack>
-          {run?.status === "running" ? (
+          {(run?.status === "running" || stopping) ? (
             <Button
               size="small"
               variant="outlined"

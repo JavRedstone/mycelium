@@ -191,7 +191,7 @@ export default function RunHistory() {
   return (
     <Stack spacing={1.5}>
       <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "center" }}>
-        <Typography variant="subtitle2" color="text.secondary">Run Timeline</Typography>
+        <Typography variant="subtitle2" color="text.secondary">Run History</Typography>
         <Stack direction="row" spacing={2.5} sx={{ alignItems: "center" }}>
           <Typography variant="caption" color="text.disabled">
             <Typography component="span" variant="caption" color="text.primary" sx={{ fontWeight: 600 }}>{runs.length}</Typography> runs
@@ -214,7 +214,10 @@ export default function RunHistory() {
           ref={scrollRef}
           sx={{
             overflowX: "auto",
-            p: 2,
+            pt: 2,
+            pb: 2,
+            pr: 2,
+            pl: 0,
             "&::-webkit-scrollbar": { height: 4 },
             "&::-webkit-scrollbar-track": { bgcolor: "transparent" },
             "&::-webkit-scrollbar-thumb": { bgcolor: "rgba(255,255,255,0.1)", borderRadius: 2 },

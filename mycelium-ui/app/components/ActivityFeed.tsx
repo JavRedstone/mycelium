@@ -180,7 +180,7 @@ function StageEndRow({ e }: { e: StageEnd }) {
           : <ErrorOutlinedIcon sx={{ fontSize: 11, color: "error.main" }} />}
         <Typography variant="caption"
           sx={{ color: ok ? "success.main" : "error.main", fontSize: "0.65rem" }}>
-          {e.label} — {ok ? `done in ${fmtDuration(e.duration_ms)}` : `failed: ${e.error ?? "unknown"}`}
+          {e.label}: {ok ? `done in ${fmtDuration(e.duration_ms)}` : `failed: ${e.error ?? "unknown"}`}
         </Typography>
       </Box>
     </Row>
@@ -282,7 +282,7 @@ function ToolResponseRow({ e }: { e: ToolResponse }) {
   const str = e.result != null ? JSON.stringify(e.result) : "";
   const r = e.result as Record<string, unknown> | null;
   const preview = r?.iid
-    ? `#${r.iid}${r.web_url ? " — " + String(r.web_url) : ""}`
+    ? `#${r.iid}${r.web_url ? " · " + String(r.web_url) : ""}`
     : str.slice(0, 90) + (str.length > 90 ? "…" : "");
 
   return (

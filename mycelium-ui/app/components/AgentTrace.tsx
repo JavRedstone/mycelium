@@ -158,7 +158,7 @@ function ToolResponseCard({ tool, result }: { tool: string; result: unknown }) {
   // Extract a human-readable one-liner: prefer iid/web_url from create_issue results
   const r = result as Record<string, unknown> | null;
   const friendlyPreview = r?.iid
-    ? `#${r.iid}${r.web_url ? " — " + String(r.web_url) : ""}`
+    ? `#${r.iid}${r.web_url ? " · " + String(r.web_url) : ""}`
     : preview;
 
   return (

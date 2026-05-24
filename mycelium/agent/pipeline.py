@@ -624,7 +624,12 @@ class PipelineRunner:
                         gitlab_id = m.get("id")
 
                 if not username:
-                    username = email.split("@", 1)[0] if email else (name.replace(" ", "_")[:64] or "unknown")
+                    # Derive a slug from email local-part or from the display name.
+                    # Replace "/" so GitLab namespace paths like "gitlab-org/maintainers/gitlab-pages"
+                    # (which appear as commit-author names for bots/service accounts) don't pollute
+                    # the graph with fake usernames that look like module paths.
+                    raw = email.split("@", 1)[0] if email else name.replace(" ", "_")
+                    username = raw.replace("/", "_")[:64] or "unknown"
 
                 dev = DeveloperNode(
                     gitlab_id=gitlab_id,
@@ -692,7 +697,8 @@ class PipelineRunner:
                             username = m.get("username")
                             gitlab_id = m.get("id")
                     if not username:
-                        username = email.split("@", 1)[0] if email else (name.replace(" ", "_")[:64] or "unknown")
+                        raw = email.split("@", 1)[0] if email else name.replace(" ", "_")
+                        username = raw.replace("/", "_")[:64] or "unknown"
 
                     dev = DeveloperNode(
                         gitlab_id=gitlab_id,
@@ -751,7 +757,8 @@ class PipelineRunner:
                         elif key in _by_name_h:
                             username = _by_name_h[key].get("username")
                     if not username:
-                        username = email.split("@", 1)[0] if email else (name.replace(" ", "_")[:64] or "unknown")
+                        raw = email.split("@", 1)[0] if email else name.replace(" ", "_")
+                        username = raw.replace("/", "_")[:64] or "unknown"
                     for year_month, count in monthly_counts.items():
                         if not year_month:
                             continue

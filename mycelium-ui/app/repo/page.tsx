@@ -12,7 +12,7 @@ export default function RepoPage() {
             Repository
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Knowledge graph state as a repository file browser — who owns what,
+            Knowledge graph state as a repository file browser: who owns what,
             when they last committed, and where coverage is at risk
           </Typography>
         </Box>

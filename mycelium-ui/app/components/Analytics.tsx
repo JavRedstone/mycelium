@@ -17,6 +17,7 @@ import WarningAmberOutlinedIcon from "@mui/icons-material/WarningAmberOutlined";
 import ShieldOutlinedIcon from "@mui/icons-material/ShieldOutlined";
 import GroupOutlinedIcon from "@mui/icons-material/GroupOutlined";
 import HubOutlinedIcon from "@mui/icons-material/HubOutlined";
+import { filterModules } from "../lib/graphFilters";
 
 import {
   Bar,
@@ -177,7 +178,7 @@ export default function Analytics() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   // ---- Derived measurements (no scoring, no severity) ----
-  const modules = data?.modules ?? [];
+  const modules = filterModules(data?.modules ?? []);
   const concentrated = modules.filter((m) => m.bus_factor <= 1);
   const unowned = modules.filter((m) => !m.owners || m.owners.length === 0);
 
@@ -292,7 +293,7 @@ export default function Analytics() {
         </Typography>
         {concernDist.length === 0 ? (
           <Typography variant="body2" color="text.disabled">
-            No findings yet — run the pipeline to populate.
+            No findings yet. Run the pipeline to populate.
           </Typography>
         ) : (
           <ResponsiveContainer width="100%" height={220}>

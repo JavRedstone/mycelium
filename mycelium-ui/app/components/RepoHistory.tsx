@@ -12,6 +12,7 @@ import Typography from "@mui/material/Typography";
 
 import RefreshOutlinedIcon from "@mui/icons-material/RefreshOutlined";
 import ScienceOutlinedIcon from "@mui/icons-material/ScienceOutlined";
+import { filterModules } from "../lib/graphFilters";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -252,7 +253,7 @@ function ModuleStatusRow({ mod, modulePaths }: { mod: Module; modulePaths: strin
         {primary ? ` · led by ${primary.developer_username}` : ""}
       </Typography>
       <Typography variant="caption" color={isStale ? "#ea4335" : "text.disabled"} sx={{ fontFamily: "monospace", fontSize: "0.68rem", flexShrink: 0 }}>
-        {lastTouched ? timeAgoFull(lastTouched) : "—"}
+        {lastTouched ? timeAgoFull(lastTouched) : "-"}
       </Typography>
       {mod.demo && <ScienceOutlinedIcon sx={{ fontSize: 11, color: "#a78bfa", flexShrink: 0 }} />}
     </Stack>
@@ -286,7 +287,7 @@ export default function RepoHistory() {
         histRes.ok ? histRes.json() : [],
       ]);
       setAllDevs(devData.developers ?? []);
-      setModules(graphData.modules ?? []);
+      setModules(filterModules(graphData.modules ?? []));
       setForkDateInfo(forkData);
       setContribHistory(Array.isArray(histData) ? histData : []);
     } finally {
@@ -323,11 +324,8 @@ export default function RepoHistory() {
   const now = Date.now();
   const modulePaths = [...new Set(modules.map((m) => m.path))].sort();
 
-  // "repository" is a synthetic catch-all — exclude it so 100s of upstream
-  // committers don't flood the Y axis
-  const SYNTHETIC = new Set(["repository"]);
   const contributingUsernames = new Set([
-    ...modules.filter((m) => !SYNTHETIC.has(m.path)).flatMap((m) => m.contributors.map((c) => c.developer_username)),
+    ...modules.flatMap((m) => m.contributors.map((c) => c.developer_username)),
     ...contribHistory.map((r) => r.developer_username),
   ]);
 

@@ -180,7 +180,7 @@ function RunRow({ entry }: { entry: RunEntry }) {
               />
             )}
             {findings.length === 0 && actions.length === 0 && run.status === "success" && (
-              <Typography variant="caption" color="text.disabled">No findings — repository healthy</Typography>
+              <Typography variant="caption" color="text.disabled">No findings. Repository is healthy.</Typography>
             )}
           </Stack>
         </Box>

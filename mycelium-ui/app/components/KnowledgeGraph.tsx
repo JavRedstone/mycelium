@@ -33,6 +33,8 @@ import FiberManualRecordIcon from "@mui/icons-material/FiberManualRecord";
 import AddCircleOutlinedIcon from "@mui/icons-material/AddCircleOutlined";
 import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 
+import { filterModules, isBotUsername } from "../lib/graphFilters";
+
 import {
   ReactFlow,
   Background,
@@ -102,6 +104,8 @@ type BusfactorModule = {
   bus_factor: number;
   dev_expertise_score: number;
   dev_share_pct: number;
+  dev_commit_count: number;
+  total_commit_count: number;
   dev_in_bus_factor: boolean;
   total_internal_contributors: number;
   total_external_contributors: number;
@@ -136,6 +140,15 @@ function BusfactorDrawer({
 
   useEffect(() => {
     if (!open || !username) { setData(null); return; }
+    // Namespace-style usernames (e.g. "gitlab-org/maintainers/gitlab-pages") are GitLab
+    // service accounts from upstream fork history. The backend rejects them with 400.
+    // Catch this early on the client so the user sees a clear message, not a raw HTTP error.
+    if (username.includes("/")) {
+      setData(null);
+      setError("This entry is a GitLab service account or namespace path from upstream fork history, not a real contributor. It has no individual bus-factor breakdown.");
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     fetch(`${apiUrl}/developers/busfactor?username=${encodeURIComponent(username)}`)
@@ -173,7 +186,7 @@ function BusfactorDrawer({
           {data && (
             <Typography variant="caption" color="text.disabled">
               {data.name !== username ? data.name + " · " : ""}
-              {data.external ? "upstream author — dark knowledge view" : "bus-factor impact"}
+              {data.external ? "upstream author · dark knowledge view" : "bus-factor impact"}
               {data.demo ? " · demo" : ""}
             </Typography>
           )}
@@ -195,7 +208,7 @@ function BusfactorDrawer({
                 <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
                   <WarningAmberOutlinedIcon sx={{ fontSize: 13, color: "#fa7b17", flexShrink: 0, mt: 0.25 }} />
                   <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.6 }}>
-                    <strong>Upstream author</strong> — not a current project member.
+                    <strong>Upstream author</strong>: not a current project member.
                     Their commits are <strong>excluded from bus-factor calculations</strong> because they cannot transfer knowledge to the team.
                     Bars show their share of <em>all</em> commits to each module (internal + upstream combined).
                     The team members who do hold each module are listed below each bar.
@@ -208,7 +221,7 @@ function BusfactorDrawer({
                   <InfoOutlinedIcon sx={{ fontSize: 13, color: "primary.light", flexShrink: 0, mt: 0.25 }} />
                   <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.6 }}>
                     <strong>Bus factor</strong> = minimum internal contributors (by expertise) covering ≥80% of a module.
-                    Rows marked <StarOutlinedIcon sx={{ fontSize: 10, color: "#4285f4", verticalAlign: "middle", mx: 0.25 }} /> are inside that 80% threshold — losing them drops coverage below 80%.
+                    Rows marked <StarOutlinedIcon sx={{ fontSize: 10, color: "#4285f4", verticalAlign: "middle", mx: 0.25 }} /> are inside that 80% threshold. Losing them drops coverage below 80%.
                     Bars show each person&apos;s share of internal expertise for that module.
                   </Typography>
                 </Stack>
@@ -221,142 +234,167 @@ function BusfactorDrawer({
               </Typography>
             )}
 
-            <Stack spacing={2}>
-              {data.modules.map((mod) => {
-                const inBus = mod.dev_in_bus_factor;
-                const isUpstream = data.external;
-                const accentColor = isUpstream ? "#fa7b17" : inBus ? "#fa7b17" : "#4285f4";
-                const busColor = mod.bus_factor === 0 ? "#ea4335" : mod.bus_factor === 1 ? "#fa7b17" : mod.bus_factor === 2 ? "#fbbc04" : "#34a853";
-                const noInternal = mod.total_internal_contributors === 0;
+            {data.modules.length > 0 && (
+              <>
+                {/* Section heading */}
+                <Box sx={{ mb: 1.5 }}>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, display: "block" }}>
+                    {data.modules.length} module{data.modules.length !== 1 ? "s" : ""} where {username} has contributed
+                  </Typography>
+                  <Typography variant="caption" color="text.disabled" sx={{ display: "block", mt: 0.25 }}>
+                    Score is normalized per module: top contributor = 1.00. Same scale as the main graph.
+                  </Typography>
+                </Box>
 
-                return (
-                  <Paper
-                    key={mod.module_path}
-                    elevation={0}
-                    sx={{
-                      p: 1.75,
-                      bgcolor: "rgba(255,255,255,0.02)",
-                      border: "1px solid",
-                      borderColor: isUpstream
-                        ? "rgba(250,123,23,0.15)"
-                        : inBus ? "rgba(250,123,23,0.22)" : "rgba(255,255,255,0.06)",
-                      borderRadius: 2,
-                    }}
-                  >
-                    {/* Module header */}
-                    <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 1.25, flexWrap: "wrap" }} useFlexGap>
-                      {!isUpstream && (
-                        <Chip
-                          label={`bus ${mod.bus_factor}`}
-                          size="small"
-                          sx={{ bgcolor: busColor + "18", color: busColor, border: `1px solid ${busColor}44`, height: 18, fontSize: "0.6rem", fontWeight: 700, flexShrink: 0 }}
-                        />
-                      )}
-                      <Typography
-                        variant="body2"
-                        sx={{ fontFamily: "var(--font-google-sans-code)", fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                <Stack spacing={2}>
+                  {data.modules.map((mod) => {
+                    const inBus = mod.dev_in_bus_factor;
+                    const isUpstream = data.external;
+                    const accentColor = isUpstream ? "#fa7b17" : inBus ? "#fa7b17" : "#4285f4";
+                    const busColor = mod.bus_factor === 0 ? "#ea4335" : mod.bus_factor === 1 ? "#fa7b17" : mod.bus_factor === 2 ? "#fbbc04" : "#34a853";
+                    const noInternal = mod.total_internal_contributors === 0;
+
+                    // Pre-compute internal breakdown sorted by expertise (bus-factor ordering)
+                    // with absolute percentages based on internal commit counts only.
+                    // Also filter out bot/namespace-path entries that slipped through (username
+                    // contains "/" from pre-fix runs, or known bot segments like "maintainers").
+                    const _botSegments = ["maintainers", "gitlab-org", "gitlab_org", "noreply"];
+                    const _isBotUsername = (u: string) =>
+                      u.includes("/") || _botSegments.some((s) => u.toLowerCase().includes(s));
+                    const internalRows = mod.breakdown
+                      .filter((b) => !b.external && !_isBotUsername(b.username))
+                      .sort((a, b) => b.expertise_score - a.expertise_score);
+                    const internalCommitTotal = internalRows.reduce((s, b) => s + (b.commit_count ?? 0), 0);
+                    const topInternalRows = internalRows.slice(0, 8);
+                    const hiddenInternalCount = internalRows.length - topInternalRows.length;
+                    let _cumAcc = 0;
+                    const rowsWithCum = topInternalRows.map((b) => {
+                      const pct = internalCommitTotal > 0 ? ((b.commit_count ?? 0) / internalCommitTotal) * 100 : 0;
+                      _cumAcc += pct;
+                      return { b, pct, cumPct: _cumAcc };
+                    });
+
+                    return (
+                      <Paper
+                        key={mod.module_path}
+                        elevation={0}
+                        sx={{
+                          p: 1.75,
+                          bgcolor: "rgba(255,255,255,0.02)",
+                          border: "1px solid",
+                          borderColor: isUpstream
+                            ? "rgba(250,123,23,0.15)"
+                            : inBus ? "rgba(250,123,23,0.22)" : "rgba(255,255,255,0.06)",
+                          borderRadius: 2,
+                        }}
                       >
-                        {mod.module_path}/
-                      </Typography>
-                      {!isUpstream && inBus && (
-                        <Tooltip title={`${username} is inside the 80% threshold — their departure reduces this module's internal coverage below 80%`}>
-                          <Chip
-                            label="in threshold"
-                            size="small"
-                            icon={<WarningAmberOutlinedIcon sx={{ fontSize: "10px !important" }} />}
-                            sx={{ height: 18, fontSize: "0.6rem", flexShrink: 0, color: "#fa7b17", borderColor: "#fa7b1744", bgcolor: "#fa7b1711", border: "1px solid" }}
-                          />
-                        </Tooltip>
-                      )}
-                      <Typography variant="caption" color="text.disabled" sx={{ flexShrink: 0 }}>
-                        {mod.dev_share_pct.toFixed(1)}%
-                        {isUpstream ? " of all commits" : " of internal expertise"}
-                      </Typography>
-                    </Stack>
+                        {/* Module path + bus-factor chips */}
+                        <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 1, flexWrap: "wrap" }} useFlexGap>
+                          {!isUpstream && (
+                            <Chip
+                              label={`bus ${mod.bus_factor}`}
+                              size="small"
+                              sx={{ bgcolor: busColor + "18", color: busColor, border: `1px solid ${busColor}44`, height: 18, fontSize: "0.6rem", fontWeight: 700, flexShrink: 0 }}
+                            />
+                          )}
+                          <Typography
+                            variant="body2"
+                            sx={{ fontFamily: "var(--font-google-sans-code)", fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                          >
+                            {mod.module_path}/
+                          </Typography>
+                          {!isUpstream && inBus && (
+                            <Tooltip title={`${username} is inside the 80% threshold. Their departure reduces this module's internal coverage below 80%.`}>
+                              <Chip
+                                label="in threshold"
+                                size="small"
+                                icon={<WarningAmberOutlinedIcon sx={{ fontSize: "10px !important" }} />}
+                                sx={{ height: 18, fontSize: "0.6rem", flexShrink: 0, color: "#fa7b17", borderColor: "#fa7b1744", bgcolor: "#fa7b1711", border: "1px solid" }}
+                              />
+                            </Tooltip>
+                          )}
+                        </Stack>
 
-                    {/* Contributor rows */}
-                    {noInternal && !isUpstream ? (
-                      <Typography variant="caption" color="text.disabled" sx={{ pl: "22px", display: "block" }}>
-                        No internal contributors — all knowledge is upstream.
-                      </Typography>
-                    ) : noInternal && isUpstream ? (
-                      <Typography variant="caption" color="text.disabled" sx={{ pl: "22px", display: "block" }}>
-                        No internal contributors hold this module — entirely upstream knowledge.
-                      </Typography>
-                    ) : (
-                      <Stack spacing={0.5}>
-                        {mod.breakdown.map((b) => {
-                          const isSubject = !isUpstream && b.username === username;
-                          const rowColor = isSubject ? accentColor : "rgba(255,255,255,0.35)";
-                          return (
-                            <Stack key={b.username} direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
-                              <Box sx={{ minWidth: 14, flexShrink: 0, display: "flex", alignItems: "center" }}>
-                                {b.in_bus_factor
-                                  ? <StarOutlinedIcon sx={{ fontSize: 11, color: "#4285f4" }} />
-                                  : <FiberManualRecordIcon sx={{ fontSize: 5, color: "rgba(255,255,255,0.15)" }} />
-                                }
-                              </Box>
-                              <Typography
-                                variant="caption"
-                                sx={{
-                                  fontFamily: "var(--font-google-sans-code)",
-                                  color: rowColor,
-                                  fontWeight: isSubject ? 700 : 400,
-                                  minWidth: 120,
-                                  maxWidth: 120,
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  whiteSpace: "nowrap",
-                                  flexShrink: 0,
-                                }}
-                              >
-                                {b.username}
-                              </Typography>
-                              <Box sx={{ flex: 1, minWidth: 60, position: "relative" }}>
-                                <Box sx={{ height: 5, borderRadius: 1, bgcolor: "rgba(255,255,255,0.05)", overflow: "hidden" }}>
-                                  <Box
+                        {/* Breakdown: always shows internal team with bus-factor context.
+                            For upstream author drawers this answers "who on the team holds this?" */}
+                        {noInternal ? (
+                          <Typography variant="caption" color="text.disabled" sx={{ pl: "22px", display: "block" }}>
+                            {isUpstream
+                              ? "No internal contributors — entirely upstream knowledge for this module."
+                              : "No internal contributors. All knowledge is upstream."}
+                          </Typography>
+                        ) : (
+                          <Stack spacing={0.5}>
+                            <Typography variant="caption" color="text.disabled" sx={{ fontSize: "0.58rem", textTransform: "uppercase", letterSpacing: "0.06em", mb: 0.25 }}>
+                              {isUpstream ? "Team members who hold this module" : "Internal contributors"}
+                              {" (★ inside 80% threshold)"}
+                            </Typography>
+
+                            {rowsWithCum.map(({ b, pct, cumPct }) => {
+                              const isSubject = !isUpstream && b.username === username;
+                              const bColor = isSubject && inBus ? "#fa7b17" : "#4285f4";
+                              const rowColor = isSubject ? bColor : b.in_bus_factor ? "#4285f4" : "rgba(255,255,255,0.45)";
+                              const barColor = isSubject ? bColor : b.in_bus_factor ? "rgba(66,133,244,0.6)" : "rgba(255,255,255,0.18)";
+                              return (
+                                <Stack key={b.username} direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
+                                  <Box sx={{ minWidth: 14, flexShrink: 0, display: "flex", alignItems: "center" }}>
+                                    {isSubject
+                                      ? <ChevronRightOutlinedIcon sx={{ fontSize: 12, color: bColor }} />
+                                      : b.in_bus_factor
+                                      ? <StarOutlinedIcon sx={{ fontSize: 11, color: "#4285f4" }} />
+                                      : <FiberManualRecordIcon sx={{ fontSize: 5, color: "rgba(255,255,255,0.15)" }} />
+                                    }
+                                  </Box>
+                                  <Typography
+                                    variant="caption"
                                     sx={{
-                                      height: "100%",
-                                      width: `${Math.min(100, b.share_pct)}%`,
-                                      bgcolor: isSubject ? accentColor : "rgba(255,255,255,0.18)",
-                                      borderRadius: 1,
-                                      transition: "width 0.3s ease",
+                                      fontFamily: "var(--font-google-sans-code)",
+                                      color: rowColor,
+                                      fontWeight: isSubject ? 700 : 400,
+                                      minWidth: 110,
+                                      maxWidth: 110,
+                                      overflow: "hidden",
+                                      textOverflow: "ellipsis",
+                                      whiteSpace: "nowrap",
+                                      flexShrink: 0,
                                     }}
-                                  />
-                                </Box>
-                                {/* 80% threshold marker (only meaningful for internal view) */}
-                                {!isUpstream && (
-                                  <Box sx={{ position: "absolute", top: 0, left: "80%", height: "100%", width: "1px", bgcolor: "rgba(255,255,255,0.18)", pointerEvents: "none" }} />
-                                )}
-                              </Box>
-                              <Typography
-                                variant="caption"
-                                sx={{ fontFamily: "var(--font-google-sans-code)", color: rowColor, minWidth: 38, textAlign: "right", flexShrink: 0 }}
-                              >
-                                {b.share_pct.toFixed(1)}%
+                                  >
+                                    {b.username}
+                                  </Typography>
+                                  <Box sx={{ flex: 1, minWidth: 50, position: "relative" }}>
+                                    <Box sx={{ height: 4, borderRadius: 2, bgcolor: "rgba(255,255,255,0.05)", overflow: "hidden" }}>
+                                      <Box sx={{ height: "100%", width: `${Math.min(100, pct)}%`, bgcolor: barColor, borderRadius: 2, transition: "width 0.3s ease" }} />
+                                    </Box>
+                                    <Box sx={{ position: "absolute", top: 0, left: "80%", height: "100%", width: "1px", bgcolor: "rgba(255,255,255,0.18)", pointerEvents: "none" }} />
+                                  </Box>
+                                  <Typography
+                                    variant="caption"
+                                    sx={{ fontFamily: "var(--font-google-sans-code)", color: rowColor, minWidth: 34, textAlign: "right", flexShrink: 0 }}
+                                  >
+                                    {pct.toFixed(1)}%
+                                  </Typography>
+                                  <Typography variant="caption" color="text.disabled" sx={{ minWidth: 58, textAlign: "right", flexShrink: 0, fontFamily: "var(--font-google-sans-code)" }}>
+                                    {cumPct.toFixed(0)}% running
+                                  </Typography>
+                                </Stack>
+                              );
+                            })}
+
+                            {hiddenInternalCount > 0 && (
+                              <Typography variant="caption" color="text.disabled" sx={{ pl: "22px", fontSize: "0.6rem" }}>
+                                +{hiddenInternalCount} more internal contributors
                               </Typography>
-                              {!isUpstream && (
-                                <Typography variant="caption" color="text.disabled" sx={{ minWidth: 42, textAlign: "right", flexShrink: 0 }}>
-                                  {b.cumulative_pct.toFixed(0)}% cum
-                                </Typography>
-                              )}
-                            </Stack>
-                          );
-                        })}
-                        {/* Footer annotation */}
-                        <Box sx={{ pl: "22px", mt: 0.25 }}>
-                          <Typography variant="caption" color="text.disabled" sx={{ fontSize: "0.58rem" }}>
-                            {isUpstream ? (
-                              <>
-                                {mod.total_internal_contributors === 0
-                                  ? "No internal contributors — dark knowledge zone"
-                                  : `${mod.total_internal_contributors} internal contributor${mod.total_internal_contributors !== 1 ? "s" : ""} currently hold this module`}
-                                {mod.total_external_contributors > 1
-                                  ? ` · ${mod.total_external_contributors} upstream authors total`
-                                  : ""}
-                              </>
-                            ) : (
-                              <>
+                            )}
+
+                            {isUpstream && (
+                              <Typography variant="caption" sx={{ pl: "22px", display: "block", color: "rgba(250,123,23,0.7)", fontSize: "0.6rem", mt: 0.25 }}>
+                                {username} is upstream — not counted in team bus factor
+                              </Typography>
+                            )}
+
+                            {/* Footer */}
+                            <Box sx={{ pl: "22px", mt: 0.25 }}>
+                              <Typography variant="caption" color="text.disabled" sx={{ fontSize: "0.58rem" }}>
                                 {mod.total_internal_contributors} internal contributor{mod.total_internal_contributors !== 1 ? "s" : ""}
                                 {mod.bus_factor > 0
                                   ? ` · ${mod.bus_factor} cover${mod.bus_factor === 1 ? "s" : ""} ≥80%`
@@ -364,16 +402,16 @@ function BusfactorDrawer({
                                 {mod.total_external_contributors > 0
                                   ? ` · ${mod.total_external_contributors} upstream`
                                   : ""}
-                              </>
-                            )}
-                          </Typography>
-                        </Box>
-                      </Stack>
-                    )}
-                  </Paper>
-                );
-              })}
-            </Stack>
+                              </Typography>
+                            </Box>
+                          </Stack>
+                        )}
+                      </Paper>
+                    );
+                  })}
+                </Stack>
+              </>
+            )}
           </>
         )}
       </Box>
@@ -502,7 +540,7 @@ function buildFlowGraph(modules: Module[]): { nodes: Node[]; edges: Edge[]; tota
   // Show the 25 structurally most-concentrated modules with contributor data.
   // Concentration is a measurement (bus_factor), not a score.
   const visModules = [...modules]
-    .filter((m) => (m.contributors?.length ?? 0) > 0)
+    .filter((m) => (m.contributors?.length ?? 0) > 0 && m.path !== "repository")
     .sort((a, b) => moduleSortKey(a) - moduleSortKey(b))
     .slice(0, 25);
 
@@ -588,23 +626,156 @@ function buildFlowGraph(modules: Module[]): { nodes: Node[]; edges: Edge[]; tota
 }
 
 // ---------------------------------------------------------------------------
+// Bus-factor breakdown rows — "who covers ≥80%" view per module card
+// ---------------------------------------------------------------------------
+function BusfactorModuleRows({
+  contribs,
+  internalCommitTotal,
+  onSelectDev,
+}: {
+  contribs: Contributor[];
+  internalCommitTotal: number;
+  onSelectDev?: (username: string) => void;
+}) {
+  const internal = [...contribs.filter((c) => !c.external)].sort(
+    (a, b) => b.expertise_score - a.expertise_score,
+  );
+  const external = contribs.filter((c) => c.external);
+
+  // Compute 80% expertise threshold (same logic as backend compute_bus_factor).
+  const expertiseTotal = internal.reduce((s, c) => s + c.expertise_score, 0);
+  let cumExp = 0;
+  let thresholdDone = false;
+  const rows = internal.map((c) => {
+    if (thresholdDone) return { ...c, inBF: false };
+    cumExp += c.expertise_score;
+    const inBF = true;
+    if (expertiseTotal > 0 && cumExp / expertiseTotal >= 0.8) thresholdDone = true;
+    return { ...c, inBF };
+  });
+
+  const inThreshold = rows.filter((r) => r.inBF);
+  const below = rows.filter((r) => !r.inBF);
+
+  const nameStyle = (clickable: boolean, dim = false) => ({
+    fontFamily: "var(--font-google-sans-code)",
+    color: dim ? "rgba(66,133,244,0.5)" : "#4285f4",
+    minWidth: 140,
+    maxWidth: 140,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    flexShrink: 0,
+    cursor: clickable ? "pointer" : "default",
+    textDecoration: clickable ? "underline dotted" : "none",
+    textDecorationColor: dim ? "rgba(66,133,244,0.3)" : "rgba(66,133,244,0.4)",
+    "&:hover": clickable ? { textDecorationColor: dim ? "rgba(66,133,244,0.6)" : "#4285f4" } : {},
+  });
+
+  return (
+    <Stack spacing={0.6}>
+      {internal.length === 0 && (
+        <Typography variant="caption" color="error.main" sx={{ fontSize: "0.68rem" }}>
+          No internal contributors — all knowledge held upstream.
+        </Typography>
+      )}
+
+      {/* Key holders (in threshold) */}
+      {inThreshold.length > 0 && (
+        <Typography variant="caption" sx={{ fontSize: "0.6rem", textTransform: "uppercase", letterSpacing: "0.07em", color: "rgba(251,188,4,0.7)", display: "block", mb: 0.25 }}>
+          ★ covers ≥80% · {inThreshold.length} key holder{inThreshold.length !== 1 ? "s" : ""}
+        </Typography>
+      )}
+      {inThreshold.map((c) => {
+        const pct = internalCommitTotal > 0 ? (c.commit_count / internalCommitTotal) * 100 : 0;
+        return (
+          <Stack key={c.developer_username} direction="row" spacing={1} sx={{ alignItems: "center" }}>
+            <StarOutlinedIcon sx={{ fontSize: 11, color: "#fbbc04", flexShrink: 0 }} />
+            <Typography variant="caption" onClick={() => onSelectDev?.(c.developer_username)} sx={nameStyle(!!onSelectDev)}>
+              {c.developer_username}
+            </Typography>
+            <Box sx={{ flex: 1, minWidth: 60 }}>
+              <LinearProgress variant="determinate" value={Math.min(100, Math.round(pct))}
+                sx={{ height: 5, borderRadius: 2, bgcolor: "rgba(255,255,255,0.05)", "& .MuiLinearProgress-bar": { bgcolor: "#fbbc04", borderRadius: 2, opacity: 0.9 } }} />
+            </Box>
+            <Typography variant="caption" sx={{ fontFamily: "var(--font-google-sans-code)", color: "#fbbc04", minWidth: 38, textAlign: "right", flexShrink: 0, fontSize: "0.7rem" }}>
+              {pct.toFixed(1)}%
+            </Typography>
+            <Typography variant="caption" color="text.disabled" sx={{ minWidth: 48, textAlign: "right", flexShrink: 0, fontSize: "0.65rem" }}>
+              {c.commit_count} c
+            </Typography>
+          </Stack>
+        );
+      })}
+
+      {/* Separator */}
+      {below.length > 0 && (
+        <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", py: 0.25 }}>
+          <Box sx={{ flex: 1, borderTop: "1px dashed rgba(255,255,255,0.1)" }} />
+          <Typography variant="caption" color="text.disabled" sx={{ fontSize: "0.58rem", whiteSpace: "nowrap" }}>
+            remaining
+          </Typography>
+          <Box sx={{ flex: 1, borderTop: "1px dashed rgba(255,255,255,0.1)" }} />
+        </Stack>
+      )}
+
+      {/* Below threshold */}
+      {below.map((c) => {
+        const pct = internalCommitTotal > 0 ? (c.commit_count / internalCommitTotal) * 100 : 0;
+        return (
+          <Stack key={c.developer_username} direction="row" spacing={1} sx={{ alignItems: "center" }}>
+            <Box sx={{ width: 11, flexShrink: 0 }} />
+            <Typography variant="caption" onClick={() => onSelectDev?.(c.developer_username)} sx={nameStyle(!!onSelectDev, true)}>
+              {c.developer_username}
+            </Typography>
+            <Box sx={{ flex: 1, minWidth: 60 }}>
+              <LinearProgress variant="determinate" value={Math.min(100, Math.round(pct))}
+                sx={{ height: 4, borderRadius: 2, bgcolor: "rgba(255,255,255,0.05)", "& .MuiLinearProgress-bar": { bgcolor: "#4285f4", borderRadius: 2, opacity: 0.4 } }} />
+            </Box>
+            <Typography variant="caption" sx={{ fontFamily: "var(--font-google-sans-code)", color: "rgba(66,133,244,0.5)", minWidth: 38, textAlign: "right", flexShrink: 0, fontSize: "0.7rem" }}>
+              {pct.toFixed(1)}%
+            </Typography>
+            <Typography variant="caption" color="text.disabled" sx={{ minWidth: 48, textAlign: "right", flexShrink: 0, fontSize: "0.65rem", opacity: 0.6 }}>
+              {c.commit_count} c
+            </Typography>
+          </Stack>
+        );
+      })}
+
+      {/* Upstream summary */}
+      {external.length > 0 && (
+        <Typography variant="caption" color="text.disabled" sx={{ fontSize: "0.6rem", mt: 0.5, fontStyle: "italic" }}>
+          +{external.length} upstream contributor{external.length !== 1 ? "s" : ""} · dark knowledge · excluded from bus factor
+        </Typography>
+      )}
+    </Stack>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Module Knowledge Breakdown — the primary view
 // ---------------------------------------------------------------------------
 function ModuleBreakdown({
   modules,
   findings,
   onSelectDev,
+  demoMode = false,
 }: {
   modules: Module[];
   findings: Finding[];
   onSelectDev?: (username: string) => void;
+  demoMode?: boolean;
 }) {
+  const [viewMode, setViewMode] = useState<"score" | "absolute" | "busfactor">("score");
+
   // Detect if data is still in the seeding-only state (only "repository" exists)
   const hasOnlyRoot = modules.length <= 1 && modules[0]?.path === "repository";
 
   // Sort by structural concentration (a measurement). Modules with no internal
   // committers float to the top; then by bus_factor ascending.
-  const sorted = [...modules]
+  // Also filter out namespace-style paths (e.g. "gitlab-org/maintainers/gitlab-pages")
+  // that crept in from upstream fork history — real local directories never contain "/".
+  const sorted = filterModules(modules)
     .filter((m) => (m.contributors?.length ?? 0) > 0)
     .sort((a, b) => moduleSortKey(a) - moduleSortKey(b));
 
@@ -619,13 +790,49 @@ function ModuleBreakdown({
   if (sorted.length === 0) {
     return (
       <Typography variant="body2" color="text.disabled">
-        No module data yet — run the pipeline to populate per-directory knowledge.
+        No module data yet. Run the pipeline to populate per-directory knowledge.
       </Typography>
     );
   }
 
   return (
     <Stack spacing={1.25}>
+      {/* View mode toggle */}
+      <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap" }} useFlexGap>
+        <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500, mr: 0.5 }}>View:</Typography>
+        <Button
+          size="small"
+          variant={viewMode === "score" ? "contained" : "outlined"}
+          onClick={() => setViewMode("score")}
+          sx={{ height: 32, px: 2, fontSize: "0.75rem", textTransform: "none" }}
+        >
+          Relative score
+        </Button>
+        <Button
+          size="small"
+          variant={viewMode === "absolute" ? "contained" : "outlined"}
+          onClick={() => setViewMode("absolute")}
+          sx={{ height: 32, px: 2, fontSize: "0.75rem", textTransform: "none" }}
+        >
+          Absolute %
+        </Button>
+        <Button
+          size="small"
+          variant={viewMode === "busfactor" ? "contained" : "outlined"}
+          onClick={() => setViewMode("busfactor")}
+          sx={{ height: 32, px: 2, fontSize: "0.75rem", textTransform: "none" }}
+        >
+          Bus factor
+        </Button>
+        <Typography variant="caption" color="text.disabled" sx={{ alignSelf: "center" }}>
+          {viewMode === "score"
+            ? "top contributor per module = 1.00"
+            : viewMode === "absolute"
+            ? "each person's share of module commits"
+            : "who covers ≥80% of expertise · key holders vs supporting"}
+        </Typography>
+      </Stack>
+
       {hasOnlyRoot && (
         <Paper
           elevation={0}
@@ -645,7 +852,22 @@ function ModuleBreakdown({
       )}
 
       {sorted.map((mod) => {
-        const contribs = [...(mod.contributors ?? [])].sort((a, b) => b.expertise_score - a.expertise_score);
+        // Filter out namespace-style contributor usernames (GitLab bots / service accounts
+        // from upstream fork history, e.g. "gitlab-org/maintainers/gitlab-pages").
+        // Real GitLab usernames never contain "/".
+        // Filter namespace-path entries, then re-normalize expertise_score so the top
+        // *remaining* real contributor = 1.00. Without this, bots / group-path entries
+        // (e.g. "gitlab-org/maintainers/gitlab-pages") that dominated the DB normalization
+        // make every real contributor appear at ~0% in relative-score mode.
+        const _rawContribs = [...(mod.contributors ?? [])]
+          .filter((c) => !c.developer_username.includes("/"))
+          .sort((a, b) => b.expertise_score - a.expertise_score);
+        const _topScore = _rawContribs.length > 0 ? _rawContribs[0].expertise_score : 1;
+        const contribs = _rawContribs.map((c) => ({
+          ...c,
+          expertise_score: _topScore > 0 ? c.expertise_score / _topScore : 0,
+        }));
+        const moduleCommitTotal = contribs.reduce((s, c) => s + (c.commit_count ?? 0), 0);
         const internalCommitters = contribs.filter((c) => !c.external && c.commit_count > 0);
         const hasInternal = internalCommitters.length > 0;
         const noInternalKnowledge = !hasInternal && contribs.length > 0;
@@ -691,12 +913,12 @@ function ModuleBreakdown({
                 title={
                   <Box sx={{ maxWidth: 320, py: 0.5 }}>
                     <Typography variant="caption" sx={{ display: "block", fontWeight: 600, mb: 0.5 }}>
-                      Bus factor — a per-module metric
+                      Bus factor: a per-module metric
                     </Typography>
                     <Typography variant="caption" sx={{ display: "block", mb: 0.5 }}>
                       Minimum number of <strong>internal</strong> contributors whose
                       combined expertise covers ≥80% of this module. Upstream authors
-                      are excluded — they can't transfer knowledge to the team.
+                      are excluded and cannot transfer knowledge to the team.
                     </Typography>
                     <Typography variant="caption" sx={{ display: "block", color: "rgba(255,255,255,0.6)" }}>
                       <strong>0</strong> = no internal contributors (dark knowledge zone). <strong>1</strong> = one person holds &gt;80% (fragile). Higher = safer.
@@ -743,102 +965,152 @@ function ModuleBreakdown({
               )}
             </Stack>
 
-            {/* Contributor rows */}
-            <Stack spacing={0.6}>
-              {showTop.map((c, i) => {
-                const contribColor = c.external ? "#fa7b17" : "#4285f4";
-                return (
-                  <Stack key={c.developer_username} direction="row" spacing={1} sx={{ alignItems: "center" }}>
-                    <Box sx={{ minWidth: 14, flexShrink: 0, display: "flex", alignItems: "center" }}>
-                      {i === 0
-                        ? <ChevronRightOutlinedIcon sx={{ fontSize: 13, color: contribColor }} />
-                        : <FiberManualRecordIcon sx={{ fontSize: 5, color: "rgba(255,255,255,0.2)" }} />
-                      }
-                    </Box>
-                    <Tooltip
-                      title={c.external
-                        ? `View upstream knowledge breakdown for ${c.developer_username}`
-                        : `View bus-factor impact for ${c.developer_username}`}
-                      placement="top"
-                    >
-                      <Typography
-                        variant="caption"
-                        onClick={() => onSelectDev?.(c.developer_username)}
-                        sx={{
-                          fontFamily: "var(--font-google-sans-code)",
-                          color: contribColor,
-                          minWidth: 130,
-                          maxWidth: 130,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                          flexShrink: 0,
-                          cursor: onSelectDev ? "pointer" : "default",
-                          textDecoration: onSelectDev ? "underline dotted" : "none",
-                          textDecorationColor: contribColor + "66",
-                          "&:hover": onSelectDev ? { textDecorationColor: contribColor } : {},
-                        }}
-                      >
-                        {c.developer_username}
-                      </Typography>
-                    </Tooltip>
+            {/* Body — contributions view or bus factor view */}
+            {viewMode === "busfactor" ? (
+              <BusfactorModuleRows
+                contribs={contribs}
+                internalCommitTotal={contribs.filter((c) => !c.external).reduce((s, c) => s + (c.commit_count ?? 0), 0)}
+                onSelectDev={onSelectDev}
+              />
+            ) : (
+              <Stack spacing={0.6}>
+                {/* Column header row */}
+                {showTop.length > 0 && (
+                  <Stack direction="row" spacing={1} sx={{ alignItems: "center", pb: 0.75, mb: 0.1, borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                    <Box sx={{ minWidth: 14, flexShrink: 0 }} />
+                    <Typography sx={{ minWidth: 130, maxWidth: 130, fontSize: "0.56rem", color: "rgba(255,255,255,0.22)", textTransform: "uppercase", letterSpacing: "0.07em", flexShrink: 0 }}>
+                      contributor
+                    </Typography>
                     <Box sx={{ flex: 1, minWidth: 60 }}>
-                      <LinearProgress
-                        variant="determinate"
-                        value={Math.round(c.expertise_score * 100)}
-                        sx={{
-                          height: 4, borderRadius: 2, bgcolor: "rgba(255,255,255,0.05)",
-                          "& .MuiLinearProgress-bar": { bgcolor: contribColor, borderRadius: 2, opacity: 0.85 },
-                        }}
-                      />
+                      <Typography sx={{ fontSize: "0.56rem", color: "rgba(255,255,255,0.22)", textTransform: "uppercase", letterSpacing: "0.07em" }}>
+                        expertise
+                      </Typography>
                     </Box>
-                    <Tooltip
-                      placement="top"
-                      title={
-                        <Box sx={{ maxWidth: 280, py: 0.5 }}>
-                          <Typography variant="caption" sx={{ display: "block", fontWeight: 600, mb: 0.5 }}>
-                            Expertise score: {c.expertise_score.toFixed(2)}
-                          </Typography>
-                          <Typography variant="caption" sx={{ display: "block" }}>
-                            This contributor's share of commits to {mod.path}/, normalized so the top contributor = <strong>1.00</strong>. So 0.50 means about half as many commits as the top contributor.
-                          </Typography>
-                        </Box>
-                      }
-                    >
-                      <Typography
-                        variant="caption"
-                        sx={{ fontFamily: "var(--font-google-sans-code)", color: contribColor, minWidth: 32, textAlign: "right", flexShrink: 0, cursor: "help" }}
-                      >
-                        {c.expertise_score.toFixed(2)}
-                      </Typography>
-                    </Tooltip>
-                    <Chip
-                      label={c.external ? "upstream" : "internal"}
-                      size="small"
-                      variant="outlined"
-                      sx={{ height: 16, fontSize: "0.58rem", minWidth: 58, flexShrink: 0, color: contribColor, borderColor: contribColor + "44" }}
-                    />
-                    {c.demo && (
-                      <Chip
-                        label="demo"
-                        size="small"
-                        sx={{ height: 16, fontSize: "0.58rem", flexShrink: 0, color: "#a78bfa", bgcolor: "#7c3aed11", border: "1px solid #7c3aed55" }}
-                      />
-                    )}
-                    {c.commit_count > 0 && (
-                      <Typography variant="caption" color="text.disabled" sx={{ minWidth: 60, textAlign: "right", flexShrink: 0 }}>
-                        {c.commit_count} commits
-                      </Typography>
-                    )}
+                    <Typography sx={{ minWidth: 32, textAlign: "right", fontSize: "0.56rem", color: "rgba(255,255,255,0.22)", textTransform: "uppercase", letterSpacing: "0.07em", flexShrink: 0 }}>
+                      {viewMode === "score" ? "score" : "%"}
+                    </Typography>
+                    <Typography sx={{ minWidth: 58, textAlign: "center", fontSize: "0.56rem", color: "rgba(255,255,255,0.22)", textTransform: "uppercase", letterSpacing: "0.07em", flexShrink: 0 }}>
+                      type
+                    </Typography>
+                    <Typography sx={{ minWidth: 60, textAlign: "right", fontSize: "0.56rem", color: "rgba(255,255,255,0.22)", textTransform: "uppercase", letterSpacing: "0.07em", flexShrink: 0 }}>
+                      commits
+                    </Typography>
                   </Stack>
-                );
-              })}
-              {hiddenCount > 0 && (
-                <Typography variant="caption" color="text.disabled" sx={{ pl: "22px" }}>
-                  +{hiddenCount} more contributor{hiddenCount !== 1 ? "s" : ""}
-                </Typography>
-              )}
-            </Stack>
+                )}
+
+                {showTop.map((c, i) => {
+                  const contribColor = c.external ? "#fa7b17" : "#4285f4";
+                  const isDemoRow = c.demo && demoMode;
+                  return (
+                    <Stack key={c.developer_username} direction="row" spacing={1} sx={{ alignItems: "center" }}>
+                      <Box sx={{ minWidth: 14, flexShrink: 0, display: "flex", alignItems: "center" }}>
+                        {isDemoRow
+                          ? <ScienceOutlinedIcon sx={{ fontSize: 11, color: "#a78bfa" }} />
+                          : i === 0
+                          ? <ChevronRightOutlinedIcon sx={{ fontSize: 13, color: contribColor }} />
+                          : <FiberManualRecordIcon sx={{ fontSize: 5, color: "rgba(255,255,255,0.2)" }} />
+                        }
+                      </Box>
+                      <Tooltip
+                        title={c.external
+                          ? `View upstream knowledge breakdown for ${c.developer_username}`
+                          : `View bus-factor impact for ${c.developer_username}`}
+                        placement="top"
+                      >
+                        <Typography
+                          variant="caption"
+                          onClick={() => onSelectDev?.(c.developer_username)}
+                          sx={{
+                            fontFamily: "var(--font-google-sans-code)",
+                            color: contribColor,
+                            minWidth: 130,
+                            maxWidth: 130,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                            flexShrink: 0,
+                            cursor: onSelectDev ? "pointer" : "default",
+                            textDecoration: onSelectDev ? "underline dotted" : "none",
+                            textDecorationColor: contribColor + "66",
+                            "&:hover": onSelectDev ? { textDecorationColor: contribColor } : {},
+                          }}
+                        >
+                          {c.developer_username}
+                        </Typography>
+                      </Tooltip>
+                      <Box sx={{ flex: 1, minWidth: 60 }}>
+                        <LinearProgress
+                          variant="determinate"
+                          value={viewMode === "score"
+                            ? Math.round(c.expertise_score * 100)
+                            : moduleCommitTotal > 0 ? Math.round((c.commit_count / moduleCommitTotal) * 100) : 0}
+                          sx={{
+                            height: 4, borderRadius: 2, bgcolor: "rgba(255,255,255,0.05)",
+                            "& .MuiLinearProgress-bar": { bgcolor: contribColor, borderRadius: 2, opacity: 0.85 },
+                          }}
+                        />
+                      </Box>
+                      <Tooltip
+                        placement="top"
+                        title={
+                          viewMode === "score" ? (
+                            <Box sx={{ maxWidth: 280, py: 0.5 }}>
+                              <Typography variant="caption" sx={{ display: "block", fontWeight: 600, mb: 0.5 }}>
+                                Expertise score: {c.expertise_score.toFixed(2)}
+                              </Typography>
+                              <Typography variant="caption" sx={{ display: "block" }}>
+                                Normalized so the top contributor = <strong>1.00</strong>. So 0.50 means about half as many commits as the top contributor in {mod.path}/.
+                              </Typography>
+                            </Box>
+                          ) : (
+                            <Box sx={{ maxWidth: 280, py: 0.5 }}>
+                              <Typography variant="caption" sx={{ display: "block", fontWeight: 600, mb: 0.5 }}>
+                                Commit share: {moduleCommitTotal > 0 ? ((c.commit_count / moduleCommitTotal) * 100).toFixed(1) : 0}%
+                              </Typography>
+                              <Typography variant="caption" sx={{ display: "block" }}>
+                                {c.commit_count} of {moduleCommitTotal} recorded commits to {mod.path}/.
+                              </Typography>
+                            </Box>
+                          )
+                        }
+                      >
+                        <Typography
+                          variant="caption"
+                          sx={{ fontFamily: "var(--font-google-sans-code)", color: contribColor, minWidth: 32, textAlign: "right", flexShrink: 0, cursor: "help" }}
+                        >
+                          {viewMode === "score"
+                            ? c.expertise_score.toFixed(2)
+                            : moduleCommitTotal > 0 ? `${((c.commit_count / moduleCommitTotal) * 100).toFixed(1)}%` : "—"}
+                        </Typography>
+                      </Tooltip>
+                      <Chip
+                        label={c.external ? "upstream" : "internal"}
+                        size="small"
+                        variant="outlined"
+                        sx={{ height: 16, fontSize: "0.58rem", minWidth: 58, flexShrink: 0, color: contribColor, borderColor: contribColor + "44" }}
+                      />
+                      {c.demo && !demoMode && (
+                        <Chip
+                          label="demo"
+                          size="small"
+                          sx={{ height: 16, fontSize: "0.58rem", flexShrink: 0, color: "#a78bfa", bgcolor: "#7c3aed11", border: "1px solid #7c3aed55" }}
+                        />
+                      )}
+                      {c.commit_count > 0 && (
+                        <Typography variant="caption" color="text.disabled" sx={{ minWidth: 60, textAlign: "right", flexShrink: 0 }}>
+                          {c.commit_count} commit{c.commit_count !== 1 ? "s" : ""}
+                        </Typography>
+                      )}
+                    </Stack>
+                  );
+                })}
+                {hiddenCount > 0 && (
+                  <Typography variant="caption" color="text.disabled" sx={{ pl: "22px" }}>
+                    +{hiddenCount} more contributor{hiddenCount !== 1 ? "s" : ""}
+                  </Typography>
+                )}
+              </Stack>
+            )}
           </Paper>
         );
       })}
@@ -905,7 +1177,7 @@ function UpstreamAuthorList({ authors, modules }: { authors: Developer[]; module
               )}
               {totalCommits > 0 && (
                 <Typography variant="caption" color="text.disabled" sx={{ flexShrink: 0, fontFamily: "var(--font-google-sans-code)" }}>
-                  {totalCommits} commits
+                  {totalCommits} commit{totalCommits !== 1 ? "s" : ""}
                 </Typography>
               )}
             </Stack>
@@ -927,7 +1199,7 @@ function UpstreamAuthorList({ authors, modules }: { authors: Developer[]; module
                       />
                     </Box>
                     <Typography variant="caption" sx={{ fontFamily: "var(--font-google-sans-code)", color: "rgba(250,123,23,0.6)", fontSize: "0.6rem", minWidth: 40, textAlign: "right", flexShrink: 0 }}>
-                      {m.commit_count} commits
+                      {m.commit_count} commit{m.commit_count !== 1 ? "s" : ""}
                     </Typography>
                   </Stack>
                 ))}
@@ -1023,17 +1295,17 @@ const SCENARIOS = [
   {
     id: "new_joiner",
     label: "New joiner",
-    description: "Marco Torres — joined 2 weeks ago, 1 test commit → onboarding pack",
+    description: "Marco Torres: joined 2 weeks ago, 1 test commit → onboarding pack",
   },
   {
     id: "fading",
     label: "Fading contributor",
-    description: "Priya Sharma — sole scripts/ owner, 6 months inactive → offboarding",
+    description: "Priya Sharma: sole scripts/ owner, 6 months inactive → offboarding",
   },
   {
     id: "sole_owner",
     label: "Sole owner",
-    description: "Alex Chen — sole holder of app/ and internal/ → knowledge transfer issue",
+    description: "Alex Chen: sole holder of app/ and internal/ → knowledge transfer issue",
   },
 ] as const;
 
@@ -1199,11 +1471,11 @@ export default function KnowledgeGraph() {
             <ScienceOutlinedIcon sx={{ fontSize: 15, color: "#a78bfa", flexShrink: 0 }} />
             <Typography variant="caption" sx={{ color: "#a78bfa", flex: 1 }}>
               {hasDemo
-                ? <>Demo data active — {demoDevCount > 0 ? `${demoDevCount} developer${demoDevCount !== 1 ? "s" : ""}` : ""}
+                ? <>Demo data active: {demoDevCount > 0 ? `${demoDevCount} developer${demoDevCount !== 1 ? "s" : ""}` : ""}
                     {demoDevCount > 0 && demoModCount > 0 ? " · " : ""}
                     {demoModCount > 0 ? `${demoModCount} module${demoModCount !== 1 ? "s" : ""}` : ""} seeded.
                     Results include synthetic entries.</>
-                : <>Demo mode enabled — no data seeded yet. Use <strong>Seed demo data</strong> to populate a scenario.</>
+                : <>Demo mode enabled. No data seeded yet. Use <strong>Seed demo data</strong> to populate a scenario.</>
               }
             </Typography>
           </Stack>
@@ -1237,7 +1509,7 @@ export default function KnowledgeGraph() {
       {!hasGraph && !loading && (
         <Paper elevation={0} sx={{ p: 3, textAlign: "center" }}>
           <Typography variant="body2" color="text.disabled">
-            Graph is empty — run the pipeline to populate per-module knowledge data.
+            Graph is empty. Run the pipeline to populate per-module knowledge data.
           </Typography>
         </Paper>
       )}
@@ -1254,13 +1526,10 @@ export default function KnowledgeGraph() {
         <>
           {/* Primary: module knowledge breakdown */}
           <Paper elevation={0} sx={{ p: 2.5 }}>
-            <Stack direction="row" spacing={1} sx={{ alignItems: "baseline", mb: 2 }}>
-              <Typography variant="subtitle2" color="text.secondary">Module Knowledge Breakdown</Typography>
-              <Typography variant="caption" color="text.disabled">
-                who knows what · sorted by concentration · score = relative commit share · click a name for bus-factor detail
-              </Typography>
-            </Stack>
-            <ModuleBreakdown modules={data!.modules} findings={recentFindings} onSelectDev={openDevDrawer} />
+            <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 2 }}>
+              Module Knowledge Breakdown
+            </Typography>
+            <ModuleBreakdown modules={data!.modules} findings={recentFindings} onSelectDev={openDevDrawer} demoMode={demoMode} />
           </Paper>
 
           {/* Secondary: React Flow structural overview + upstream authors */}

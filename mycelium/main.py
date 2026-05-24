@@ -14,6 +14,7 @@ from config.settings import settings  # initialises Vertex AI env vars on import
 from agent.activity_bus import bus as activity_bus
 from agent.pipeline import PipelineRunner
 from graph.knowledge_graph import KnowledgeGraph
+from graph.service import GraphService, is_real_module, is_real_user
 from connectors.gitlab_client import GitLabClient
 
 # ---------------------------------------------------------------------------
@@ -62,6 +63,7 @@ log = logging.getLogger(__name__)
 # App state
 # ---------------------------------------------------------------------------
 graph = KnowledgeGraph()
+service = GraphService(graph)
 gitlab = GitLabClient()
 pipeline = PipelineRunner(gitlab, graph)
 
@@ -131,19 +133,7 @@ async def snapshot():
 @app.get("/graph")
 async def graph_full():
     """Full knowledge graph state including per-module contribution edges."""
-    snap = await graph.snapshot()
-    all_modules = await graph.modules.find({}, {"_id": 0}).to_list(None)
-    modules_with_contribs = []
-    for module in all_modules:
-        contribs = await graph.get_module_contributors(module["path"])
-        modules_with_contribs.append({**module, "contributors": contribs})
-    return {
-        "developers": snap["developers"],
-        "upstream_authors": snap["upstream_authors"],
-        "modules": modules_with_contribs,
-        "concentrated_modules": snap.get("concentrated_modules", []),
-        "recent_findings": snap.get("recent_findings", []),
-    }
+    return await service.full_graph()
 
 
 @app.delete("/graph/demo")
@@ -155,6 +145,47 @@ async def clear_demo_data():
     if not settings.demo_mode:
         raise HTTPException(status_code=403, detail="Demo mode is disabled (set DEMO_MODE=true to enable)")
     return await graph.delete_demo_data()
+
+
+@app.delete("/graph/bots")
+async def purge_bot_entries():
+    """Delete developer and contribution records whose username looks like a GitLab
+    namespace path or bot sanitized form (contains '_' in a namespace-path pattern).
+
+    Matches:
+      - usernames that STILL contain '/' (pre-fix pipeline runs)
+      - usernames whose original name was a namespace path and got '/' replaced by '_',
+        detected by the presence of typical GitLab namespace slug patterns like
+        'gitlab-org_' or 'gitlab-bot' prefixes, or the literal 'maintainers_' segment.
+    """
+    # Broad regex: "word/word" patterns that survived as "word_word" segments.
+    # We target the specific known pattern rather than all underscored names.
+    all_devs = await graph.developers.find({}, {"_id": 0, "username": 1}).to_list(None)
+    bot_usernames = []
+    for d in all_devs:
+        u = d.get("username", "")
+        if "/" in u:          # still has "/" (pre-fix pipeline runs)
+            bot_usernames.append(u)
+        elif any(seg in u.lower() for seg in [
+            "maintainers", "gitlab-org", "gitlab_org", "noreply",
+        ]):
+            bot_usernames.append(u)
+
+    if not bot_usernames:
+        return {"purged_developers": 0, "purged_contributions": 0, "purged_history": 0}
+
+    dev_res = await graph.developers.delete_many({"username": {"$in": bot_usernames}})
+    contrib_res = await graph.contributions.delete_many({"developer_username": {"$in": bot_usernames}})
+    hist_res = await graph.contribution_history.delete_many({"developer_username": {"$in": bot_usernames}})
+
+    log.info("[purge_bots] removed %d devs, %d contributions, %d history records | usernames: %s",
+             dev_res.deleted_count, contrib_res.deleted_count, hist_res.deleted_count, bot_usernames[:10])
+    return {
+        "purged_developers": dev_res.deleted_count,
+        "purged_contributions": contrib_res.deleted_count,
+        "purged_history": hist_res.deleted_count,
+        "bot_usernames": bot_usernames,
+    }
 
 
 @app.get("/graph/demo")
@@ -174,8 +205,8 @@ async def project_info():
 
 @app.get("/developers")
 async def all_developers():
-    """All developers including demo-flagged entries (used by the mock repo view)."""
-    devs = await graph.developers.find({}, {"_id": 0}).to_list(None)
+    """All developers (internal + external), bots excluded."""
+    devs = await service.all_developers()
     return {"developers": devs}
 
 
@@ -186,86 +217,111 @@ async def developer_busfactor(username: str):
     For internal members: shows bus-factor threshold position per module.
     For upstream/external authors: shows their share of total module expertise
       (internal + external) — they are excluded from bus-factor by design.
-
-    Uses a query param (?username=...) so usernames containing slashes
-    (e.g. GitLab group paths like 'gitlab-org/maintainers/gitlab-pages') work.
     """
-    from fastapi import HTTPException
     from risk.forecasting import compute_bus_factor
+
+    if not is_real_user(username):
+        raise HTTPException(
+            status_code=400,
+            detail=f"'{username}' looks like a GitLab namespace path, not a developer username. "
+                   "These are service accounts from upstream fork history and are not tracked individually.",
+        )
 
     dev = await graph.get_developer(username)
     if dev is None:
         raise HTTPException(status_code=404, detail=f"Developer '{username}' not found in knowledge graph.")
 
     is_external = dev.get("external", False)
-    contributions = await graph.get_developer_modules(username)
+    contributions = await service.developer_modules(username)
     result = []
 
     for contrib in contributions:
         path = contrib["module_path"]
         dev_score = contrib["expertise_score"]
 
-        all_contribs = await graph.get_module_contributors(path)
+        all_contribs = await service.module_contributors(path)
         internal = [c for c in all_contribs if not c.get("external", False)]
         external_contribs = [c for c in all_contribs if c.get("external", False)]
 
-        internal_total = sum(c["expertise_score"] for c in internal)
-        all_total = sum(c["expertise_score"] for c in all_contribs)
+        internal_total = sum(c["expertise_score"] for c in internal)  # used for bus-factor threshold only
+
+        # Use raw commit counts for all percentage calculations.
+        # expertise_score is normalized (top contributor per module = 1.0), so using it
+        # directly for percentages produces misleading "100%" when only one contributor
+        # is recorded — even though the proportions are mathematically the same.
+        all_commit_total    = sum(c.get("commit_count", 0) for c in all_contribs)
+        internal_commit_total = sum(c.get("commit_count", 0) for c in internal)
+        dev_commit_count    = contrib.get("commit_count", 0)
 
         if is_external:
-            # Upstream author view: show share of ALL commit expertise (internal + external).
-            # Bus factor is still shown for context, but this author is not in the threshold.
-            # Breakdown lists internal contributors only so the user can see who does hold knowledge.
-            internal_sorted = sorted(internal, key=lambda c: c["expertise_score"], reverse=True)
-            cumulative = 0.0
-            threshold_reached = False
+            # Upstream author view.
+            # Breakdown shows ALL contributors (internal + external) so the user can see
+            # who else has committed, not just the empty internal-only list.
+            # Each entry carries external=True/False so the frontend can colour-code them.
+            # Mark which internal contributors are inside the 80% bus-factor threshold
+            # so the frontend can show ★ markers even when viewing an upstream author's drawer.
+            internal_sorted_for_threshold = sorted(internal, key=lambda c: c["expertise_score"], reverse=True)
+            bus_threshold_set: set = set()
+            cum_exp_running = 0.0
+            for _c in internal_sorted_for_threshold:
+                bus_threshold_set.add(_c["developer_username"])
+                cum_exp_running += _c["expertise_score"]
+                if internal_total > 0 and (cum_exp_running / internal_total * 100) >= 80.0:
+                    break  # this person is the last one inside the threshold
+
+            all_sorted = sorted(all_contribs, key=lambda c: c.get("commit_count", 0), reverse=True)
             breakdown = []
-            for c in internal_sorted:
-                score = c["expertise_score"]
-                # Share is of internal total so bars add up to 100% and match the bus-factor calculation
-                share_of_internal = (score / internal_total * 100) if internal_total > 0 else 0.0
-                cumulative += score
-                cum_of_internal = (cumulative / internal_total * 100) if internal_total > 0 else 0.0
-                in_bus = not threshold_reached
-                if cum_of_internal >= 80.0:
-                    threshold_reached = True
+            for c in all_sorted:
+                c_commits = c.get("commit_count", 0)
+                share = (c_commits / all_commit_total * 100) if all_commit_total > 0 else 0.0
+                is_ext = c.get("external", True)
                 breakdown.append({
                     "username": c["developer_username"],
-                    "expertise_score": score,
-                    "share_pct": round(share_of_internal, 2),   # % of internal expertise
-                    "cumulative_pct": round(cum_of_internal, 2),
-                    "in_bus_factor": in_bus,
-                    "commit_count": c.get("commit_count", 0),
-                    "external": False,
+                    "expertise_score": c["expertise_score"],
+                    "share_pct": round(share, 2),
+                    "cumulative_pct": 0.0,
+                    "in_bus_factor": (c["developer_username"] in bus_threshold_set) if not is_ext else False,
+                    "commit_count": c_commits,
+                    "external": is_ext,
                 })
 
             bus_factor = compute_bus_factor(internal)
-            # dev_share is this upstream author's fraction of ALL commits to this module
-            dev_share = (dev_score / all_total * 100) if all_total > 0 else 0.0
+            # dev_share: this upstream author's fraction of ALL recorded commits to this module
+            dev_share = (dev_commit_count / all_commit_total * 100) if all_commit_total > 0 else 0.0
             result.append({
                 "module_path": path,
                 "bus_factor": bus_factor,
                 "dev_expertise_score": round(dev_score, 4),
                 "dev_share_pct": round(dev_share, 2),
-                "dev_in_bus_factor": False,  # upstream authors are never in the threshold
+                "dev_commit_count": dev_commit_count,
+                "total_commit_count": all_commit_total,
+                "dev_in_bus_factor": False,
                 "total_internal_contributors": len(internal),
                 "total_external_contributors": len(external_contribs),
                 "breakdown": breakdown,
             })
 
         else:
-            # Internal developer view: annotate threshold position in bus-factor ordering.
+            # Internal developer view.
+            # Breakdown shows internal contributors only; bus-factor threshold is
+            # computed from expertise_score (by design) but displayed as commit %.
             internal_sorted = sorted(internal, key=lambda c: c["expertise_score"], reverse=True)
-            cumulative = 0.0
+            cumulative_commits = 0
             threshold_reached = False
             breakdown = []
             for c in internal_sorted:
+                c_commits = c.get("commit_count", 0)
+                share_pct = (c_commits / internal_commit_total * 100) if internal_commit_total > 0 else 0.0
+                cumulative_commits += c_commits
+                cum_pct = (cumulative_commits / internal_commit_total * 100) if internal_commit_total > 0 else 0.0
+                # Bus-factor threshold is still determined by expertise_score ordering
+                # (top expertise contributors cumulatively covering ≥80% of internal expertise).
                 score = c["expertise_score"]
-                share_pct = (score / internal_total * 100) if internal_total > 0 else 0.0
-                cumulative += score
-                cum_pct = (cumulative / internal_total * 100) if internal_total > 0 else 0.0
+                cum_expertise = sum(
+                    x["expertise_score"] for x in internal_sorted[:internal_sorted.index(c) + 1]
+                )
                 in_bus = not threshold_reached
-                if cum_pct >= 80.0:
+                if (cum_expertise / internal_total * 100) >= 80.0 if internal_total > 0 else True:
                     threshold_reached = True
                 breakdown.append({
                     "username": c["developer_username"],
@@ -273,7 +329,7 @@ async def developer_busfactor(username: str):
                     "share_pct": round(share_pct, 2),
                     "cumulative_pct": round(cum_pct, 2),
                     "in_bus_factor": in_bus,
-                    "commit_count": c.get("commit_count", 0),
+                    "commit_count": c_commits,
                     "external": False,
                 })
 
@@ -281,13 +337,15 @@ async def developer_busfactor(username: str):
             dev_in_bus = any(
                 b["username"] == username and b["in_bus_factor"] for b in breakdown
             )
-            # dev_share is this developer's fraction of internal-only expertise for this module
-            dev_share = (dev_score / internal_total * 100) if internal_total > 0 else 0.0
+            # dev_share: this developer's fraction of internal-only recorded commits
+            dev_share = (dev_commit_count / internal_commit_total * 100) if internal_commit_total > 0 else 0.0
             result.append({
                 "module_path": path,
                 "bus_factor": bus_factor,
                 "dev_expertise_score": round(dev_score, 4),
                 "dev_share_pct": round(dev_share, 2),
+                "dev_commit_count": dev_commit_count,
+                "total_commit_count": internal_commit_total,
                 "dev_in_bus_factor": dev_in_bus,
                 "total_internal_contributors": len(internal),
                 "total_external_contributors": len(external_contribs),

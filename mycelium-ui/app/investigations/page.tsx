@@ -12,7 +12,7 @@ export default function InvestigationsPage() {
             Investigations
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Subagent findings — what the investigators read and judged. No thresholds, no formulas.
+            Subagent findings: what the investigators read and judged. No thresholds, no formulas.
           </Typography>
         </Box>
         <Investigations />

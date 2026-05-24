@@ -271,7 +271,7 @@ export default function Actions() {
         <Paper elevation={0} sx={{ p: 4, textAlign: "center" }}>
           <BoltOutlinedIcon sx={{ fontSize: 32, color: "text.disabled", mb: 1 }} />
           <Typography variant="body2" color="text.disabled">
-            No actions yet — run the pipeline to let the agent take corrective action.
+            No actions yet. Run the pipeline to let the agent take corrective action.
           </Typography>
         </Paper>
       )}

@@ -287,9 +287,9 @@ function DriftCard({ d }: { d: DriftInvestigation }) {
   return (
     <FindingCard
       icon={<SyncProblemOutlinedIcon sx={{ fontSize: 18, color: "#fbbc04" }} />}
-      title={`Upstream drift — ${d.upstream_project ?? "unknown"}`}
+      title={`Upstream drift: ${d.upstream_project ?? "unknown"}`}
       headerChip={
-        <Chip label={`${d.commits_behind ?? 0} commits behind`} size="small" variant="outlined"
+        <Chip label={`${d.commits_behind ?? 0} commit${(d.commits_behind ?? 0) !== 1 ? "s" : ""} behind`} size="small" variant="outlined"
           sx={{ height: 20, fontSize: "0.65rem", color: "#fbbc04", borderColor: "#fbbc0455" }} />
       }
     >
@@ -302,7 +302,7 @@ function DriftCard({ d }: { d: DriftInvestigation }) {
               <Box component="li" key={i} sx={{ fontSize: "0.85rem", lineHeight: 1.6, mb: 0.75 }}>
                 <Box component="span" sx={{ fontFamily: "var(--font-google-sans-code)", color: "primary.light" }}>
                   {c.id}
-                </Box>{" — "}{c.title}
+                </Box>{" · "}{c.title}
                 <Box sx={{ pl: 1, color: "text.disabled", fontStyle: "italic" }}>{c.why}</Box>
               </Box>
             ))}
@@ -395,7 +395,7 @@ export default function Investigations() {
         <Paper elevation={0} sx={{ p: 4, textAlign: "center" }}>
           <BiotechOutlinedIcon sx={{ fontSize: 32, color: "text.disabled", mb: 1 }} />
           <Typography variant="body2" color="text.disabled">
-            No investigations yet — run the pipeline to spawn investigator subagents.
+            No investigations yet. Run the pipeline to spawn investigator subagents.
           </Typography>
         </Paper>
       )}

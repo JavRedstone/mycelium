@@ -7,6 +7,18 @@ logger = logging.getLogger(__name__)
 
 _SKIP_DIRS = {"vendor", "node_modules", "Godeps", "third_party"}
 
+# GitLab namespace paths appear as commit author *names* for bots and automated
+# maintenance operations in forked repos (e.g. "gitlab-org/maintainers/gitlab-pages").
+# Real human names never contain "/".  Email-only no-reply addresses are also bots.
+def _is_bot_author(name: str, email: str) -> bool:
+    """Return True for automated / service-account commit authors to exclude from tracking."""
+    if "/" in name:
+        return True
+    # GitLab bot no-reply address patterns: "GitLab Bot <noreply@gitlab.com>"
+    if email and "noreply" in email.lower() and "gitlab" in email.lower():
+        return True
+    return False
+
 
 class GitLabClient:
     """Thin REST wrapper around python-gitlab for the Mycelium observation layer."""
@@ -184,6 +196,7 @@ class GitLabClient:
                 "contribution_type": "commit",
             }
             for c in contributors
+            if not _is_bot_author(c["name"], c["email"])
         ]
 
     def get_open_issues(self) -> list[dict]:
@@ -284,6 +297,10 @@ class GitLabClient:
                     break
                 email = (commit.get("author_email") or "").lower()
                 name = commit.get("author_name") or email
+                # Skip bots and GitLab namespace paths (e.g. "gitlab-org/maintainers/...").
+                # These are automated actors from upstream fork history, not real contributors.
+                if _is_bot_author(name, email):
+                    continue
                 key = email or name
                 if not key:
                     continue

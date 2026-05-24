@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Box from "@mui/material/Box";
@@ -10,6 +11,7 @@ import ListItem from "@mui/material/ListItem";
 import ListItemButton from "@mui/material/ListItemButton";
 import ListItemIcon from "@mui/material/ListItemIcon";
 import Stack from "@mui/material/Stack";
+import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 
 import AccountTreeOutlinedIcon from "@mui/icons-material/AccountTreeOutlined";
@@ -25,32 +27,42 @@ import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 import TerminalOutlinedIcon from "@mui/icons-material/TerminalOutlined";
 import TimelineOutlinedIcon from "@mui/icons-material/TimelineOutlined";
 
-type NavItem = { label: string; href: string; icon: React.ReactNode };
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+type NavItem = { label: string; href: string; icon: React.ReactNode; primary?: boolean };
+
+type PipelineStatus = {
+  status: string;       // "running" | "success" | "failed" | "partial" | "cancelled"
+  progress: number;     // 0–100 (completed stages / total stages)
+  stagesDone: number;
+  stagesTotal: number;
+} | null;
+
+// ---------------------------------------------------------------------------
+// Nav structure
+// ---------------------------------------------------------------------------
 
 const NAV_GROUPS: { section: string; items: NavItem[] }[] = [
+  {
+    section: "Pipeline",
+    items: [
+      { label: "Pipeline",        href: "/pipeline",       icon: <PlayArrowOutlinedIcon fontSize="small" />, primary: true },
+      { label: "Agent Activity",  href: "/activity",       icon: <ChatOutlinedIcon fontSize="small" /> },
+      { label: "Logs",            href: "/logs",           icon: <TerminalOutlinedIcon fontSize="small" /> },
+      { label: "Actions",         href: "/actions",        icon: <BoltOutlinedIcon fontSize="small" /> },
+      { label: "Run History",     href: "/timeline",       icon: <TimelineOutlinedIcon fontSize="small" /> },
+      { label: "Investigations",  href: "/investigations", icon: <BiotechOutlinedIcon fontSize="small" /> },
+      { label: "Analytics",       href: "/analytics",      icon: <BarChartOutlinedIcon fontSize="small" /> },
+    ],
+  },
   {
     section: "Repository",
     items: [
       { label: "Repository",      href: "/repo",    icon: <FolderOutlinedIcon fontSize="small" /> },
       { label: "Repo History",    href: "/history", icon: <HistoryOutlinedIcon fontSize="small" /> },
       { label: "Knowledge Graph", href: "/graph",   icon: <AccountTreeOutlinedIcon fontSize="small" /> },
-    ],
-  },
-  {
-    section: "Pipeline",
-    items: [
-      { label: "Pipeline",       href: "/pipeline",  icon: <PlayArrowOutlinedIcon fontSize="small" /> },
-      { label: "Agent Activity", href: "/activity",  icon: <ChatOutlinedIcon fontSize="small" /> },
-      { label: "Logs",           href: "/logs",      icon: <TerminalOutlinedIcon fontSize="small" /> },
-      { label: "Actions",        href: "/actions",   icon: <BoltOutlinedIcon fontSize="small" /> },
-    ],
-  },
-  {
-    section: "Insights",
-    items: [
-      { label: "Timeline",        href: "/timeline",       icon: <TimelineOutlinedIcon fontSize="small" /> },
-      { label: "Investigations",  href: "/investigations", icon: <BiotechOutlinedIcon fontSize="small" /> },
-      { label: "Analytics",       href: "/analytics",      icon: <BarChartOutlinedIcon fontSize="small" /> },
     ],
   },
 ];
@@ -60,6 +72,185 @@ const BOTTOM_ITEM: NavItem = {
   href: "/config",
   icon: <SettingsOutlinedIcon fontSize="small" />,
 };
+
+// ---------------------------------------------------------------------------
+// Pipeline status polling hook
+// ---------------------------------------------------------------------------
+
+const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+function usePipelineStatus(): PipelineStatus {
+  const [status, setStatus] = useState<PipelineStatus>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function poll() {
+      try {
+        const res = await fetch(`${API}/pipeline/current`);
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        const run = data?.run;
+        if (!run) { setStatus(null); return; }
+
+        const stages = (run.stages ?? []) as Array<{ status: string }>;
+        const terminal = new Set(["success", "failed", "skipped", "cancelled"]);
+        const done = stages.filter((s) => terminal.has(s.status)).length;
+        const total = stages.length || 1;
+
+        setStatus({
+          status: run.status ?? "unknown",
+          progress: Math.round((done / total) * 100),
+          stagesDone: done,
+          stagesTotal: total,
+        });
+      } catch {
+        // backend unreachable — leave status unchanged
+      }
+    }
+
+    poll();
+    const id = setInterval(poll, 4000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
+  return status;
+}
+
+// ---------------------------------------------------------------------------
+// Status → colour palette
+// ---------------------------------------------------------------------------
+
+function pipelineColors(status: PipelineStatus, active: boolean) {
+  const s = status?.status ?? "idle";
+
+  if (s === "failed") {
+    return {
+      bg:     active ? "rgba(234,67,53,0.22)" : "rgba(234,67,53,0.10)",
+      border: active ? "rgba(234,67,53,0.55)" : "rgba(234,67,53,0.28)",
+      icon:   "#ea4335",
+      text:   "#f28b82",
+      bar:    "#ea4335",
+    };
+  }
+  if (s === "running") {
+    return {
+      bg:     active ? "rgba(52,168,83,0.25)" : "rgba(52,168,83,0.14)",
+      border: active ? "rgba(52,168,83,0.55)" : "rgba(52,168,83,0.30)",
+      icon:   "#34a853",
+      text:   "#81c995",
+      bar:    "#34a853",
+    };
+  }
+  // idle / success / partial / cancelled → green
+  return {
+    bg:     active ? "rgba(52,168,83,0.22)" : "rgba(52,168,83,0.10)",
+    border: active ? "rgba(52,168,83,0.50)" : "rgba(52,168,83,0.25)",
+    icon:   "#34a853",
+    text:   "#81c995",
+    bar:    "#34a853",
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline nav button — live status-aware
+// ---------------------------------------------------------------------------
+
+function PipelineNavButton({ item, active, pipelineStatus }: {
+  item: NavItem;
+  active: boolean;
+  pipelineStatus: PipelineStatus;
+}) {
+  const c = pipelineColors(pipelineStatus, active);
+  const isRunning = pipelineStatus?.status === "running";
+  const progress  = pipelineStatus?.progress ?? 0;
+  const stagesDone  = pipelineStatus?.stagesDone ?? 0;
+  const stagesTotal = pipelineStatus?.stagesTotal ?? 0;
+
+  const tooltipTitle = isRunning
+    ? `Running · stage ${stagesDone}/${stagesTotal}`
+    : pipelineStatus?.status === "failed"
+    ? "Last run failed"
+    : pipelineStatus?.status
+    ? `Last run: ${pipelineStatus.status}`
+    : "No recent run";
+
+  return (
+    <Tooltip title={tooltipTitle} placement="right" arrow>
+      <ListItem disablePadding sx={{ mb: 0.25 }}>
+        <ListItemButton
+          component={Link}
+          href={item.href}
+          selected={active}
+          sx={{
+            borderRadius: 1.5,
+            py: 0.75,
+            position: "relative",
+            overflow: "hidden",
+            bgcolor: c.bg,
+            border: "1px solid",
+            borderColor: c.border,
+            "&:hover": { bgcolor: c.bg, filter: "brightness(1.15)" },
+            // Disable default MUI selected style — we manage it ourselves
+            "&.Mui-selected": { bgcolor: c.bg },
+            "&.Mui-selected:hover": { bgcolor: c.bg, filter: "brightness(1.15)" },
+          }}
+        >
+          {/* Icon */}
+          <ListItemIcon sx={{ minWidth: 32, color: c.icon }}>
+            {isRunning ? (
+              // Subtle pulse on the icon when running
+              <Box sx={{ animation: "pulse 2s ease-in-out infinite", "@keyframes pulse": { "0%,100%": { opacity: 1 }, "50%": { opacity: 0.55 } } }}>
+                {item.icon}
+              </Box>
+            ) : item.icon}
+          </ListItemIcon>
+
+          {/* Label + optional stage counter */}
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Typography variant="body2" sx={{ fontWeight: 600, color: c.text, lineHeight: isRunning ? 1.1 : 1.4, display: "block" }}>
+              {item.label}
+            </Typography>
+            {isRunning && (
+              <Typography variant="caption" sx={{ color: c.icon, fontSize: "0.6rem", lineHeight: 1, opacity: 0.85, display: "block" }}>
+                Stage {stagesDone}/{stagesTotal}
+              </Typography>
+            )}
+          </Box>
+
+          {/* Progress bar — pinned to bottom edge */}
+          {isRunning && (
+            <Box
+              sx={{
+                position: "absolute",
+                bottom: 0,
+                left: 0,
+                right: 0,
+                height: 3,
+                bgcolor: "rgba(0,0,0,0.25)",
+              }}
+            >
+              <Box
+                sx={{
+                  height: "100%",
+                  width: `${progress}%`,
+                  bgcolor: c.bar,
+                  borderRadius: "0 2px 2px 0",
+                  transition: "width 0.6s ease",
+                  boxShadow: `0 0 6px ${c.bar}99`,
+                }}
+              />
+            </Box>
+          )}
+        </ListItemButton>
+      </ListItem>
+    </Tooltip>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Standard nav button
+// ---------------------------------------------------------------------------
 
 function NavButton({ item, active }: { item: NavItem; active: boolean }) {
   return (
@@ -93,8 +284,13 @@ function NavButton({ item, active }: { item: NavItem; active: boolean }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Sidebar
+// ---------------------------------------------------------------------------
+
 export default function Sidebar() {
   const pathname = usePathname();
+  const pipelineStatus = usePipelineStatus();
 
   function isActive(href: string) {
     return pathname === href || (pathname === "/" && href === "/pipeline");
@@ -152,9 +348,18 @@ export default function Sidebar() {
               {group.section}
             </Typography>
             <List disablePadding>
-              {group.items.map((item) => (
-                <NavButton key={item.href} item={item} active={isActive(item.href)} />
-              ))}
+              {group.items.map((item) =>
+                item.primary ? (
+                  <PipelineNavButton
+                    key={item.href}
+                    item={item}
+                    active={isActive(item.href)}
+                    pipelineStatus={pipelineStatus}
+                  />
+                ) : (
+                  <NavButton key={item.href} item={item} active={isActive(item.href)} />
+                )
+              )}
             </List>
           </Box>
         ))}

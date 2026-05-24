@@ -88,7 +88,7 @@ export default function AgentLog({ height = 320 }: { height?: number }) {
         <Box sx={{ px: 2, py: 1, borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", gap: 1, bgcolor: "rgba(255,255,255,0.02)" }}>
           <TerminalIcon sx={{ fontSize: 14, color: "text.disabled" }} />
           <Typography variant="caption" color="text.disabled" sx={{ fontFamily: "var(--font-google-sans-code)" }}>
-            mycelium — continuity engine
+            mycelium · continuity engine
           </Typography>
         </Box>
 

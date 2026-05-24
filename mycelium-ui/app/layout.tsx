@@ -17,7 +17,7 @@ const googleSansCode = Google_Sans_Code({
 });
 
 export const metadata: Metadata = {
-  title: "Mycelium — Continuity Engine",
+  title: "Mycelium: Continuity Engine",
   description: "AI-powered engineering continuity agent powered by Gemini and GitLab MCP",
 };
 

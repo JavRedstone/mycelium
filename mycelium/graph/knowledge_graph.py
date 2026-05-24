@@ -218,15 +218,23 @@ class KnowledgeGraph:
         }
 
     async def delete_demo_data(self) -> dict:
-        """Delete all documents flagged demo=True across every collection."""
+        """Delete all documents flagged demo=True across every collection.
+
+        Also clears the fork-date override that demo scenarios write into the
+        settings collection — otherwise the Repo History chart retains the demo
+        fork line after the rest of the data is gone.
+        """
         filter_ = {"demo": True}
-        devs  = await self.developers.delete_many(filter_)
-        mods  = await self.modules.delete_many(filter_)
+        devs     = await self.developers.delete_many(filter_)
+        mods     = await self.modules.delete_many(filter_)
         contribs = await self.contributions.delete_many(filter_)
+        hist     = await self.contribution_history.delete_many(filter_)
+        await self.set_fork_date_override(None)
         return {
             "deleted_developers": devs.deleted_count,
             "deleted_modules": mods.deleted_count,
             "deleted_contributions": contribs.deleted_count,
+            "deleted_contribution_history": hist.deleted_count,
         }
 
     async def has_demo_data(self) -> bool:

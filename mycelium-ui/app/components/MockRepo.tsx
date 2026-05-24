@@ -24,6 +24,8 @@ import ScienceOutlinedIcon from "@mui/icons-material/ScienceOutlined";
 import StarBorderOutlinedIcon from "@mui/icons-material/StarBorderOutlined";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 
+import { filterModules } from "../lib/graphFilters";
+
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 // Deterministic mock commit messages per module path
@@ -56,7 +58,7 @@ type ProjectInfo = {
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 function timeAgo(dateStr?: string): string {
-  if (!dateStr) return "—";
+  if (!dateStr) return "-";
   const ms = Date.now() - new Date(dateStr).getTime();
   const days = Math.floor(ms / 86_400_000);
   if (days === 0) return "today";
@@ -252,7 +254,7 @@ function ContributorDetail({
           <Stack spacing={1.25}>
             {internal.length === 0 ? (
               <Typography variant="caption" color="text.disabled">
-                No internal contributors — all commits are from upstream authors.
+                No internal contributors. All commits are from upstream authors.
               </Typography>
             ) : (
               internal.map((c) => {
@@ -300,7 +302,7 @@ function ContributorDetail({
                         />
                       )}
                       <Typography variant="caption" color="text.disabled" sx={{ fontFamily: "monospace", fontSize: "0.7rem" }}>
-                        {c.commit_count} commits · {timeAgo(lastSeen)}
+                        {c.commit_count} commit{c.commit_count !== 1 ? "s" : ""} · {timeAgo(lastSeen)}
                       </Typography>
                     </Stack>
                     <Stack direction="row" spacing={1} sx={{ alignItems: "center", pl: "28px" }}>
@@ -346,14 +348,14 @@ function ContributorDetail({
                       {displayName}
                     </Typography>
                     <Typography variant="caption" color="text.disabled" sx={{ fontFamily: "monospace", fontSize: "0.68rem" }}>
-                      · {c.commit_count} commits
+                      · {c.commit_count} commit{c.commit_count !== 1 ? "s" : ""}
                     </Typography>
                   </Stack>
                 );
               })}
             </Stack>
             <Typography variant="caption" color="text.disabled" sx={{ display: "block", mt: 1, lineHeight: 1.5, fontStyle: "italic" }}>
-              Upstream commits are not counted toward bus factor — these contributors are not on the current team.
+              Upstream commits are not counted toward bus factor. These contributors are not on the current team.
             </Typography>
           </Box>
         )}
@@ -419,7 +421,7 @@ function ModuleRow({
     ? internal.reduce((a, b) => (a.expertise_score > b.expertise_score ? a : b))
     : null;
   const primaryDev = primary ? devMap[primary.developer_username] : null;
-  const primaryName = primaryDev?.name ?? primary?.developer_username ?? "—";
+  const primaryName = primaryDev?.name ?? primary?.developer_username ?? "-";
 
   // Last activity = most recent contribution across all internal contributors
   const lastActivity = internal
@@ -563,7 +565,7 @@ export default function MockRepo() {
       const map: Record<string, Developer> = {};
       for (const d of devData.developers ?? []) map[d.username] = d;
 
-      const mods: Module[] = (graph.modules ?? []).sort((a: Module, b: Module) => {
+      const mods: Module[] = filterModules<Module>(graph.modules ?? []).sort((a: Module, b: Module) => {
         const riskOrder: Record<Risk, number> = { critical: 0, warning: 1, caution: 2, healthy: 3 };
         return riskOrder[classifyRisk(a, map)] - riskOrder[classifyRisk(b, map)];
       });
@@ -594,7 +596,7 @@ export default function MockRepo() {
       new Date(b.last_contribution_at!).getTime() - new Date(a.last_contribution_at!).getTime()
     )[0];
   const latestDev = latestContrib ? devMap[latestContrib.developer_username] : null;
-  const latestName = latestDev?.name ?? latestContrib?.developer_username ?? "—";
+  const latestName = latestDev?.name ?? latestContrib?.developer_username ?? "-";
 
   return (
     <Stack spacing={2.5}>
@@ -614,7 +616,7 @@ export default function MockRepo() {
             <ScienceOutlinedIcon sx={{ fontSize: 16, color: "#a78bfa", flexShrink: 0 }} />
             <Typography variant="body2" sx={{ color: "#c4b5fd" }}>
               This repository view contains{" "}
-              <strong>seeded demo data</strong> — entries marked with a purple chip are
+              <strong>seeded demo data</strong>. Entries marked with a purple chip are
               synthetic. Run{" "}
               <Box component="code" sx={{ fontFamily: "monospace", bgcolor: "rgba(255,255,255,0.08)", px: 0.5, borderRadius: 0.5 }}>
                 python -m scripts.seed_scenarios team

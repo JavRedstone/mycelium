@@ -9,7 +9,7 @@ export default function TimelinePage() {
       <Stack spacing={3}>
         <Box>
           <Typography variant="h6" sx={{ fontWeight: 600 }} color="text.primary">
-            Timeline
+            Run History
           </Typography>
           <Typography variant="body2" color="text.secondary">
             Chronological history of pipeline runs, findings detected, and actions taken in GitLab
