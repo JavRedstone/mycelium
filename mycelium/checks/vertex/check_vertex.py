@@ -1,4 +1,4 @@
-"""
+﻿"""
 Sanity check: Vertex AI is reachable, ADC works, and the configured Gemini model
 can be invoked through the Vertex AI Gemini endpoint.
 
@@ -18,7 +18,7 @@ def main() -> int:
     try:
         project = os.environ["GOOGLE_CLOUD_PROJECT"]
     except KeyError:
-        print("[FAIL] Vertex AI — GOOGLE_CLOUD_PROJECT is not set")
+        print("[FAIL] Vertex AI - GOOGLE_CLOUD_PROJECT is not set")
         return 1
 
     location = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
@@ -40,11 +40,11 @@ def main() -> int:
             contents="This is an API test call. Please respond with only the word: ok",
         )
         text = (response.text or "").strip()
-        print(f"[OK] Vertex AI — project={project} location={location} model={model}")
+        print(f"[OK] Vertex AI - project={project} location={location} model={model}")
         print(f"     response: {text}")
         return 0
     except Exception as exc:
-        print(f"[FAIL] Vertex AI — {type(exc).__name__}: {exc}")
+        print(f"[FAIL] Vertex AI - {type(exc).__name__}: {exc}")
         return 1
 
 

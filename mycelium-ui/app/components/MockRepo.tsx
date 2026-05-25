@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useState } from "react";
 import Box from "@mui/material/Box";
@@ -588,7 +588,7 @@ export default function MockRepo() {
     .sort()
     .at(-1);
 
-  // Header "latest commit" — the most recent contribution across all modules
+  // Header "latest commit" - the most recent contribution across all modules
   const latestContrib = modules
     .flatMap((m) => m.contributors.map((c) => ({ ...c, module: m.path })))
     .filter((c) => !c.external && c.last_contribution_at)

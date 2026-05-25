@@ -1,4 +1,4 @@
-# Continuity Engine — Demo Script
+﻿# Continuity Engine - Demo Script
 
 ## Total runtime: ~3 minutes
 
@@ -83,7 +83,7 @@ Pause for 2–3 seconds.
 
 Read:
 
-> “Knowledge Transfer: scripts/ — sole maintainer inactive”
+> “Knowledge Transfer: scripts/ - sole maintainer inactive”
 
 Follow-up line:
 

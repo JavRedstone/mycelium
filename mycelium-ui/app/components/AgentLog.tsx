@@ -11,6 +11,7 @@ import Chip from "@mui/material/Chip";
 import Divider from "@mui/material/Divider";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import TerminalIcon from "@mui/icons-material/Terminal";
+import { scrollbarSx } from "../lib/sx";
 
 type LogEntry = {
   seq: number;
@@ -95,14 +96,7 @@ export default function AgentLog({ height = 320 }: { height?: number }) {
         {/* Log lines */}
         <Box
           ref={containerRef}
-          sx={{
-            flex: 1,
-            overflowY: "auto",
-            p: 1.5,
-            "&::-webkit-scrollbar": { width: 4 },
-            "&::-webkit-scrollbar-track": { bgcolor: "transparent" },
-            "&::-webkit-scrollbar-thumb": { bgcolor: "rgba(255,255,255,0.1)", borderRadius: 2 },
-          }}
+          sx={{ flex: 1, overflowY: "auto", p: 1.5, ...scrollbarSx }}
         >
           {entries.length === 0 ? (
             <Typography variant="caption" color="text.disabled" sx={{ fontFamily: "var(--font-google-sans-code)" }}>

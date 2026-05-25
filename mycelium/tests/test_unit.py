@@ -1,5 +1,5 @@
-"""
-Unit tests — no external connections required (no GitLab, no MongoDB, no Gemini).
+﻿"""
+Unit tests - no external connections required (no GitLab, no MongoDB, no Gemini).
 Run with: pytest tests/test_unit.py -v
 """
 from datetime import datetime, timezone
@@ -10,7 +10,7 @@ from agent.json_utils import try_parse_json as _try_parse_json
 
 
 # ---------------------------------------------------------------------------
-# Helpers mirroring production logic — tested in isolation
+# Helpers mirroring production logic - tested in isolation
 # ---------------------------------------------------------------------------
 
 def _parse_codeowners(content: str) -> dict[str, list[str]]:
@@ -135,7 +135,7 @@ class TestBusFactor:
 
 
 # ---------------------------------------------------------------------------
-# Finding model — qualitative output, no scores
+# Finding model - qualitative output, no scores
 # ---------------------------------------------------------------------------
 
 class TestFindingModel:
@@ -166,7 +166,7 @@ class TestFindingModel:
 
     def test_module_node_no_score_field(self):
         m = ModuleNode(path="src/auth")
-        # No continuity_risk_score, no doc_coverage — measurements only.
+        # No continuity_risk_score, no doc_coverage - measurements only.
         assert not hasattr(m, "continuity_risk_score")
         assert not hasattr(m, "doc_coverage")
         assert m.bus_factor == 0

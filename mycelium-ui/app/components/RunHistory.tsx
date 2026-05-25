@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useRef, useState } from "react";
 import Box from "@mui/material/Box";
@@ -18,6 +18,7 @@ import AssessmentOutlinedIcon from "@mui/icons-material/AssessmentOutlined";
 import FolderOpenOutlinedIcon from "@mui/icons-material/FolderOpenOutlined";
 
 import { fmt, timeAgo, fmtDatetime, type PipelineRun } from "./Pipeline";
+import { scrollbarSx } from "../lib/sx";
 
 type StageStatus = "pending" | "running" | "success" | "failed" | "skipped";
 
@@ -194,7 +195,7 @@ export default function RunHistory() {
         <Typography variant="subtitle2" color="text.secondary">Run History</Typography>
         <Stack direction="row" spacing={2.5} sx={{ alignItems: "center" }}>
           <Typography variant="caption" color="text.disabled">
-            <Typography component="span" variant="caption" color="text.primary" sx={{ fontWeight: 600 }}>{runs.length}</Typography> runs
+            <Typography component="span" variant="caption" color="text.primary" sx={{ fontWeight: 600 }}>{runs.length}</Typography> {runs.length === 1 ? "run" : "runs"}
           </Typography>
           <Typography variant="caption" color="text.disabled">
             <Typography component="span" variant="caption" color={rateColor} sx={{ fontWeight: 600 }}>{successRate}%</Typography> success
@@ -212,16 +213,7 @@ export default function RunHistory() {
         {/* Horizontally scrollable container */}
         <Box
           ref={scrollRef}
-          sx={{
-            overflowX: "auto",
-            pt: 2,
-            pb: 2,
-            pr: 2,
-            pl: 0,
-            "&::-webkit-scrollbar": { height: 4 },
-            "&::-webkit-scrollbar-track": { bgcolor: "transparent" },
-            "&::-webkit-scrollbar-thumb": { bgcolor: "rgba(255,255,255,0.1)", borderRadius: 2 },
-          }}
+          sx={{ overflowX: "auto", pt: 2, pb: 2, pr: 2, pl: 0, ...scrollbarSx }}
         >
           {/* Date label row (offset by LABEL_W) */}
           <Box sx={{ display: "flex", pl: `${LABEL_W}px`, mb: 0.5, minWidth: "max-content", alignItems: "flex-end" }}>
@@ -290,7 +282,7 @@ export default function RunHistory() {
             <Box sx={{ height: 1, bgcolor: "rgba(255,255,255,0.06)" }} />
           </Box>
 
-          {/* Stage rows — labels are sticky-left */}
+          {/* Stage rows - labels are sticky-left */}
           <Stack spacing={0.5} sx={{ minWidth: "max-content" }}>
             {stagesPresent.map((stageId) => (
               <Box key={stageId} sx={{ display: "flex", alignItems: "center", height: 22 }}>

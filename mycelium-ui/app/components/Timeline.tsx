@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useState } from "react";
 import Box from "@mui/material/Box";
@@ -50,6 +50,7 @@ type RunEntry = {
   findings: Finding[];
   actions: Action[];
   totalMs: number | null;
+  narrative: string | null;
 };
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -106,7 +107,7 @@ const ACTION_LABEL: Record<string, string> = {
 // ── RunEntry row ──────────────────────────────────────────────────────────────
 
 function RunRow({ entry }: { entry: RunEntry }) {
-  const { run, findings, actions, totalMs } = entry;
+  const { run, findings, actions, totalMs, narrative } = entry;
   const [open, setOpen] = useState(false);
 
   const statusColor =
@@ -146,7 +147,8 @@ function RunRow({ entry }: { entry: RunEntry }) {
 
         {/* Content */}
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", flexWrap: "wrap", mb: 0.25 }}>
+          {/* Run metadata row */}
+          <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", flexWrap: "wrap", mb: narrative ? 0.75 : 0.25 }}>
             <Typography variant="body2" sx={{ fontFamily: "monospace", fontWeight: 600, color: statusColor }}>
               {run.status.toUpperCase()}
             </Typography>
@@ -163,26 +165,45 @@ function RunRow({ entry }: { entry: RunEntry }) {
             </Typography>
           </Stack>
 
-          {/* Summary chips */}
-          <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap" }} useFlexGap>
-            {findings.length > 0 && (
-              <Chip
-                label={`${findings.length} finding${findings.length !== 1 ? "s" : ""}`}
-                size="small"
-                sx={{ height: 18, fontSize: "0.62rem", bgcolor: "rgba(234,67,53,0.1)", color: "#ea4335", border: "none", "& .MuiChip-label": { px: 0.75 } }}
-              />
-            )}
-            {actions.length > 0 && (
-              <Chip
-                label={`${actions.length} action${actions.length !== 1 ? "s" : ""}`}
-                size="small"
-                sx={{ height: 18, fontSize: "0.62rem", bgcolor: "rgba(52,168,83,0.1)", color: "#34a853", border: "none", "& .MuiChip-label": { px: 0.75 } }}
-              />
-            )}
-            {findings.length === 0 && actions.length === 0 && run.status === "success" && (
-              <Typography variant="caption" color="text.disabled">No findings. Repository is healthy.</Typography>
-            )}
-          </Stack>
+          {/* Natural language narrative - the main log entry */}
+          {narrative ? (
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{ lineHeight: 1.65, mb: 0.75, maxWidth: 760 }}
+            >
+              {narrative}
+            </Typography>
+          ) : (
+            /* Fallback chips for runs that pre-date narrative generation */
+            <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap", mb: 0.25 }} useFlexGap>
+              {findings.length > 0 && (
+                <Chip label={`${findings.length} finding${findings.length !== 1 ? "s" : ""}`} size="small"
+                  sx={{ height: 18, fontSize: "0.62rem", bgcolor: "rgba(234,67,53,0.1)", color: "#ea4335", border: "none", "& .MuiChip-label": { px: 0.75 } }} />
+              )}
+              {actions.length > 0 && (
+                <Chip label={`${actions.length} action${actions.length !== 1 ? "s" : ""}`} size="small"
+                  sx={{ height: 18, fontSize: "0.62rem", bgcolor: "rgba(52,168,83,0.1)", color: "#34a853", border: "none", "& .MuiChip-label": { px: 0.75 } }} />
+              )}
+              {findings.length === 0 && actions.length === 0 && run.status === "success" && (
+                <Typography variant="caption" color="text.disabled">No findings. Repository is healthy.</Typography>
+              )}
+            </Stack>
+          )}
+
+          {/* Detail chips below the narrative */}
+          {narrative && (findings.length > 0 || actions.length > 0) && (
+            <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap" }} useFlexGap>
+              {findings.length > 0 && (
+                <Chip label={`${findings.length} finding${findings.length !== 1 ? "s" : ""}`} size="small"
+                  sx={{ height: 18, fontSize: "0.62rem", bgcolor: "rgba(234,67,53,0.1)", color: "#ea4335", border: "none", "& .MuiChip-label": { px: 0.75 } }} />
+              )}
+              {actions.length > 0 && (
+                <Chip label={`${actions.length} action${actions.length !== 1 ? "s" : ""}`} size="small"
+                  sx={{ height: 18, fontSize: "0.62rem", bgcolor: "rgba(52,168,83,0.1)", color: "#34a853", border: "none", "& .MuiChip-label": { px: 0.75 } }} />
+              )}
+            </Stack>
+          )}
         </Box>
 
         {/* Expand toggle */}
@@ -316,11 +337,13 @@ export default function Timeline() {
         const totalMs = summaryStage?.output
           ? (summaryStage.output.total_duration_ms as number | null) ?? null
           : run.stages.reduce((a, s) => a + (s.duration_ms ?? 0), 0) || null;
+        const narrative = (summaryStage?.output?.narrative as string | null | undefined) ?? null;
         return {
           run,
           findings: findingsByRun[run.run_id] ?? [],
           actions: actionsByRun[run.run_id] ?? [],
           totalMs,
+          narrative,
         };
       }).sort((a, b) => b.run.started_at - a.run.started_at);
 
@@ -341,7 +364,7 @@ export default function Timeline() {
       {/* Header stats */}
       <Stack direction="row" spacing={3} sx={{ alignItems: "center" }}>
         <Stack direction="row" spacing={1}>
-          <Typography variant="caption" color="text.disabled">{entries.length} runs</Typography>
+          <Typography variant="caption" color="text.disabled">{entries.length} {entries.length === 1 ? "run" : "runs"}</Typography>
           {totalFindings > 0 && <Typography variant="caption" color="text.disabled">· {totalFindings} findings</Typography>}
           {totalActions > 0 && <Typography variant="caption" color="text.disabled">· {totalActions} actions</Typography>}
         </Stack>

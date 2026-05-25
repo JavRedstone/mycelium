@@ -1,4 +1,4 @@
-"""Observational measurements only — no scoring, no aggregation.
+﻿"""Observational measurements only - no scoring, no aggregation.
 
 Per PROJECT_IDEA, this system does not compute scalar risk scores. The functions
 here produce raw counts and structural facts that the analyst agent reasons over

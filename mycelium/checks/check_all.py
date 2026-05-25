@@ -1,10 +1,10 @@
-"""Run every connection / runtime check sequentially.
+﻿"""Run every connection / runtime check sequentially.
 
 Layout:
-  mongo/    — MongoDB connectivity
-  gitlab/   — GitLab read + write operations
-  vertex/   — Vertex AI + ADK runtime
-  mcp/      — MCP servers (Mycelium, GitLab MCP, MongoDB MCP)
+  mongo/    - MongoDB connectivity
+  gitlab/   - GitLab read + write operations
+  vertex/   - Vertex AI + ADK runtime
+  mcp/      - MCP servers (Mycelium, GitLab MCP, MongoDB MCP)
 """
 import subprocess
 import sys

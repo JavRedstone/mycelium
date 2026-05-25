@@ -1,4 +1,4 @@
-"""graph/service.py — single, filtered access point for all graph read queries.
+﻿"""graph/service.py - single, filtered access point for all graph read queries.
 
 Every data-quality rule lives here:
   - Bot / namespace-path username exclusion
@@ -13,7 +13,7 @@ from graph.knowledge_graph import KnowledgeGraph
 from config.settings import settings
 
 # ---------------------------------------------------------------------------
-# Filter predicates — one definition, shared across the entire backend
+# Filter predicates - one definition, shared across the entire backend
 # ---------------------------------------------------------------------------
 
 _BOT_USERNAME_SEGMENTS = frozenset({"maintainers", "gitlab-org", "gitlab_org", "noreply"})
@@ -23,9 +23,9 @@ def is_real_module(path: str) -> bool:
     """True for genuine local top-level directory paths.
 
     Excludes:
-      - ``"repository"`` — synthetic catch-all written by the pipeline to track
+      - ``"repository"`` - synthetic catch-all written by the pipeline to track
         whole-repo contributors with ``expertise_score = 0.0``.
-      - Anything containing ``"/"`` — GitLab namespace paths that crept in from
+      - Anything containing ``"/"`` - GitLab namespace paths that crept in from
         upstream fork history (e.g. ``"gitlab-org/maintainers/gitlab-pages"``).
     """
     return path != "repository" and "/" not in path
@@ -54,9 +54,9 @@ class GraphService:
     """Filtered, consistent view of the knowledge graph.
 
     Every read method applies:
-      • ``is_real_user``   — drops bots and namespace-path usernames
-      • ``is_real_module`` — drops "repository" and namespace-style paths
-      • demo exclusion     — excluded unless ``DEMO_MODE=true`` AND demo data exists
+      • ``is_real_user``   - drops bots and namespace-path usernames
+      • ``is_real_module`` - drops "repository" and namespace-style paths
+      • demo exclusion     - excluded unless ``DEMO_MODE=true`` AND demo data exists
 
     The API layer should never do its own filtering on top of this.
     """

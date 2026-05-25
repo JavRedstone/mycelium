@@ -1,5 +1,5 @@
-/**
- * Shared graph data filters — applied identically across every component.
+﻿/**
+ * Shared graph data filters - applied identically across every component.
  *
  * "repository" is a synthetic catch-all node the pipeline writes to track
  * whole-repo contributors (module_path = "repository", expertise_score = 0.0).

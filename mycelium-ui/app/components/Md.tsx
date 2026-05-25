@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import ReactMarkdown from "react-markdown";
 import Box from "@mui/material/Box";
@@ -6,7 +6,7 @@ import Box from "@mui/material/Box";
 /**
  * Renders a markdown string using the dark-theme palette.
  * Safe to drop inside any MUI component that renders as a block element (Box, div, etc.).
- * The parent must NOT be a <p> — use Typography component="div" or plain Box.
+ * The parent must NOT be a <p> - use Typography component="div" or plain Box.
  */
 export default function Md({ children, compact = false }: { children: string; compact?: boolean }) {
   if (!children) return null;

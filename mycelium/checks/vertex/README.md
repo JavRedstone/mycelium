@@ -1,4 +1,4 @@
-# checks/vertex/
+﻿# checks/vertex/
 
 Vertex AI, ADK, and interactive agent checks.
 
@@ -6,7 +6,7 @@ Run from the project root (`mycelium/mycelium/`):
 
 ---
 
-## check_vertex.py — Vertex AI + Gemini endpoint
+## check_vertex.py - Vertex AI + Gemini endpoint
 
 ```
 python checks/vertex/check_vertex.py
@@ -22,7 +22,7 @@ Confirms that:
 
 ---
 
-## check_adk.py — ADK + AdkApp runtime
+## check_adk.py - ADK + AdkApp runtime
 
 ```
 python checks/vertex/check_adk.py
@@ -46,7 +46,7 @@ attempting a remote deployment.
 
 ---
 
-## check_ask.py — interactive agent
+## check_ask.py - interactive agent
 
 ```
 python checks/vertex/check_ask.py

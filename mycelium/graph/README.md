@@ -1,10 +1,10 @@
-# graph/
+﻿# graph/
 
 MongoDB knowledge graph: data models and database operations.
 
 ---
 
-## models.py — Pydantic data models
+## models.py - Pydantic data models
 
 ### DeveloperNode
 
@@ -25,7 +25,7 @@ DeveloperNode(
 
 ### ModuleNode
 
-A tracked file/directory with observational measurements only — no risk scores.
+A tracked file/directory with observational measurements only - no risk scores.
 
 ```python
 ModuleNode(
@@ -77,7 +77,7 @@ Finding(
 
 ---
 
-## knowledge_graph.py — database operations
+## knowledge_graph.py - database operations
 
 `KnowledgeGraph` wraps Motor (async MongoDB driver) with the five collections:
 `developers`, `modules`, `tasks`, `contributions`, `findings`.
@@ -100,4 +100,4 @@ Finding(
 | `close()` | Close the Motor client |
 
 The `snapshot()` method is what the analyst agent and the UI `/graph` endpoint
-both consume — one call gives a full current picture.
+both consume - one call gives a full current picture.

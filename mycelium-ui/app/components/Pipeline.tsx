@@ -139,8 +139,12 @@ function stageSummary(stage: Stage): string | null {
     case "act": {
       const executed = o.executed as number ?? 0;
       const failed = o.failed as number ?? 0;
-      const mcpCalls = (o.mcp_calls as unknown[])?.length ?? 0;
-      return `${executed} executed · ${failed} failed · ${n(mcpCalls, "MCP call")}`;
+      const passes = o.stabilization_passes as number ?? 1;
+      const stale = o.stale_issues_closed as number ?? 0;
+      let s = `${executed} executed · ${failed} failed`;
+      if (passes > 1) s += ` · ${passes} passes`;
+      if (stale > 0) s += ` · ${stale} stale closed`;
+      return s;
     }
     case "learn":
       return `${o.updated ?? 0}/${o.total ?? 0} records · ${n(o.findings_saved as number ?? 0, "finding")} saved`;
@@ -530,15 +534,29 @@ function LearnDetail({ output }: { output: Record<string, unknown> }) {
 }
 
 function SummaryDetail({ output }: { output: Record<string, unknown> }) {
+  const narrative = output.narrative as string | undefined;
   return (
-    <Grid container spacing={2}>
-      <Grid size={4}><MetricCard label="Stages" value={`${output.stages_succeeded}/${output.stages_total}`} /></Grid>
-      <Grid size={4}><MetricCard label="Failed" value={output.stages_failed} highlight={(output.stages_failed as number) > 0} /></Grid>
-      <Grid size={4}><MetricCard label="Duration" value={fmt(output.total_duration_ms as number)} /></Grid>
-      <Grid size={4}><MetricCard label="Findings" value={output.findings_count} /></Grid>
-      <Grid size={4}><MetricCard label="Actions Planned" value={output.actions_planned} /></Grid>
-      <Grid size={4}><MetricCard label="Graph Updates" value={output.graph_updates_planned} /></Grid>
-    </Grid>
+    <Stack spacing={2}>
+      {narrative && (
+        <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.7 }}>
+          {narrative}
+        </Typography>
+      )}
+      <Grid container spacing={2}>
+        <Grid size={4}><MetricCard label="Stages" value={`${output.stages_succeeded}/${output.stages_total}`} /></Grid>
+        <Grid size={4}><MetricCard label="Failed" value={output.stages_failed} highlight={(output.stages_failed as number) > 0} /></Grid>
+        <Grid size={4}><MetricCard label="Duration" value={fmt(output.total_duration_ms as number)} /></Grid>
+        <Grid size={4}><MetricCard label="Findings" value={output.findings_count} /></Grid>
+        <Grid size={4}><MetricCard label="Actions Planned" value={output.actions_planned} /></Grid>
+        <Grid size={4}><MetricCard label="Graph Updates" value={output.graph_updates_planned} /></Grid>
+        {(output.stabilization_passes as number ?? 1) > 1 && (
+          <Grid size={4}><MetricCard label="Act Passes" value={output.stabilization_passes} /></Grid>
+        )}
+        {(output.stale_issues_closed as number ?? 0) > 0 && (
+          <Grid size={4}><MetricCard label="Stale Closed" value={output.stale_issues_closed} /></Grid>
+        )}
+      </Grid>
+    </Stack>
   );
 }
 
@@ -769,30 +787,15 @@ export default function Pipeline() {
               : run.stages.reduce((a, s) => a + (s.duration_ms ?? 0), 0) || null;
             const endTs = totalMs != null ? run.started_at + totalMs / 1000 : null;
             return (
-              <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
-                <Typography variant="caption" color="text.disabled">
-                  <Box component="span" sx={{ display: "none" }}>{tick}</Box>
-                  started {fmtDatetime(run.started_at)}
-                </Typography>
+              <Typography variant="caption" color="text.disabled" sx={{ whiteSpace: "nowrap" }}>
+                <Box component="span" sx={{ display: "none" }}>{tick}</Box>
+                started {fmtDatetime(run.started_at)}
                 {endTs != null && run.status !== "running" && (
-                  <>
-                    <Typography variant="caption" color="text.disabled">→</Typography>
-                    <Typography variant="caption" color="text.disabled">
-                      ended {fmtDatetime(endTs)}
-                    </Typography>
-                  </>
+                  <> &nbsp;→&nbsp; ended {fmtDatetime(endTs)}</>
                 )}
-                {totalMs != null && (
-                  <Typography variant="caption" color="text.disabled">
-                    · {fmt(totalMs)}
-                  </Typography>
-                )}
-                {run.status === "running" && (
-                  <Typography variant="caption" color="text.disabled">
-                    · {timeAgo(run.started_at)}
-                  </Typography>
-                )}
-              </Stack>
+                {totalMs != null && <> · {fmt(totalMs)}</>}
+                {run.status === "running" && <> · {timeAgo(run.started_at)}</>}
+              </Typography>
             );
           })()}
         </Stack>

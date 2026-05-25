@@ -1,5 +1,5 @@
-"""
-Analyst agent — assesses continuity risk over the current GitLab + graph snapshot.
+﻿"""
+Analyst agent - assesses continuity risk over the current GitLab + graph snapshot.
 
 Built with ADK on top of Vertex AI per the hackathon's mandatory stack:
 - google.adk.agents.Agent
@@ -31,30 +31,30 @@ vertexai.init(
 _INSTRUCTION = """You are a continuity analyst for an engineering team.
 
 Per the system design (PROJECT_IDEA.md), this system does NOT use scalar risk scores
-or severity buckets. You produce structured FINDINGS — qualitative descriptions of
+or severity buckets. You produce structured FINDINGS - qualitative descriptions of
 patterns in the knowledge graph, each with a concern type and a narrative.
 
 You receive THREE bodies of evidence each run:
 
-1. repository — observable facts from GitLab: members, commits, CODEOWNERS, pipelines,
+1. repository - observable facts from GitLab: members, commits, CODEOWNERS, pipelines,
    issues/MRs, fork divergence count, per-author commit counts.
 
-2. knowledge_graph — current state from MongoDB: tracked developers, modules with
+2. knowledge_graph - current state from MongoDB: tracked developers, modules with
    prior risk scores, contribution edges.
 
-3. investigations — output from investigator subagents that READ ACTUAL FILE CONTENT
+3. investigations - output from investigator subagents that READ ACTUAL FILE CONTENT
    and produced their own structured judgments:
-   - investigations.members[]   — per-member assessments (knowledge_at_risk,
+   - investigations.members[]   - per-member assessments (knowledge_at_risk,
      transferability_today, urgency_reasoning, recommended_actions).
-   - investigations.modules[]   — per-module assessments (transferability_assessment,
+   - investigations.modules[]   - per-module assessments (transferability_assessment,
      doc_coverage, documentation_state, knowledge_at_risk_if_top_contributor_leaves,
      severity_reasoning).
-   - investigations.drift       — fork-divergence assessment (urgency_assessment,
-     high_priority_commits, severity_reasoning) — content-driven, not count-driven.
+   - investigations.drift       - fork-divergence assessment (urgency_assessment,
+     high_priority_commits, severity_reasoning) - content-driven, not count-driven.
 
 Your job is to REASON over this evidence and produce final risk assessments.
 
-CORE DISCIPLINE — NO SCORES, NO BUCKETS, NO AGGREGATION.
+CORE DISCIPLINE - NO SCORES, NO BUCKETS, NO AGGREGATION.
 
 You must NOT:
 - Emit numeric severity scores (no "score": 0.7)
@@ -70,7 +70,7 @@ You MUST:
 
 How to reason:
 
-- Investigator subagents read the files. Their assessments are your primary evidence —
+- Investigator subagents read the files. Their assessments are your primary evidence -
   treat them as expert testimony from someone who saw the artifact. Quote or paraphrase
   their severity_reasoning into your narrative where it applies.
 
@@ -79,7 +79,7 @@ How to reason:
   are clear is a different finding than a bus_factor of 3 on a module the investigators
   flagged as undocumented and idiosyncratic.
 
-- Lifecycle matters. A fresh_fork team is onboarding — frame findings as "the team has
+- Lifecycle matters. A fresh_fork team is onboarding - frame findings as "the team has
   not yet built context here," not as an emergency. A solo project's findings naturally
   cluster around documentation and handoff readiness. Read repository.lifecycle_context.
 
@@ -95,25 +95,25 @@ How to reason:
   path and whose narrative grounds in the investigator's transferability and
   documentation observations.
 
-- CODEOWNERS, pipeline health, and open work remain valid signals — read them in
+- CODEOWNERS, pipeline health, and open work remain valid signals - read them in
   context. Failing CI on a documented module is a different finding than failing CI
   on a module the investigators flagged as opaque.
 
-Concern type vocabulary (use descriptive types, invent more as needed — these are
+Concern type vocabulary (use descriptive types, invent more as needed - these are
 DESCRIPTIVE, never magnitude labels):
-  knowledge_concentration   — one person holds the module
-  fragile_documentation     — docs missing, placeholder, or contradicted by code
-  fading_contributor        — was active, now silent; knowledge may leave soon
-  offboarding_risk          — member inactive/departing; handoff artifacts needed now
-  recent_joiner_exposure    — new joiner picking up critical work without context
-  onboarding_isolation      — new member has no clear onboarding path or buddy
-  upstream_dominance        — module written mostly by upstream authors
-  upstream_drift            — fork behind upstream with material commits missing
-  stalled_work              — open issues/MRs with no recent activity
-  undeclared_ownership      — active module not in CODEOWNERS
-  nominal_ownership         — CODEOWNERS lists owners with no recent commits
-  ci_instability            — failing pipelines in critical paths
-  multi_module_overload     — one contributor concentrated across many critical areas
+  knowledge_concentration   - one person holds the module
+  fragile_documentation     - docs missing, placeholder, or contradicted by code
+  fading_contributor        - was active, now silent; knowledge may leave soon
+  offboarding_risk          - member inactive/departing; handoff artifacts needed now
+  recent_joiner_exposure    - new joiner picking up critical work without context
+  onboarding_isolation      - new member has no clear onboarding path or buddy
+  upstream_dominance        - module written mostly by upstream authors
+  upstream_drift            - fork behind upstream with material commits missing
+  stalled_work              - open issues/MRs with no recent activity
+  undeclared_ownership      - active module not in CODEOWNERS
+  nominal_ownership         - CODEOWNERS lists owners with no recent commits
+  ci_instability            - failing pipelines in critical paths
+  multi_module_overload     - one contributor concentrated across many critical areas
 
 ONBOARDING AND OFFBOARDING WORKFLOWS:
 
@@ -132,7 +132,7 @@ When member investigators flagged recently_inactive or sole_contributor concerns
   - recommended_actions should include generating a handoff artifact and scheduling
     knowledge transfer sessions.
 
-OUTPUT — return ONLY a valid JSON object. No markdown. No prose outside the JSON.
+OUTPUT - return ONLY a valid JSON object. No markdown. No prose outside the JSON.
 
 Schema:
 {
@@ -182,7 +182,7 @@ def _run_through_adk(prompt: str, stage_id: str = "interpret") -> str:
                 if text:
                     chunks.append(str(text))
                     stripped = str(text).strip()
-                    # Skip pure JSON output — already surfaced as structured finding events.
+                    # Skip pure JSON output - already surfaced as structured finding events.
                     if stripped and not stripped.startswith(("{", "[")):
                         _activity_bus.emit({"type": "agent_text", "stage_id": stage_id, "text": stripped})
                 fc = (p.get("function_call") or p.get("functionCall")) if isinstance(p, dict) else (getattr(p, "function_call", None) or getattr(p, "functionCall", None))
@@ -224,11 +224,11 @@ def analyze(
         "investigations": investigations or {},
     }
     demo_note = (
-        "\n\nNOTE — DEMO MODE (read carefully — this overrides what git history shows):\n"
+        "\n\nNOTE - DEMO MODE (read carefully - this overrides what git history shows):\n"
         "The knowledge_graph contains demo developers (demo: true). These represent the "
         "actual team for this scenario. Treat their expertise and module ownership as real.\n\n"
         "CRITICAL: The git commit history reflects only the primary account that set up this "
-        "demo environment. It does NOT represent the full team's commit activity — the rest of "
+        "demo environment. It does NOT represent the full team's commit activity - the rest of "
         "the team's work is captured in the knowledge_graph contribution edges, not in raw git "
         "commits.\n\n"
         "Therefore you MUST NOT:\n"
@@ -253,16 +253,16 @@ def analyze(
     try:
         text = _run_through_adk(prompt)
     except Exception as exc:
-        logger.warning("[analyst] AdkApp run failed (%s) — using deterministic fallback", exc)
+        logger.warning("[analyst] AdkApp run failed (%s) - using deterministic fallback", exc)
         return _fallback_risk_assessment(repo_snapshot, graph_snapshot)
 
     if not text:
-        logger.warning("[analyst] empty output from ADK — using fallback")
+        logger.warning("[analyst] empty output from ADK - using fallback")
         return _fallback_risk_assessment(repo_snapshot, graph_snapshot)
 
     parsed = _try_parse_json(text)
     if parsed is None:
-        logger.warning("[analyst] non-JSON output — using fallback. text[:200]=%r", text[:200])
+        logger.warning("[analyst] non-JSON output - using fallback. text[:200]=%r", text[:200])
         return _fallback_risk_assessment(repo_snapshot, graph_snapshot)
     return parsed
 

@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import json
 import logging
 import threading
@@ -68,17 +68,34 @@ gitlab = GitLabClient()
 pipeline = PipelineRunner(gitlab, graph)
 
 
+# ---------------------------------------------------------------------------
+# Runtime config - editable without restart via PATCH /config
+# ---------------------------------------------------------------------------
+RUNTIME_DEFAULTS: dict = {
+    "loop_enabled": False,
+    "loop_interval_seconds": 600,
+    "analyst_max_investigators": 10,
+}
+
+
+async def _get_runtime_cfg() -> dict:
+    try:
+        stored = await graph.get_runtime_config()
+    except Exception:
+        stored = {}
+    return {**RUNTIME_DEFAULTS, **stored}
+
+
 async def run_loop():
-    if not settings.pipeline_loop_enabled:
-        log.info(
-            "Pipeline auto-loop is DISABLED (PIPELINE_LOOP_ENABLED=false). "
-            "Use POST /pipeline/run to trigger a run manually."
-        )
-        return
-    log.info("Mycelium pipeline loop started — interval %ds", settings.agent_loop_interval)
+    log.info("Pipeline loop task started - polling config every 30s when idle")
     while True:
+        cfg = await _get_runtime_cfg()
+        if not cfg["loop_enabled"]:
+            await asyncio.sleep(30)
+            continue
         await pipeline.run()
-        await asyncio.sleep(settings.agent_loop_interval)
+        cfg = await _get_runtime_cfg()
+        await asyncio.sleep(cfg["loop_interval_seconds"])
 
 
 @asynccontextmanager
@@ -94,7 +111,7 @@ async def lifespan(_app: FastAPI):  # pyright: ignore[reportUnusedParameter]
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
-app = FastAPI(title="Mycelium — Continuity Engine", lifespan=lifespan)
+app = FastAPI(title="Mycelium - Continuity Engine", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -110,8 +127,9 @@ async def health():
 
 
 @app.get("/config")
-async def config():
+async def get_config():
     """Return non-sensitive runtime configuration for the UI."""
+    runtime = await _get_runtime_cfg()
     return {
         "google_cloud_project": settings.google_cloud_project,
         "google_cloud_location": settings.google_cloud_location,
@@ -119,10 +137,30 @@ async def config():
         "gitlab_url": settings.gitlab_url,
         "gitlab_project_id": settings.gitlab_project_id,
         "mongodb_db": settings.mongodb_db,
-        "pipeline_loop_enabled": settings.pipeline_loop_enabled,
-        "agent_loop_interval_seconds": settings.agent_loop_interval,
         "demo_mode": settings.demo_mode,
+        **runtime,
     }
+
+
+class _RuntimeConfigPatch(BaseModel):
+    loop_enabled: bool | None = None
+    loop_interval_seconds: int | None = None
+    analyst_max_investigators: int | None = None
+
+
+@app.patch("/config")
+async def patch_config(body: _RuntimeConfigPatch):
+    """Update mutable runtime settings (loop, investigators) without restarting."""
+    patch: dict = {}
+    if body.loop_enabled is not None:
+        patch["loop_enabled"] = body.loop_enabled
+    if body.loop_interval_seconds is not None:
+        patch["loop_interval_seconds"] = max(60, min(86400, body.loop_interval_seconds))
+    if body.analyst_max_investigators is not None:
+        patch["analyst_max_investigators"] = max(1, min(20, body.analyst_max_investigators))
+    if patch:
+        await graph.set_runtime_config(patch)
+    return await _get_runtime_cfg()
 
 
 @app.get("/snapshot")
@@ -199,7 +237,7 @@ async def has_demo_data():
 
 @app.get("/project")
 async def project_info():
-    """Real GitLab project metadata — name, namespace, URL, branch, stars, forks."""
+    """Real GitLab project metadata - name, namespace, URL, branch, stars, forks."""
     return await asyncio.to_thread(gitlab.get_project_info)
 
 
@@ -216,7 +254,7 @@ async def developer_busfactor(username: str):
 
     For internal members: shows bus-factor threshold position per module.
     For upstream/external authors: shows their share of total module expertise
-      (internal + external) — they are excluded from bus-factor by design.
+      (internal + external) - they are excluded from bus-factor by design.
     """
     from risk.forecasting import compute_bus_factor
 
@@ -248,7 +286,7 @@ async def developer_busfactor(username: str):
         # Use raw commit counts for all percentage calculations.
         # expertise_score is normalized (top contributor per module = 1.0), so using it
         # directly for percentages produces misleading "100%" when only one contributor
-        # is recorded — even though the proportions are mathematically the same.
+        # is recorded - even though the proportions are mathematically the same.
         all_commit_total    = sum(c.get("commit_count", 0) for c in all_contribs)
         internal_commit_total = sum(c.get("commit_count", 0) for c in internal)
         dev_commit_count    = contrib.get("commit_count", 0)
@@ -391,6 +429,23 @@ async def trigger_offboard(username: str):
     return result
 
 
+@app.post("/demo/seed-issues")
+async def seed_demo_issues():
+    """Create sample stale bot issues in GitLab for demo purposes.
+
+    Requires DEMO_MODE=true. The seeded issues are intentionally outdated so the
+    next pipeline run will detect them as stale and close them automatically,
+    demonstrating the stale-issue cleanup flow.
+    """
+    if not settings.demo_mode:
+        raise HTTPException(status_code=403, detail="Demo mode is disabled (set DEMO_MODE=true to enable)")
+    try:
+        created = await asyncio.to_thread(gitlab.seed_stale_demo_issues)
+        return {"seeded": len(created), "issues": created}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @app.post("/demo/seed/{scenario}")
 async def seed_demo(scenario: str):
     """Seed demo data for a scenario: team | new_joiner | fading | sole_owner.
@@ -460,7 +515,7 @@ async def contribution_history(module_path: str | None = None, developer_usernam
 
 @app.get("/actions")
 async def list_actions(limit: int = 200, run_id: str | None = None):
-    """Agent action log — what the act agent has done across all pipeline runs."""
+    """Agent action log - what the act agent has done across all pipeline runs."""
     if run_id:
         actions = await graph.actions.find({"run_id": run_id}, {"_id": 0}).sort("executed_at", -1).to_list(limit)
         return actions
@@ -469,8 +524,41 @@ async def list_actions(limit: int = 200, run_id: str | None = None):
 
 @app.get("/findings")
 async def list_findings(limit: int = 200, run_id: str | None = None):
-    """Continuity findings — qualitative analyst output, no scores."""
+    """Continuity findings - qualitative analyst output, no scores."""
     return await graph.list_findings(limit=limit, run_id=run_id)
+
+
+# ---------------------------------------------------------------------------
+# GitLab bot-issue endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/gitlab/bot-issues")
+async def list_bot_issues():
+    """Preview open GitLab issues created by the Mycelium bot.
+
+    An issue is considered a bot issue when:
+      - its author username matches GITLAB_BOT_USERNAME, OR
+      - it carries the 'mycelium' label (issues created via MCP tools).
+    """
+    try:
+        issues = await asyncio.to_thread(gitlab.list_bot_issues)
+        return {"issues": issues, "count": len(issues)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/gitlab/close-bot-issues")
+async def close_bot_issues():
+    """Close all open GitLab issues created by the Mycelium bot.
+
+    Each issue receives a closing comment before being closed so the audit trail
+    is preserved. Returns ``{closed, errors, total}``.
+    """
+    try:
+        result = await asyncio.to_thread(gitlab.close_bot_issues)
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -484,7 +572,7 @@ async def pipeline_history(limit: int = 50):
         if runs:
             return {"runs": runs}
     except Exception as exc:
-        log.warning("MongoDB pipeline history unavailable (%s) — using in-memory", exc)
+        log.warning("MongoDB pipeline history unavailable (%s) - using in-memory", exc)
     return {"runs": [r.to_dict() for r in pipeline.run_history]}
 
 
@@ -548,7 +636,7 @@ async def pipeline_stream():
 
 
 # ---------------------------------------------------------------------------
-# Activity stream endpoint — structured agent event feed for the UI
+# Activity stream endpoint - structured agent event feed for the UI
 # ---------------------------------------------------------------------------
 
 @app.get("/pipeline/activity")

@@ -1,4 +1,4 @@
-# agent/
+﻿# agent/
 
 The autonomous agent pipeline and all agent components.
 
@@ -6,7 +6,7 @@ The autonomous agent pipeline and all agent components.
 
 ## Files
 
-### pipeline.py — orchestration
+### pipeline.py - orchestration
 
 The main `Pipeline` class drives the 9-stage cycle. Each run produces a
 structured log that the UI reads from `/pipeline/current`.
@@ -29,16 +29,16 @@ do) come entirely from the agents.
 
 ---
 
-### investigator.py — subagent file readers
+### investigator.py - subagent file readers
 
 Three async functions that use `genai.Client` directly (not AdkApp) so they
 can run concurrently via `asyncio.gather`:
 
-- **`investigate_module(module_path, contributors, gitlab_client)`** — reads
+- **`investigate_module(module_path, contributors, gitlab_client)`** - reads
   up to 30 files, recurses up to 3 directory levels, always reads key doc
   files (README, CONTRIBUTING, pyproject.toml, etc.)
-- **`investigate_member(member, attention_reason, uniquely_owned_modules, gitlab_client)`** — reads up to 10 files authored primarily by that member
-- **`investigate_drift(fork_divergence, gitlab_client)`** — reads upstream
+- **`investigate_member(member, attention_reason, uniquely_owned_modules, gitlab_client)`** - reads up to 10 files authored primarily by that member
+- **`investigate_drift(fork_divergence, gitlab_client)`** - reads upstream
   commit messages and judges urgency from content (e.g. CVE patch vs typo fix)
 
 The investigator has a **shared budget** (`budget: list[int]`) so the total
@@ -46,7 +46,7 @@ file reads per subagent are capped regardless of directory depth.
 
 ---
 
-### analyst_agent.py — interpretation
+### analyst_agent.py - interpretation
 
 ADK `Agent` wrapped in `AdkApp`. Receives the investigator findings plus the
 knowledge graph snapshot and produces:
@@ -71,27 +71,41 @@ Concern type vocabulary: `knowledge_concentration`, `fragile_documentation`,
 `upstream_drift`, `stalled_work`, `undeclared_ownership`, `nominal_ownership`,
 `ci_instability`, `multi_module_overload`
 
+These concern types are grounded in empirical software engineering research:
+
+| Concern type | Research grounding |
+|---|---|
+| `knowledge_concentration` / `undeclared_ownership` | Rigby & Bird (2013), FSE - code ownership and review concentration; Bird et al. (2011), ESEC/FSE - ownership breadth and defect correlation |
+| `fading_contributor` | Developer turnover literature (MSR); contributor departure risk as a predictor of knowledge loss |
+| `upstream_dominance` | Fork-specific extension - modules where bus factor is 0 because all committers are upstream authors outside the org |
+| Bus factor threshold (80%) | Ferreira et al. (2019) - empirical analysis of bus factor thresholds across OSS projects |
+
+The vocabulary itself was designed for this system. The underlying risk
+concepts - knowledge concentration, ownership breadth, contributor departure,
+and knowledge transfer - are well-established in the MSR/SE research
+literature cited above and in [`README.md`](../README.md#prior-art-and-research-references).
+
 ---
 
-### planner_agent.py — action planning
+### planner_agent.py - action planning
 
 Reads the analyst interpretation + graph snapshot. Produces a structured list
 of proposed actions (create issue, assign, comment) with rationale.
 
 ---
 
-### act_agent.py — execution
+### act_agent.py - execution
 
 Executes the planner's output via MCP tools. Has access to the Mycelium
 custom MCP (read + write) and the GitLab OAuth MCP. Writes findings as
 GitLab issues and comments.
 
-This is also the agent deployed to Vertex AI Agent Engine — see
+This is also the agent deployed to Vertex AI Agent Engine - see
 `deployment/README.md`.
 
 ---
 
-### json_utils.py — LLM output parsing
+### json_utils.py - LLM output parsing
 
 `try_parse_json(text: str) -> dict | None`
 

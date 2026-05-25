@@ -1,5 +1,5 @@
-"""
-Planner agent — decides the corrective GitLab actions and graph updates to make.
+﻿"""
+Planner agent - decides the corrective GitLab actions and graph updates to make.
 
 Built with ADK on top of Vertex AI per the hackathon's mandatory stack.
 """
@@ -41,7 +41,7 @@ Only plan actions where there is clear evidence from the data. Do not invent dat
 Do not create more than 3-4 new issues per run to avoid noise.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-IDEMPOTENCY — read this before planning anything
+IDEMPOTENCY - read this before planning anything
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 The pipeline runs on a loop. Prior runs already created issues. Your first job
@@ -52,7 +52,7 @@ CREATING ISSUES
   - Check `repository.open_issues` (the live GitLab list, includes iid + title
     + author + bot_authored flag) AND `knowledge_graph.open_tasks`. If any
     existing issue has a title that covers the same subject and concern type,
-    do NOT create another. One issue per finding — ever, across all runs.
+    do NOT create another. One issue per finding - ever, across all runs.
   - Only create a new issue when no existing issue addresses the finding.
   - Issues with `bot_authored: true` were created by the service account on a
     prior run. The bot owns those issues and may freely edit or supersede them.
@@ -63,7 +63,7 @@ COMMENTING ON ISSUES
   - Do NOT plan add_comment to rephrase or restate what an issue's title already
     says. That is noise. Do not do it.
   - Only plan add_comment when ALL of the following are true:
-      1. There is new, concrete, measurable data since the issue was created —
+      1. There is new, concrete, measurable data since the issue was created -
          e.g. drift count changed from 15 to 30 commits, a member's status
          changed, a new CVE was identified by the investigator.
       2. That new data materially changes what the reader needs to know.
@@ -81,30 +81,30 @@ ISSUE CORRECTION DECISION TREE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 When an existing issue has incorrect, outdated, or mis-scoped content, choose
-from this ordered decision tree — earlier tiers are always preferred:
+from this ordered decision tree - earlier tiers are always preferred:
 
-TIER 1 — PREFER: edit_issue (edit in place)
+TIER 1 - PREFER: edit_issue (edit in place)
   When to use: the issue topic and title are correct but the description body
-  needs updating — e.g., new file paths discovered, a CODEOWNERS snippet
+  needs updating - e.g., new file paths discovered, a CODEOWNERS snippet
   changed, or the action list needs expanding.
   Plan: one edit_issue action with iid and the corrected description.
-  Do NOT use if the issue already has significant discussion comments — editing
+  Do NOT use if the issue already has significant discussion comments - editing
   the body can confuse readers who have replied to specific passages.
 
-TIER 2 — DEFAULT: keep and fix forward (add_comment)
+TIER 2 - DEFAULT: keep and fix forward (add_comment)
   When to use: the issue history and discussion context must be preserved,
   and the new information is an update rather than a correction.
   Plan: one add_comment action carrying only the new concrete fact.
   This is the correct choice for most follow-up runs where data has changed.
 
-TIER 3 — RESERVED: supersede (create new + link + close old)
+TIER 3 - RESERVED: supersede (create new + link + close old)
   When to use: the original issue has FUNDAMENTALLY incorrect framing that
-  cannot be repaired by editing — e.g., wrong module scope, wrong person
+  cannot be repaired by editing - e.g., wrong module scope, wrong person
   named as the risk, or the entire premise has been invalidated.
   Plan these three actions in order:
-    1. create_issue — new issue with correct scope and full description
-    2. add_comment  — on the OLD issue: "Superseded by #NEW_IID — <one-sentence reason>"
-    3. close_issue  — on the OLD issue (state: closed, superseded)
+    1. create_issue - new issue with correct scope and full description
+    2. add_comment  - on the OLD issue: "Superseded by #NEW_IID - <one-sentence reason>"
+    3. close_issue  - on the OLD issue (state: closed, superseded)
   TRACEABILITY RULE: never close an issue without first adding the linking
   comment. Fragmented trackers (new issue exists but old is still open) are
   worse than doing nothing.
@@ -116,7 +116,7 @@ ISSUE DESCRIPTION QUALITY RULES (apply to ALL create_issue and edit_issue action
 - Be concrete and data-driven. Cite specific module names, file counts, commit
   counts, or contributor names from the evidence. Never be vague.
 - State the risk plainly in one sentence. Do not repeat it.
-- Recommended actions must name specific modules, files, or people — not just
+- Recommended actions must name specific modules, files, or people - not just
   "identify a second engineer" or similar generic instructions.
 - Do NOT include meta-commentary about the pipeline, the agent, or what the
   subject is already doing. Write as if a human engineer composed the issue.
@@ -152,9 +152,9 @@ stalled_work:
 undeclared_ownership / nominal_ownership:
   Create an issue proposing CODEOWNERS edits. The description must:
   - Name every specific path that needs an owner (e.g. `internal/`, `scripts/`).
-  - Name the specific person to assign as owner — use the top internal committer
+  - Name the specific person to assign as owner - use the top internal committer
     for each path from the knowledge graph. Do not say "starting with X" or
-    "propose candidates" — commit to a specific owner per path.
+    "propose candidates" - commit to a specific owner per path.
   - Include a ready-to-copy CODEOWNERS snippet the team can apply directly.
 
 ci_instability:
@@ -172,7 +172,7 @@ fading_contributor / offboarding_risk:
   sole_contributor with low transferability.
 
 For graph_updates, include contributors whose only signal is MR approvals
-(expertise_score: 0.6) — they are implicit knowledge holders. Set external=true
+(expertise_score: 0.6) - they are implicit knowledge holders. Set external=true
 for developer entries that match upstream authors in the investigations.
 
 OUTPUT: Respond with ONLY a valid JSON object. No explanation, no markdown.
@@ -192,7 +192,7 @@ Schema:
       "params": {
         "iid": 12,
         "description": "...",
-        "title": "optional — omit to leave unchanged"
+        "title": "optional - omit to leave unchanged"
       }
     },
     {
@@ -254,7 +254,7 @@ def _run_through_adk(prompt: str, stage_id: str = "plan") -> str:
                 if text:
                     chunks.append(str(text))
                     stripped = str(text).strip()
-                    # Skip pure JSON output — already surfaced as structured action_planned events.
+                    # Skip pure JSON output - already surfaced as structured action_planned events.
                     if stripped and not stripped.startswith(("{", "[")):
                         _activity_bus.emit({"type": "agent_text", "stage_id": stage_id, "text": stripped})
     finally:
@@ -277,7 +277,7 @@ def plan(interpretation: dict, repo_snapshot: dict, graph_snapshot: dict) -> dic
         "knowledge_graph": graph_snapshot,
     }
     demo_note = (
-        "\n\nNOTE — DEMO MODE: some entries in knowledge_graph carry demo: true. "
+        "\n\nNOTE - DEMO MODE: some entries in knowledge_graph carry demo: true. "
         "Treat them as real contributors and modules; plan actions for them as you "
         "would for any other team member."
         if settings.demo_mode and graph_snapshot.get("demo_data_present")
@@ -291,16 +291,16 @@ def plan(interpretation: dict, repo_snapshot: dict, graph_snapshot: dict) -> dic
     try:
         text = _run_through_adk(prompt)
     except Exception as exc:
-        logger.warning("[planner] AdkApp run failed (%s) — empty plan", exc)
+        logger.warning("[planner] AdkApp run failed (%s) - empty plan", exc)
         return {"actions": [], "graph_updates": []}
 
     if not text:
-        logger.warning("[planner] empty output from ADK — empty plan")
+        logger.warning("[planner] empty output from ADK - empty plan")
         return {"actions": [], "graph_updates": []}
 
     parsed = _try_parse_json(text)
     if parsed is None:
-        logger.warning("[planner] non-JSON output — empty plan. text[:200]=%r", text[:200])
+        logger.warning("[planner] non-JSON output - empty plan. text[:200]=%r", text[:200])
         return {"actions": [], "graph_updates": []}
     return parsed
 

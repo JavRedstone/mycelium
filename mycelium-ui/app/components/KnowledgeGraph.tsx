@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Box from "@mui/material/Box";
@@ -34,6 +34,7 @@ import AddCircleOutlinedIcon from "@mui/icons-material/AddCircleOutlined";
 import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 
 import { filterModules, isBotUsername } from "../lib/graphFilters";
+import { scrollbarSx } from "../lib/sx";
 
 import {
   ReactFlow,
@@ -121,7 +122,7 @@ type BusfactorData = {
 };
 
 // ---------------------------------------------------------------------------
-// Bus-factor drawer — shown when a developer name is clicked
+// Bus-factor drawer - shown when a developer name is clicked
 // ---------------------------------------------------------------------------
 function BusfactorDrawer({
   username,
@@ -196,13 +197,13 @@ function BusfactorDrawer({
         </IconButton>
       </Box>
 
-      <Box sx={{ px: 2.5, py: 2, overflowY: "auto", height: "calc(100vh - 72px)" }}>
+      <Box sx={{ px: 2.5, py: 2, overflowY: "auto", height: "calc(100vh - 72px)", ...scrollbarSx }}>
         {loading && <LinearProgress sx={{ borderRadius: 1, mb: 2 }} />}
         {error && <Typography variant="body2" color="error.main">{error}</Typography>}
 
         {data && !loading && (
           <>
-            {/* Context banner — different for upstream vs internal */}
+            {/* Context banner - different for upstream vs internal */}
             {data.external ? (
               <Paper elevation={0} sx={{ p: 1.5, mb: 2.5, bgcolor: "rgba(250,123,23,0.06)", border: "1px solid rgba(250,123,23,0.2)", borderRadius: 1.5 }}>
                 <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
@@ -320,7 +321,7 @@ function BusfactorDrawer({
                         {noInternal ? (
                           <Typography variant="caption" color="text.disabled" sx={{ pl: "22px", display: "block" }}>
                             {isUpstream
-                              ? "No internal contributors — entirely upstream knowledge for this module."
+                              ? "No internal contributors - entirely upstream knowledge for this module."
                               : "No internal contributors. All knowledge is upstream."}
                           </Typography>
                         ) : (
@@ -388,7 +389,7 @@ function BusfactorDrawer({
 
                             {isUpstream && (
                               <Typography variant="caption" sx={{ pl: "22px", display: "block", color: "rgba(250,123,23,0.7)", fontSize: "0.6rem", mt: 0.25 }}>
-                                {username} is upstream — not counted in team bus factor
+                                {username} is upstream - not counted in team bus factor
                               </Typography>
                             )}
 
@@ -420,7 +421,7 @@ function BusfactorDrawer({
 }
 
 // ---------------------------------------------------------------------------
-// Concentration helpers — bus_factor is a measurement, not a score.
+// Concentration helpers - bus_factor is a measurement, not a score.
 // Colour conveys structural concentration, never severity.
 // ---------------------------------------------------------------------------
 function concentrationLabel(busFactor: number, hasInternal: boolean): string {
@@ -431,8 +432,8 @@ function concentrationLabel(busFactor: number, hasInternal: boolean): string {
 }
 
 function concentrationColor(busFactor: number, hasInternal: boolean): string {
-  if (!hasInternal) return "#ea4335";   // no internal knowledge — red, descriptive
-  if (busFactor <= 1) return "#fa7b17"; // single holder — orange
+  if (!hasInternal) return "#ea4335";   // no internal knowledge - red, descriptive
+  if (busFactor <= 1) return "#fa7b17"; // single holder - orange
   if (busFactor === 2) return "#fbbc04";
   return "#34a853";
 }
@@ -446,7 +447,7 @@ function moduleSortKey(m: Module): number {
 }
 
 // ---------------------------------------------------------------------------
-// React Flow — custom node types (defined outside component to avoid re-render)
+// React Flow - custom node types (defined outside component to avoid re-render)
 // ---------------------------------------------------------------------------
 const DEMO_DOT = (
   <Box component="span" sx={{
@@ -626,7 +627,7 @@ function buildFlowGraph(modules: Module[]): { nodes: Node[]; edges: Edge[]; tota
 }
 
 // ---------------------------------------------------------------------------
-// Bus-factor breakdown rows — "who covers ≥80%" view per module card
+// Bus-factor breakdown rows - "who covers ≥80%" view per module card
 // ---------------------------------------------------------------------------
 function BusfactorModuleRows({
   contribs,
@@ -676,7 +677,7 @@ function BusfactorModuleRows({
     <Stack spacing={0.6}>
       {internal.length === 0 && (
         <Typography variant="caption" color="error.main" sx={{ fontSize: "0.68rem" }}>
-          No internal contributors — all knowledge held upstream.
+          No internal contributors - all knowledge held upstream.
         </Typography>
       )}
 
@@ -753,7 +754,7 @@ function BusfactorModuleRows({
 }
 
 // ---------------------------------------------------------------------------
-// Module Knowledge Breakdown — the primary view
+// Module Knowledge Breakdown - the primary view
 // ---------------------------------------------------------------------------
 function ModuleBreakdown({
   modules,
@@ -774,7 +775,7 @@ function ModuleBreakdown({
   // Sort by structural concentration (a measurement). Modules with no internal
   // committers float to the top; then by bus_factor ascending.
   // Also filter out namespace-style paths (e.g. "gitlab-org/maintainers/gitlab-pages")
-  // that crept in from upstream fork history — real local directories never contain "/".
+  // that crept in from upstream fork history - real local directories never contain "/".
   const sorted = filterModules(modules)
     .filter((m) => (m.contributors?.length ?? 0) > 0)
     .sort((a, b) => moduleSortKey(a) - moduleSortKey(b));
@@ -946,10 +947,10 @@ function ModuleBreakdown({
                   />
                 </>
               )}
-              {moduleFindings.map((f, i) => (
+              {[...new Set(moduleFindings.map((f) => f.concern_type))].map((type) => (
                 <Chip
-                  key={i}
-                  label={f.concern_type.replace(/_/g, " ")}
+                  key={type}
+                  label={type.replace(/_/g, " ")}
                   size="small"
                   variant="outlined"
                   sx={{ height: 18, fontSize: "0.6rem", flexShrink: 0, color: "primary.light", borderColor: "rgba(138,180,248,0.4)" }}
@@ -965,7 +966,7 @@ function ModuleBreakdown({
               )}
             </Stack>
 
-            {/* Body — contributions view or bus factor view */}
+            {/* Body - contributions view or bus factor view */}
             {viewMode === "busfactor" ? (
               <BusfactorModuleRows
                 contribs={contribs}
@@ -1080,7 +1081,7 @@ function ModuleBreakdown({
                         >
                           {viewMode === "score"
                             ? c.expertise_score.toFixed(2)
-                            : moduleCommitTotal > 0 ? `${((c.commit_count / moduleCommitTotal) * 100).toFixed(1)}%` : "—"}
+                            : moduleCommitTotal > 0 ? `${((c.commit_count / moduleCommitTotal) * 100).toFixed(1)}%` : "-"}
                         </Typography>
                       </Tooltip>
                       <Chip
@@ -1119,7 +1120,7 @@ function ModuleBreakdown({
 }
 
 // ---------------------------------------------------------------------------
-// Upstream authors — contributor-centric "who knows what" view
+// Upstream authors - contributor-centric "who knows what" view
 // ---------------------------------------------------------------------------
 function UpstreamAuthorList({ authors, modules }: { authors: Developer[]; modules: Module[] }) {
   // Build username → contributed modules (external contribs only, skip pure "repository" global)
@@ -1147,7 +1148,7 @@ function UpstreamAuthorList({ authors, modules }: { authors: Developer[]; module
   const hasPerDirData = Object.keys(authorModules).length > 0;
 
   return (
-    <Stack spacing={1.25} sx={{ maxHeight: 420, overflowY: "auto", overflowX: "hidden" }}>
+    <Stack spacing={1.25} sx={{ maxHeight: 420, overflowY: "auto", overflowX: "hidden", ...scrollbarSx }}>
       {!hasPerDirData && (
         <Paper elevation={0} sx={{ p: 1.5, bgcolor: "rgba(66,133,244,0.06)", border: "1px solid rgba(66,133,244,0.15)", borderRadius: 1.5 }}>
           <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
@@ -1352,7 +1353,7 @@ export default function KnowledgeGraph() {
     fetch(`${apiUrl}/config`)
       .then((r) => r.json())
       .then((cfg: Record<string, unknown>) => setDemoMode(cfg.demo_mode === true))
-      .catch(() => {/* silently ignore — demo controls stay hidden */});
+      .catch(() => {/* silently ignore - demo controls stay hidden */});
   }, [apiUrl]);
 
   async function clearDemoData() {
@@ -1408,7 +1409,7 @@ export default function KnowledgeGraph() {
           )}
         </Stack>
         <Stack direction="row" spacing={1}>
-          {/* Demo controls — only visible when DEMO_MODE=true on the backend */}
+          {/* Demo controls - only visible when DEMO_MODE=true on the backend */}
           {demoMode && (
             <>
               <Button
@@ -1464,7 +1465,7 @@ export default function KnowledgeGraph() {
         </Stack>
       </Stack>
 
-      {/* Demo mode banner — shown when demo mode is on, with or without seeded data */}
+      {/* Demo mode banner - shown when demo mode is on, with or without seeded data */}
       {demoMode && (
         <Paper elevation={0} sx={{ p: 1.5, bgcolor: "#7c3aed11", border: "1px solid #7c3aed44", borderRadius: 2 }}>
           <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
@@ -1514,7 +1515,7 @@ export default function KnowledgeGraph() {
         </Paper>
       )}
 
-      {/* Bus-factor drawer — opened when a developer name is clicked */}
+      {/* Bus-factor drawer - opened when a developer name is clicked */}
       <BusfactorDrawer
         username={selectedDev}
         open={drawerOpen}

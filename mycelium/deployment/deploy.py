@@ -1,4 +1,4 @@
-"""
+﻿"""
 Deploy the Mycelium act agent to Vertex AI Agent Engine.
 
 This implements the required hackathon pattern:
@@ -23,7 +23,7 @@ Usage:
 Required environment variables (read from .env):
     GOOGLE_CLOUD_PROJECT
     GOOGLE_CLOUD_LOCATION             (default: us-central1)
-    GOOGLE_CLOUD_STORAGE_BUCKET       (staging bucket — without `gs://` prefix)
+    GOOGLE_CLOUD_STORAGE_BUCKET       (staging bucket - without `gs://` prefix)
     GITLAB_TOKEN, GITLAB_PROJECT_ID, MONGODB_URI  (forwarded to the runtime)
 """
 from __future__ import annotations
@@ -101,7 +101,7 @@ def create() -> None:
     remote = agent_engines.create(
         adk_app,
         display_name="mycelium-continuity-agent",
-        description="Mycelium — autonomous engineering continuity agent with "
+        description="Mycelium - autonomous engineering continuity agent with "
                     "GitLab MCP + MongoDB MCP toolsets.",
         requirements=_REQUIREMENTS,
         extra_packages=_EXTRA_PACKAGES,

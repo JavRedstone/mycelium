@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import json
 import logging
 import time
@@ -34,7 +34,7 @@ class _PipelineCancelled(Exception):
 
 STAGE_DEFS = [
     {"id": "observe_repo", "label": "Observe Repo", "description": "Read GitLab project state: members, issues, MRs, pipelines, CODEOWNERS, fork divergence"},
-    {"id": "map_modules", "label": "Map Modules", "description": "Map per-directory upstream authorship — who knows what part of the codebase"},
+    {"id": "map_modules", "label": "Map Modules", "description": "Map per-directory upstream authorship - who knows what part of the codebase"},
     {"id": "investigate", "label": "Investigate", "description": "Spawn concurrent subagents to read actual file content and judge transferability"},
     {"id": "observe_graph", "label": "Observe Graph", "description": "Read continuity graph snapshot"},
     {"id": "interpret", "label": "Interpret", "description": "Reason over signals + investigator findings; produce qualitative findings"},
@@ -136,7 +136,7 @@ class PipelineRunner:
 
     async def run(self) -> None:
         if self._running:
-            logger.warning("[pipeline] Run requested but already running — skipping")
+            logger.warning("[pipeline] Run requested but already running - skipping")
             return
         self._running = True
         self._cancel_requested = False
@@ -295,7 +295,7 @@ class PipelineRunner:
     def _detect_high_attention_members(self) -> list[dict]:
         """Identify which members need investigator attention.
 
-        Detection logic uses observable signals, not severity thresholds —
+        Detection logic uses observable signals, not severity thresholds -
         it asks 'who should the agent look at,' not 'who is high risk.'
         Severity judgment is delegated to the investigator subagent.
         """
@@ -361,7 +361,7 @@ class PipelineRunner:
                 "uniquely_owned_modules": modules,
             })
 
-        # 1. Sole contributors — directly from per-module attribution
+        # 1. Sole contributors - directly from per-module attribution
         for username, modules in sole_owner_modules.items():
             member = member_by_key.get(username) or {"username": username, "name": username}
             if len(modules) >= 2:
@@ -369,7 +369,7 @@ class PipelineRunner:
             else:
                 _add(member, "sole_contributor", modules)
 
-        # 2. Recently inactive / recent joiners — from commit timestamps
+        # 2. Recently inactive / recent joiners - from commit timestamps
         for c in commit_contributors:
             if c.get("external"):
                 continue
@@ -402,7 +402,7 @@ class PipelineRunner:
 
         This is where the system stops being algorithmic. Each subagent reads
         actual file content (via the GitLab client) and produces a structured
-        assessment with its own reasoning. No thresholds — the subagent's
+        assessment with its own reasoning. No thresholds - the subagent's
         judgment is the output.
         """
         # Capture member activity for high-attention detection
@@ -417,7 +417,7 @@ class PipelineRunner:
         high_attention = self._detect_high_attention_members()
         logger.info("[investigate] High-attention members: %d", len(high_attention))
 
-        # Member investigators — one per high-attention member, concurrent
+        # Member investigators - one per high-attention member, concurrent
         for item in high_attention:
             subject = (item["member"].get("username") or item["member"].get("name") or "?")
             _activity_bus.emit({"type": "subagent_spawn", "stage_id": "investigate",
@@ -433,7 +433,7 @@ class PipelineRunner:
             for item in high_attention
         ]
 
-        # Module investigators — one per discovered module, concurrent
+        # Module investigators - one per discovered module, concurrent
         module_tasks = []
         for module_path, contribs in self._module_contributors.items():
             _activity_bus.emit({"type": "subagent_spawn", "stage_id": "investigate",
@@ -446,7 +446,7 @@ class PipelineRunner:
                 )
             )
 
-        # Drift investigator — only if this is a fork that's behind
+        # Drift investigator - only if this is a fork that's behind
         fork_div = self._repo.get("fork_divergence")
         drift_task = None
         if fork_div and fork_div.get("commits_behind", 0) > 0:
@@ -455,12 +455,21 @@ class PipelineRunner:
                 gitlab_client=self._gitlab,
             )
 
-        # Run everything concurrently
+        # Cap concurrency from runtime config (default 10, hard max 20)
+        cfg = await self._graph.get_runtime_config()
+        max_inv = max(1, min(20, int(cfg.get("analyst_max_investigators", 10))))
+        logger.info("[investigate] max concurrent investigators: %d", max_inv)
+        sem = asyncio.Semaphore(max_inv)
+
+        async def _bounded(coro):
+            async with sem:
+                return await coro
+
         all_tasks: list = list(member_tasks) + list(module_tasks)
         if drift_task is not None:
             all_tasks.append(drift_task)
 
-        results = await asyncio.gather(*all_tasks, return_exceptions=True)
+        results = await asyncio.gather(*[_bounded(t) for t in all_tasks], return_exceptions=True)
 
         # Split results back by category
         m_count = len(member_tasks)
@@ -523,7 +532,7 @@ class PipelineRunner:
         }
 
     async def _interpret(self) -> dict:
-        """Continuity interpretation stage — replaces the old 'analyze' stage.
+        """Continuity interpretation stage - replaces the old 'analyze' stage.
 
         Produces qualitative findings (no scores) by reasoning over signals
         plus investigator outputs.
@@ -560,23 +569,255 @@ class PipelineRunner:
         }
 
     async def _act(self) -> dict:
+        """Bounded stabilization loop for the act stage.
+
+        Runs the act agent for up to MAX_STABILIZATION_PASSES iterations.
+        Each pass receives context about what was already done so the agent
+        can focus on remaining unresolved findings without creating duplicates.
+
+        Terminates early when:
+          - No new issues were created in the latest pass (frontier exhausted), OR
+          - The iteration cap is reached.
+
+        This is NOT a retry loop. It is iterative environmental modification:
+        each pass sees the updated GitLab state left by the previous one.
+        """
+        MAX_STABILIZATION_PASSES = 5
+
         actions = self._plan.get("actions") or []
         if actions:
-            lines = [f"Executing **{len(actions)}** planned action(s):\n"]
+            lines = [
+                f"Executing {len(actions)} planned action(s) across up to "
+                f"{MAX_STABILIZATION_PASSES} stabilization passes:\n"
+            ]
             for a in actions[:8]:
                 kind = a.get("kind", "?")
                 title = (a.get("params") or {}).get("title", "")
                 lines.append(f"- `{kind}`: {title}")
             if len(actions) > 8:
-                lines.append(f"- *(+{len(actions) - 8} more)*")
+                lines.append(f"- (+{len(actions) - 8} more)")
             _activity_bus.emit({"type": "agent_text", "stage_id": "act",
                                 "text": "\n".join(lines)})
         else:
             _activity_bus.emit({"type": "agent_text", "stage_id": "act",
-                                "text": "No actions planned — assessing project state."})
-        # act_agent.act is a native coroutine — uses MCP subprocess + async Gemini
-        self._act_result = await act_agent.act(self._interpretation, self._repo, self._plan)
+                                "text": "No actions planned - assessing project state."})
+
+        # Snapshot existing bot issues before the loop so we can:
+        #   (a) detect which issues are newly created each pass (convergence signal)
+        #   (b) detect stale issues after all passes complete
+        pre_act_issues: list[dict] = []
+        try:
+            pre_act_issues = await asyncio.to_thread(self._gitlab.list_bot_issues)
+            logger.info("[act] Pre-act bot issues: %d open", len(pre_act_issues))
+        except Exception as exc:
+            logger.warning("[act] Could not snapshot existing bot issues: %s", exc)
+
+        # Intervention memory - grows each pass, passed as context to the next one
+        known_iids: set[int] = {i["iid"] for i in pre_act_issues}
+        addressed_issue_iids: list[int] = []
+        addressed_subjects: list[str] = []
+        addressed_details: list[str] = []    # "#{iid} title" strings shown to agent
+        skip_action_titles: set[str] = set() # titles executed via direct fallback
+
+        # Accumulated across all passes
+        all_details: list[dict] = []
+        all_executed = 0
+        all_failed = 0
+        all_boundary_violations: list[str] = []
+        all_mcp_calls: list[dict] = []
+        last_summary: str | None = None
+        passes_run = 0
+
+        for pass_num in range(1, MAX_STABILIZATION_PASSES + 1):
+            passes_run = pass_num
+
+            if pass_num > 1:
+                _activity_bus.emit({
+                    "type": "agent_text", "stage_id": "act",
+                    "text": (
+                        f"Stabilization pass {pass_num}/{MAX_STABILIZATION_PASSES} - "
+                        "checking for remaining unresolved findings..."
+                    ),
+                })
+
+            prior_interventions: dict | None = None
+            if pass_num > 1:
+                prior_interventions = {
+                    "iteration": pass_num,
+                    "max_iterations": MAX_STABILIZATION_PASSES,
+                    "addressed_issue_iids": list(addressed_issue_iids),
+                    "addressed_subjects": list(addressed_subjects),
+                    "addressed_details": list(addressed_details),
+                    "skip_action_titles": list(skip_action_titles),
+                }
+
+            result = await act_agent.act(
+                self._interpretation,
+                self._repo,
+                self._plan,
+                prior_interventions=prior_interventions,
+            )
+
+            # Accumulate results
+            pass_details = result.get("details", [])
+            all_details.extend(pass_details)
+            all_executed += result.get("executed", 0)
+            all_failed += result.get("failed", 0)
+            all_boundary_violations.extend(result.get("boundary_violations", []))
+            all_mcp_calls.extend(result.get("mcp_calls", []))
+            if result.get("summary"):
+                last_summary = result["summary"]
+
+            # Update skip list so the direct fallback won't re-run create_issue
+            for d in pass_details:
+                if d.get("kind") == "create_issue":
+                    raw = d.get("detail", "")
+                    # detail format is "#{iid} title" or just "title"
+                    title = raw.split(" ", 1)[-1] if raw.startswith("#") else raw
+                    if title:
+                        skip_action_titles.add(title)
+
+            # Detect newly created issues this pass (convergence signal)
+            new_issue_count = 0
+            try:
+                current_issues = await asyncio.to_thread(self._gitlab.list_bot_issues)
+                for iss in current_issues:
+                    if iss["iid"] not in known_iids:
+                        known_iids.add(iss["iid"])
+                        addressed_issue_iids.append(iss["iid"])
+                        addressed_details.append(f"#{iss['iid']} {iss['title']}")
+                        new_issue_count += 1
+                        # Match to a finding subject for deduplication on next pass
+                        title_lower = iss["title"].lower()
+                        for f in (self._interpretation or {}).get("findings", []):
+                            sub = str(f.get("subject", "")).lower().strip()
+                            if sub and sub in title_lower and sub not in addressed_subjects:
+                                addressed_subjects.append(sub)
+                                break
+            except Exception as exc:
+                logger.warning("[act] Pass %d: issue count check failed: %s", pass_num, exc)
+
+            logger.info(
+                "[act] Pass %d/%d: %d action(s), %d new issue(s) created",
+                pass_num, MAX_STABILIZATION_PASSES, len(pass_details), new_issue_count,
+            )
+
+            # Terminate if no new issues were produced (frontier exhausted)
+            # Always run at least one full pass even if 0 issues are created.
+            if pass_num > 1 and new_issue_count == 0:
+                logger.info("[act] Intervention frontier exhausted after %d pass(es)", pass_num)
+                _activity_bus.emit({
+                    "type": "agent_text", "stage_id": "act",
+                    "text": f"Intervention frontier exhausted after {pass_num} stabilization pass(es).",
+                })
+                break
+
+            if pass_num == MAX_STABILIZATION_PASSES:
+                _activity_bus.emit({
+                    "type": "agent_text", "stage_id": "act",
+                    "text": f"Stabilization cap reached ({MAX_STABILIZATION_PASSES} passes).",
+                })
+
+        # Close stale/superseded issues once all passes are done
+        stale_closed = await self._close_stale_bot_issues(pre_act_issues)
+        if stale_closed:
+            _activity_bus.emit({
+                "type": "agent_text", "stage_id": "act",
+                "text": f"Closed {stale_closed} stale or superseded bot issue(s).",
+            })
+
+        self._act_result = {
+            "executed": all_executed,
+            "failed": all_failed,
+            "details": all_details,
+            "mcp_calls": all_mcp_calls,
+            "summary": last_summary,
+            "boundary_violations": all_boundary_violations,
+            "stabilization_passes": passes_run,
+            "stale_issues_closed": stale_closed,
+        }
         return self._act_result
+
+    async def _close_stale_bot_issues(self, pre_act_issues: list[dict]) -> int:
+        """Close open bot issues whose subject is no longer in the current findings.
+
+        Also closes old issues that were superseded by a new issue the act agent
+        just created for the same subject.
+
+        Matching heuristic: a finding subject (username or module path) is searched
+        for as a substring in the issue title (case-insensitive). This is intentionally
+        broad - it is better to leave a marginally relevant issue open than to close
+        something incorrectly.
+
+        Returns the number of issues closed.
+        """
+        if not pre_act_issues:
+            return 0
+
+        # Build the set of subjects the current run still considers relevant.
+        current_subjects: set[str] = {
+            str(f.get("subject", "")).lower().strip()
+            for f in (self._interpretation or {}).get("findings", [])
+            if f.get("subject")
+        }
+
+        # Re-fetch to discover issues the act agent created during this run.
+        post_act_issues: list[dict] = []
+        try:
+            post_act_issues = await asyncio.to_thread(self._gitlab.list_bot_issues)
+        except Exception as exc:
+            logger.warning("[act] Post-act issue fetch failed - skipping stale cleanup: %s", exc)
+            return 0
+
+        pre_iids = {i["iid"] for i in pre_act_issues}
+
+        # Map subject → newly created issue (for superseded-by links)
+        new_by_subject: dict[str, dict] = {}
+        for iss in post_act_issues:
+            if iss["iid"] not in pre_iids:
+                title_lower = iss["title"].lower()
+                for sub in current_subjects:
+                    if sub and sub in title_lower:
+                        new_by_subject[sub] = iss
+                        break
+
+        closed = 0
+        for old_iss in pre_act_issues:
+            title_lower = old_iss["title"].lower()
+
+            # Is any current finding subject mentioned in this issue's title?
+            matched_subject = next(
+                (s for s in current_subjects if s and s in title_lower), None
+            )
+
+            if matched_subject is None:
+                # Subject no longer in findings - issue is stale
+                reason = "stale (subject no longer in current findings)"
+                superseded_by = None
+            elif matched_subject in new_by_subject:
+                # A brand-new issue covers the same subject - old one is superseded
+                reason = f"superseded by #{new_by_subject[matched_subject]['iid']}"
+                superseded_by = new_by_subject[matched_subject]
+            else:
+                continue  # still relevant, leave it open
+
+            try:
+                await asyncio.to_thread(
+                    self._gitlab.close_stale_bot_issue,
+                    old_iss["iid"],
+                    superseded_by,
+                )
+                closed += 1
+                logger.info(
+                    "[act] Closed bot issue #%d ('%s') - %s",
+                    old_iss["iid"], old_iss["title"][:60], reason,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[act] Failed to close bot issue #%d: %s", old_iss["iid"], exc
+                )
+
+        return closed
 
     async def _learn(self) -> dict:
         count, total = 0, len(self._plan.get("graph_updates", []))
@@ -662,7 +903,7 @@ class PipelineRunner:
         except Exception as exc:
             logger.error("[pipeline] Persisting observed contributions failed: %s", exc)
 
-        # Per-directory knowledge attribution — WHO KNOWS WHAT PART of the repo.
+        # Per-directory knowledge attribution - WHO KNOWS WHAT PART of the repo.
         # This is the core of the knowledge graph: module nodes keyed by directory path,
         # with contribution edges carrying relative expertise scores per module.
         try:
@@ -735,7 +976,7 @@ class PipelineRunner:
         except Exception as exc:
             logger.error("[pipeline] Per-directory knowledge attribution failed: %s", exc)
 
-        # Monthly contribution history — timeline buckets per (developer, module, YYYY-MM)
+        # Monthly contribution history - timeline buckets per (developer, module, YYYY-MM)
         try:
             from graph.models import ContributionHistory
             _members_h = self._repo.get("members", [])
@@ -855,11 +1096,11 @@ class PipelineRunner:
                 ))
                 actions_saved += 1
             if not act_details:
-                # Record the run even when no actions were taken — shows agent assessed
+                # Record the run even when no actions were taken - shows agent assessed
                 await self._graph.insert_action(ActionRecord(
                     run_id=run_id,
                     tool="assess",
-                    detail=run_summary or "Agent assessed project state — no actions required.",
+                    detail=run_summary or "Agent assessed project state - no actions required.",
                     success=True,
                     run_summary=run_summary,
                 ))
@@ -878,7 +1119,7 @@ class PipelineRunner:
     async def _refresh_bus_factors(self) -> int:
         """Recompute bus_factor for each tracked module.
 
-        bus_factor is a measurement — a count of internal committers covering
+        bus_factor is a measurement - a count of internal committers covering
         80% of commits. No severity attached. No scoring. The analyst decides
         what to make of it in context.
         """
@@ -943,21 +1184,89 @@ class PipelineRunner:
         return saved
 
     async def _summary(self) -> dict:
-        # Exclude the summary stage itself — it's "running" when this executes, so counting
+        # Exclude the summary stage itself - it's "running" when this executes, so counting
         # it would give N-1/N. Report only the substantive pipeline stages.
         all_stages = self._current_run.stages if self._current_run else []
         stages = [s for s in all_stages if s.id != "summary"]
         succeeded = sum(1 for s in stages if s.status == "success")
-        failed = sum(1 for s in stages if s.status == "failed")
-        skipped = sum(1 for s in stages if s.status == "skipped")
-        total_ms = sum(s.duration_ms or 0 for s in all_stages if s.duration_ms is not None)
+        failed    = sum(1 for s in stages if s.status == "failed")
+        skipped   = sum(1 for s in stages if s.status == "skipped")
+        total_ms  = sum(s.duration_ms or 0 for s in all_stages if s.duration_ms is not None)
+
+        findings    = (self._interpretation or {}).get("findings", [])
+        actions     = (self._plan or {}).get("actions", [])
+        graph_upds  = (self._plan or {}).get("graph_updates", [])
+        synthesis   = (self._interpretation or {}).get("synthesis", "") or ""
+
+        # ── Natural language narrative ────────────────────────────────────────
+        parts: list[str] = []
+
+        # Duration string
+        total_s = total_ms / 1000
+        if total_s < 60:
+            dur = f"{total_s:.0f}s"
+        else:
+            dur = f"{int(total_s // 60)}m {int(total_s % 60)}s"
+
+        # Stage outcome
+        n = len(stages)
+        if failed == 0 and skipped == 0:
+            parts.append(f"All {n} stages completed in {dur}.")
+        elif failed > 0:
+            parts.append(f"{succeeded}/{n} stages succeeded in {dur}; {failed} failed.")
+        else:
+            parts.append(f"{succeeded}/{n} stages ran in {dur} ({skipped} skipped).")
+
+        # Findings
+        nf = len(findings)
+        if nf == 0:
+            parts.append("No continuity concerns were identified this run.")
+        else:
+            types = sorted({f.get("concern_type", "unknown") for f in findings})
+            type_str = ", ".join(t.replace("_", " ") for t in types[:3])
+            if len(types) > 3:
+                type_str += f" and {len(types) - 3} more"
+            parts.append(
+                f"{nf} finding{'s' if nf != 1 else ''} identified "
+                f"({type_str})."
+            )
+
+        # Actions
+        na = len(actions)
+        stab_passes = (self._act_result or {}).get("stabilization_passes", 1)
+        stale_closed = (self._act_result or {}).get("stale_issues_closed", 0)
+        if na > 0:
+            action_str = (
+                f"{na} remediation action{'s' if na != 1 else ''} "
+                f"{'were' if na != 1 else 'was'} executed in GitLab"
+            )
+            if stab_passes > 1:
+                action_str += f" across {stab_passes} stabilization passes"
+            action_str += "."
+            if stale_closed:
+                action_str += f" {stale_closed} stale issue{'s' if stale_closed != 1 else ''} closed."
+            parts.append(action_str)
+        elif nf > 0:
+            parts.append("No remediation actions were taken.")
+
+        # Analyst synthesis (qualitative conclusion) - the richest part
+        if synthesis:
+            trimmed = synthesis if len(synthesis) <= 500 else synthesis[:500].rsplit(" ", 1)[0] + "…"
+            parts.append(trimmed)
+
+        narrative = " ".join(parts)
+        # ─────────────────────────────────────────────────────────────────────
+
         return {
-            "stages_total": len(stages),
+            "stages_total": n,
             "stages_succeeded": succeeded,
             "stages_failed": failed,
             "stages_skipped": skipped,
-            "findings_count": len((self._interpretation or {}).get("findings", [])),
-            "actions_planned": len((self._plan or {}).get("actions", [])),
-            "graph_updates_planned": len((self._plan or {}).get("graph_updates", [])),
+            "findings_count": nf,
+            "actions_planned": na,
+            "graph_updates_planned": len(graph_upds),
+            "stabilization_passes": (self._act_result or {}).get("stabilization_passes", 1),
+            "stale_issues_closed": (self._act_result or {}).get("stale_issues_closed", 0),
             "total_duration_ms": total_ms,
+            "narrative": narrative,
         }

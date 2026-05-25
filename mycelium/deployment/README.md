@@ -1,4 +1,4 @@
-# deployment/
+﻿# deployment/
 
 Deploy the Mycelium act agent to Vertex AI Agent Engine.
 
@@ -34,11 +34,11 @@ python deployment/deploy.py --delete --resource_id projects/.../reasoningEngines
 The deployment bundles these local packages into the Agent Engine runtime:
 
 ```
-agent/        — pipeline, analyst, planner, act agent, investigator, json_utils
-config/       — settings
-graph/        — models, knowledge_graph
-connectors/   — gitlab_client, mcp_server
-risk/         — forecasting (bus_factor)
+agent/        - pipeline, analyst, planner, act agent, investigator, json_utils
+config/       - settings
+graph/        - models, knowledge_graph
+connectors/   - gitlab_client, mcp_server
+risk/         - forecasting (bus_factor)
 ```
 
 Python dependencies (`requirements.txt`) are declared in `_REQUIREMENTS` inside

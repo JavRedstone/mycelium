@@ -1,4 +1,4 @@
-# Hackathon Requirements (Google Cloud Rapid Agent Hackathon 2026)
+﻿# Hackathon Requirements (Google Cloud Rapid Agent Hackathon 2026)
 
 This document defines the **non-negotiable technical and architectural requirements** for Mycelium. It is intended to ensure full compliance with the official hackathon rules.
 
@@ -260,7 +260,7 @@ Mycelium is designed to fully satisfy requirements:
 # 10. GitLab MCP Safety Note
 
 The official GitLab MCP server (mcp-remote / OAuth) has broad project access
-by design — it can address any GitLab project the OAuth token has access to,
+by design - it can address any GitLab project the OAuth token has access to,
 including upstream repositories of a fork.
 
 Mycelium is an inference layer for a single organization's fork. Writing to
@@ -276,5 +276,5 @@ are outside the organization's continuity domain.
 | Preferred write surface | Mycelium MCP write tools (pre-scoped to `GITLAB_PROJECT_ID`) are listed first and preferred over GitLab MCP for all write actions |
 | Post-hoc audit | After every act stage, all tool call arguments are scanned for project identifiers that don't match the authorized project; violations are logged at CRITICAL level |
 
-These mitigations do not remove the GitLab MCP integration (required) — they
+These mitigations do not remove the GitLab MCP integration (required) - they
 constrain its authority to the authorized project boundary.

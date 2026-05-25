@@ -12,6 +12,7 @@ import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import SmartToyOutlinedIcon from "@mui/icons-material/SmartToyOutlined";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import Md from "./Md";
+import { scrollbarSx } from "../lib/sx";
 
 export type TraceEvent =
   | { type: "agent_text"; text: string }
@@ -134,6 +135,7 @@ function ToolCallCard({ tool, args }: { tool: string; args: Record<string, unkno
                   whiteSpace: "pre-wrap",
                   wordBreak: "break-word",
                   maxHeight: 300,
+                  ...scrollbarSx,
                 }}
               >
                 {JSON.stringify(args, null, 2)}
@@ -233,6 +235,7 @@ function ToolResponseCard({ tool, result }: { tool: string; result: unknown }) {
                   whiteSpace: "pre-wrap",
                   wordBreak: "break-word",
                   maxHeight: 300,
+                  ...scrollbarSx,
                 }}
               >
                 {JSON.stringify(result, null, 2)}

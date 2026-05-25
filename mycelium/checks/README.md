@@ -1,7 +1,7 @@
-# checks/
+﻿# checks/
 
 Connectivity and smoke tests for every external dependency Mycelium relies on.
-Each check is a standalone script — no agent logic runs, nothing is written to
+Each check is a standalone script - no agent logic runs, nothing is written to
 production data unless the script name includes `write`.
 
 Run from the project root (`mycelium/mycelium/`):
@@ -34,7 +34,7 @@ python checks/show.py --rescore    # recompute bus_factor measurements from grap
 python checks/show.py --commits 50 # show last 50 commits (default 20)
 ```
 
-`show.py` prints exactly what the agent sees — members, commits, CODEOWNERS,
+`show.py` prints exactly what the agent sees - members, commits, CODEOWNERS,
 pipelines, MRs, issues, findings, concentrated modules. Nothing is modified.
 
 ---

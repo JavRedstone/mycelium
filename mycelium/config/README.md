@@ -1,4 +1,4 @@
-# config/
+﻿# config/
 
 Runtime configuration loaded from environment variables.
 
@@ -69,7 +69,7 @@ GITLAB_BOT_USERNAME=mycelium-bot   # only needed if you used a different usernam
 
 `settings.py` sets `GOOGLE_GENAI_USE_VERTEXAI=True` at import time, which
 routes all `google-genai` SDK calls (including those inside ADK) through
-Vertex AI rather than Google AI Studio. This is a hackathon requirement — no
+Vertex AI rather than Google AI Studio. This is a hackathon requirement - no
 AI Studio API keys are used anywhere in the codebase.
 
 ### Example `.env`

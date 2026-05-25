@@ -1,14 +1,14 @@
-"""
+﻿"""
 GitLab write operations check.
 
 Tests the full write path that the act agent uses:
-  1. create_issue   — opens a labelled issue via GitLabClient
-  2. add_comment    — posts a note on that issue
-  3. assign_issue   — re-assigns it (to the token owner if resolvable)
-  4. close          — immediately closes the test issue (cleanup)
+  1. create_issue   - opens a labelled issue via GitLabClient
+  2. add_comment    - posts a note on that issue
+  3. assign_issue   - re-assigns it (to the token owner if resolvable)
+  4. close          - immediately closes the test issue (cleanup)
 
 All operations go through the same GitLabClient code the pipeline uses,
-not through the MCP layer — so this validates the underlying write tooling.
+not through the MCP layer - so this validates the underlying write tooling.
 Run check_mcp/check_mcp_mycelium.py to validate that the MCP server exposes
 these tools correctly.
 
@@ -50,7 +50,7 @@ def main() -> int:
         project = gl.projects.get(settings.gitlab_project_id)
         me = gl.user.username if gl.user else None
     except Exception as exc:
-        print(f"[FAIL] GitLab setup — {exc}")
+        print(f"[FAIL] GitLab setup - {exc}")
         return 1
 
     issue_iid: int | None = None
@@ -63,15 +63,15 @@ def main() -> int:
             title=_TEST_TITLE,
             description=(
                 "This issue was created automatically by `checks/gitlab/check_write.py`.\n"
-                "It will be closed immediately — safe to ignore."
+                "It will be closed immediately - safe to ignore."
             ),
             labels=[_TEST_LABEL],
         )
         issue_iid = result.get("iid")
         web_url = result.get("web_url", "")
-        print(f"[OK] create_issue  — #{issue_iid}  {web_url}")
+        print(f"[OK] create_issue  - #{issue_iid}  {web_url}")
     except Exception as exc:
-        print(f"[FAIL] create_issue — {exc}")
+        print(f"[FAIL] create_issue - {exc}")
         ok = False
 
     if issue_iid is None:
@@ -86,9 +86,9 @@ def main() -> int:
             issue_iid=issue_iid,
             body="Automated comment from Mycelium connectivity check.",
         )
-        print(f"[OK] add_comment   — note_id={note.get('note_id')}")
+        print(f"[OK] add_comment   - note_id={note.get('note_id')}")
     except Exception as exc:
-        print(f"[FAIL] add_comment — {exc}")
+        print(f"[FAIL] add_comment - {exc}")
         ok = False
 
     # -----------------------------------------------------------------------
@@ -97,12 +97,12 @@ def main() -> int:
     if me:
         try:
             assign_result = client.assign_issue(issue_iid=issue_iid, assignee_username=me)
-            print(f"[OK] assign_issue  — assigned to {assign_result.get('assignee')}")
+            print(f"[OK] assign_issue  - assigned to {assign_result.get('assignee')}")
         except Exception as exc:
-            print(f"[FAIL] assign_issue — {exc}")
+            print(f"[FAIL] assign_issue - {exc}")
             ok = False
     else:
-        print("[SKIP] assign_issue  — could not resolve token owner username")
+        print("[SKIP] assign_issue  - could not resolve token owner username")
 
     # -----------------------------------------------------------------------
     # 4. Close the test issue (cleanup)
@@ -111,9 +111,9 @@ def main() -> int:
         issue = project.issues.get(issue_iid)
         issue.state_event = "close"
         issue.save()
-        print(f"[OK] close_issue   — #{issue_iid} closed (cleanup)")
+        print(f"[OK] close_issue   - #{issue_iid} closed (cleanup)")
     except Exception as exc:
-        print(f"[WARN] close_issue — #{issue_iid} could not be closed automatically: {exc}")
+        print(f"[WARN] close_issue - #{issue_iid} could not be closed automatically: {exc}")
         print(f"       Please close it manually: {web_url}")
 
     return 0 if ok else 1

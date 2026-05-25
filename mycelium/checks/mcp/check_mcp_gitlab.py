@@ -1,12 +1,12 @@
-"""
+﻿"""
 GitLab MCP connectivity check.
 
-GitLab MCP uses OAuth 2.0 — not PAT Bearer tokens in the connection headers.
+GitLab MCP uses OAuth 2.0 - not PAT Bearer tokens in the connection headers.
 mcp-remote handles the OAuth handshake and caches the token in ~/.mcp-auth/
 so subsequent runs (including the autonomous agent loop) work without a browser.
 
 FIRST RUN: a browser window will open for you to authorise the OAuth request.
-SUBSEQUENT RUNS: cached token is reused automatically — no browser required.
+SUBSEQUENT RUNS: cached token is reused automatically - no browser required.
 
 Prerequisites:
   - GitLab Duo enabled on your account (Premium/Ultimate tier)
@@ -53,7 +53,7 @@ async def main() -> int:
             async with ClientSession(r, w) as session:
                 await asyncio.wait_for(session.initialize(), timeout=_TIMEOUT)
                 result = await asyncio.wait_for(session.list_tools(), timeout=_TIMEOUT)
-                print(f"[OK] GitLab MCP — {len(result.tools)} tools available")
+                print(f"[OK] GitLab MCP - {len(result.tools)} tools available")
                 for t in result.tools:
                     desc = (t.description or "").splitlines()[0][:80]
                     print(f"     * {t.name}: {desc}")
@@ -66,19 +66,19 @@ async def main() -> int:
                 return _root(exc.exceptions[0]) if exc.exceptions else str(exc)
             cause = exc.__cause__ or exc.__context__
             return f"{type(exc).__name__}: {exc}" + (f" (caused by {_root(cause)})" if cause else "")
-        print(f"[FAIL] GitLab MCP — {_root(eg)}")
+        print(f"[FAIL] GitLab MCP - {_root(eg)}")
 
     except asyncio.TimeoutError:
-        print(f"[FAIL] GitLab MCP — timed out after {_TIMEOUT}s")
+        print(f"[FAIL] GitLab MCP - timed out after {_TIMEOUT}s")
         print("       If this is the first run, re-run standalone to complete OAuth:")
         print(f"         python checks/check_mcp_gitlab.py")
 
     except FileNotFoundError:
-        print("[FAIL] GitLab MCP — `npx` not found. Install Node.js 20+ and add it to PATH.")
+        print("[FAIL] GitLab MCP - `npx` not found. Install Node.js 20+ and add it to PATH.")
         return 1
 
     except Exception as exc:
-        print(f"[FAIL] GitLab MCP — {type(exc).__name__}: {exc}")
+        print(f"[FAIL] GitLab MCP - {type(exc).__name__}: {exc}")
 
     print()
     print("  Troubleshooting:")

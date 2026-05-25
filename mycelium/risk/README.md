@@ -1,4 +1,4 @@
-# risk/
+﻿# risk/
 
 Algorithmic measurements used as inputs to the agent pipeline.
 
@@ -25,7 +25,7 @@ bus_factor = compute_bus_factor(contribs)  # → 1
 
 Input is a list of contribution dicts (as returned by
 `KnowledgeGraph.get_module_contributors`). Only entries where
-`external=False` and `commit_count > 0` are counted toward the bus factor —
+`external=False` and `commit_count > 0` are counted toward the bus factor -
 external/upstream authors are excluded because their knowledge is already
 considered unavailable.
 
@@ -35,7 +35,7 @@ the agent's decision, not a hardcoded threshold.
 
 ---
 
-## What was removed — and why
+## What was removed - and why
 
 Earlier versions of Mycelium computed scalar risk scores:
 `compute_continuity_risk`, `compute_doc_drift`, `score_all_modules`. These
@@ -48,6 +48,6 @@ were removed because:
 - The agent can reason about the same information without needing a number.
   Gemini reads the commit history, the README, the CODEOWNERS file, the
   member's recent activity, and produces a narrative finding with specific
-  recommended actions — something a scalar score cannot do.
+  recommended actions - something a scalar score cannot do.
 
 See `PROJECT_IDEA.md` for the full rationale.

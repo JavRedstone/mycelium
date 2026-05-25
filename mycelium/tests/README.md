@@ -1,4 +1,4 @@
-# tests/
+﻿# tests/
 
 Unit and integration tests for the Mycelium backend.
 
@@ -10,7 +10,7 @@ cd mycelium/mycelium
 
 ---
 
-## test_unit.py — no external connections required
+## test_unit.py - no external connections required
 
 ```
 pytest tests/test_unit.py -v
@@ -23,7 +23,7 @@ no `.env` needed.
 |------------|---------------|
 | `TestDeveloperNode` | Pydantic model defaults and field behaviour (external flag, expertise dict) |
 | `TestContributionEdge` | Edge model: expertise score, external flag, CODEOWNERS vs commit vs MR approver scoring |
-| `TestBusFactor` | `compute_bus_factor()` — 80% coverage threshold, single contributor, even split, dominant contributor |
+| `TestBusFactor` | `compute_bus_factor()` - 80% coverage threshold, single contributor, even split, dominant contributor |
 | `TestFindingModel` | Finding schema, auto-generated UUID, evidence/actions defaults; confirms `ModuleNode` has no score fields |
 | `TestCodeownersParser` | `get_codeowners()` parsing logic: comments, blank lines, multi-owner, `@` stripping |
 | `TestExternalContributorClassification` | `get_commit_contributors()` internal/external logic: name matching, deduplication |
@@ -31,13 +31,13 @@ no `.env` needed.
 
 ---
 
-## test_integration.py — requires live MongoDB
+## test_integration.py - requires live MongoDB
 
 ```
 pytest tests/test_integration.py -v
 ```
 
-Uses an isolated `mycelium_test` database — **safe to run, will not touch
+Uses an isolated `mycelium_test` database - **safe to run, will not touch
 production data**. All collections are dropped and re-created before each test.
 
 Requires `MONGODB_URI` in `.env`.

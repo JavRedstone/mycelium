@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useState } from "react";
 import Box from "@mui/material/Box";
@@ -31,7 +31,7 @@ import {
 } from "recharts";
 
 // ---------------------------------------------------------------------------
-// Types — measurements only, no scores
+// Types - measurements only, no scores
 // ---------------------------------------------------------------------------
 type Contributor = {
   developer_username: string;
@@ -70,26 +70,14 @@ type GraphData = {
 };
 
 // ---------------------------------------------------------------------------
-// Palettes — descriptive (not severity)
+// Palettes
 // ---------------------------------------------------------------------------
+// Bus factor: red → green encodes risk level (1 committer = danger, 5+ = safe).
 const BUS_COLORS = ["#ea4335", "#fa7b17", "#fbbc04", "#34a853", "#1a73e8"];
-// Colour by concern type — descriptive categories, NOT severity buckets.
-const CONCERN_COLOR: Record<string, string> = {
-  knowledge_concentration: "#ea4335",
-  multi_module_overload: "#ea4335",
-  fading_contributor: "#fa7b17",
-  recent_joiner_exposure: "#4285f4",
-  fragile_documentation: "#fbbc04",
-  upstream_dominance: "#fbbc04",
-  upstream_drift: "#fbbc04",
-  stalled_work: "#8ab4f8",
-  undeclared_ownership: "#a78bfa",
-  nominal_ownership: "#a78bfa",
-  ci_instability: "#ea4335",
-};
-function concernColor(t: string): string {
-  return CONCERN_COLOR[t] ?? "#8ab4f8";
-}
+
+// Concern-type bars: single accent - the Y-axis label already identifies each bar,
+// so multiple colours add noise rather than information.
+const CONCERN_BAR_COLOR = "#1a73e8";
 
 // ---------------------------------------------------------------------------
 // Chart tooltip + stat card
@@ -112,8 +100,9 @@ function ChartTooltip({ active, payload, label }: {
   );
 }
 
-function StatCard({ label, value, sub, color, icon }: {
-  label: string; value: number | string; sub?: string; color?: string; icon: React.ReactNode;
+// warn=true → value shown in orange (one consistent alert colour); icon is always neutral.
+function StatCard({ label, value, sub, warn, icon }: {
+  label: string; value: number | string; sub?: string; warn?: boolean; icon: React.ReactNode;
 }) {
   return (
     <Card>
@@ -123,7 +112,7 @@ function StatCard({ label, value, sub, color, icon }: {
             <Typography variant="caption" color="text.secondary" sx={{ textTransform: "uppercase", letterSpacing: "0.06em", fontSize: "0.68rem" }}>
               {label}
             </Typography>
-            <Typography variant="h4" sx={{ fontWeight: 700, mt: 0.5, color: color ?? "text.primary" }}>
+            <Typography variant="h4" sx={{ fontWeight: 700, mt: 0.5, color: warn ? "#fa7b17" : "text.primary" }}>
               {value}
             </Typography>
             {sub && (
@@ -132,7 +121,7 @@ function StatCard({ label, value, sub, color, icon }: {
               </Typography>
             )}
           </Box>
-          <Box sx={{ color: color ?? "text.secondary", mt: 0.25 }}>{icon}</Box>
+          <Box sx={{ color: "text.secondary", mt: 0.25 }}>{icon}</Box>
         </Stack>
       </CardContent>
     </Card>
@@ -192,7 +181,7 @@ export default function Analytics() {
     .sort((a, b) => a[0] - b[0])
     .map(([bf, count]) => ({ name: bf >= 5 ? "5+" : String(bf), count }));
 
-  // Findings by concern type (replaces risk severity distribution — descriptive, not magnitude)
+  // Findings by concern type (replaces risk severity distribution - descriptive, not magnitude)
   const concernMap = new Map<string, number>();
   findings.forEach((f) => {
     const k = f.concern_type ?? "unspecified";
@@ -201,8 +190,10 @@ export default function Analytics() {
   const concernDist = Array.from(concernMap.entries())
     .sort((a, b) => b[1] - a[1])
     .map(([type, count]) => ({ name: type.replace(/_/g, " "), count, type }));
+  // Give every bar enough vertical room so Recharts never drops a label
+  const concernChartHeight = Math.max(200, concernDist.length * 40);
 
-  // Developer load (still valid — a measurement, not a score)
+  // Developer load (still valid - a measurement, not a score)
   const devCommits = new Map<string, number>();
   modules.forEach((m) =>
     m.contributors.forEach((c) => {
@@ -211,8 +202,9 @@ export default function Analytics() {
   );
   const topDevs = Array.from(devCommits.entries())
     .sort((a, b) => b[1] - a[1])
-    .slice(0, 8)
-    .map(([dev, commits]) => ({ name: dev.length > 12 ? dev.slice(0, 12) + "…" : dev, commits }));
+    .slice(0, 10)
+    .map(([dev, commits]) => ({ name: dev, commits }));
+  const devChartHeight = Math.max(200, topDevs.length * 40);
 
   if (loading && !data) {
     return (
@@ -249,7 +241,7 @@ export default function Analytics() {
         </IconButton>
       </Stack>
 
-      {/* Observational stats — measurements, not scores */}
+      {/* Observational stats */}
       <Grid container spacing={2}>
         <Grid size={{ xs: 6, sm: 3 }}>
           <StatCard label="Total Modules" value={modules.length} icon={<ShieldOutlinedIcon />} />
@@ -259,7 +251,7 @@ export default function Analytics() {
             label="Bus Factor ≤ 1"
             value={concentrated.length}
             sub="Single internal committer"
-            color="#fa7b17"
+            warn={concentrated.length > 0}
             icon={<WarningAmberOutlinedIcon />}
           />
         </Grid>
@@ -268,7 +260,7 @@ export default function Analytics() {
             label="Unowned Modules"
             value={unowned.length}
             sub="No CODEOWNERS entry"
-            color="#a78bfa"
+            warn={unowned.length > 0}
             icon={<HubOutlinedIcon />}
           />
         </Grid>
@@ -277,7 +269,7 @@ export default function Analytics() {
             label="Upstream Authors"
             value={data?.upstream_authors?.length ?? 0}
             sub="External knowledge holders"
-            color="#fbbc04"
+            warn={(data?.upstream_authors?.length ?? 0) > 0}
             icon={<GroupOutlinedIcon />}
           />
         </Grid>
@@ -296,17 +288,27 @@ export default function Analytics() {
             No findings yet. Run the pipeline to populate.
           </Typography>
         ) : (
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={concernDist} layout="vertical" barSize={18} margin={{ left: 0, right: 24 }}>
+          <ResponsiveContainer width="100%" height={concernChartHeight}>
+            <BarChart data={concernDist} layout="vertical" barSize={20} margin={{ left: 0, right: 32, top: 4, bottom: 20 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" horizontal={false} />
-              <XAxis type="number" tick={{ fill: "#8b949e", fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
-              <YAxis type="category" dataKey="name" width={160} tick={{ fill: "#8b949e", fontSize: 11 }} axisLine={false} tickLine={false} />
+              <XAxis
+                type="number"
+                tick={{ fill: "#9198a1", fontSize: 11 }}
+                axisLine={false}
+                tickLine={false}
+                allowDecimals={false}
+                label={{ value: "Count", position: "insideBottomRight", offset: -4, style: { fill: "#9198a1", fontSize: 11 } }}
+              />
+              <YAxis
+                type="category"
+                dataKey="name"
+                width={210}
+                tick={{ fill: "#9198a1", fontSize: 11 }}
+                axisLine={false}
+                tickLine={false}
+              />
               <Tooltip content={<ChartTooltip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
-              <Bar dataKey="count" radius={[0, 4, 4, 0]}>
-                {concernDist.map((entry) => (
-                  <Cell key={entry.type} fill={concernColor(entry.type)} />
-                ))}
-              </Bar>
+              <Bar dataKey="count" fill={CONCERN_BAR_COLOR} radius={[0, 4, 4, 0]} />
             </BarChart>
           </ResponsiveContainer>
         )}
@@ -324,12 +326,12 @@ export default function Analytics() {
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
                 <XAxis
                   dataKey="name"
-                  tick={{ fill: "#8b949e", fontSize: 12 }}
+                  tick={{ fill: "#9198a1", fontSize: 12 }}
                   axisLine={{ stroke: "rgba(255,255,255,0.1)" }}
                   tickLine={false}
-                  label={{ value: "# Internal Committers", position: "insideBottom", offset: -2, style: { fill: "#484f58", fontSize: 11 } }}
+                  label={{ value: "# Internal Committers", position: "insideBottom", offset: -2, style: { fill: "#9198a1", fontSize: 11 } }}
                 />
-                <YAxis tick={{ fill: "#8b949e", fontSize: 12 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <YAxis tick={{ fill: "#9198a1", fontSize: 12 }} axisLine={false} tickLine={false} allowDecimals={false} />
                 <Tooltip content={<ChartTooltip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
                 <Bar dataKey="count" radius={[4, 4, 0, 0]}>
                   {bfDist.map((entry, i) => (
@@ -346,11 +348,25 @@ export default function Analytics() {
             <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }} color="text.primary">
               Developer Knowledge Load (commits)
             </Typography>
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={topDevs} barSize={20}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-                <XAxis dataKey="name" tick={{ fill: "#8b949e", fontSize: 10 }} axisLine={{ stroke: "rgba(255,255,255,0.1)" }} tickLine={false} />
-                <YAxis tick={{ fill: "#8b949e", fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
+            <ResponsiveContainer width="100%" height={devChartHeight}>
+              <BarChart data={topDevs} layout="vertical" barSize={20} margin={{ left: 0, right: 32, top: 4, bottom: 20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" horizontal={false} />
+                <XAxis
+                  type="number"
+                  tick={{ fill: "#9198a1", fontSize: 11 }}
+                  axisLine={false}
+                  tickLine={false}
+                  allowDecimals={false}
+                  label={{ value: "Commits", position: "insideBottomRight", offset: -4, style: { fill: "#9198a1", fontSize: 11 } }}
+                />
+                <YAxis
+                  type="category"
+                  dataKey="name"
+                  width={160}
+                  tick={{ fill: "#9198a1", fontSize: 11 }}
+                  axisLine={false}
+                  tickLine={false}
+                />
                 <Tooltip
                   cursor={{ fill: "rgba(255,255,255,0.04)" }}
                   content={({ active, payload, label }) =>
@@ -362,7 +378,7 @@ export default function Analytics() {
                     ) : null
                   }
                 />
-                <Bar dataKey="commits" fill="#1a73e8" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="commits" fill="#1a73e8" radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </Paper>

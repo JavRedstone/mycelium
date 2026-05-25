@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { createTheme } from "@mui/material/styles";
 
 const theme = createTheme({
@@ -16,8 +16,8 @@ const theme = createTheme({
     divider: "rgba(255,255,255,0.08)",
     text: {
       primary: "#e6edf3",
-      secondary: "#8b949e",
-      disabled: "#484f58",
+      secondary: "#9198a1",   // was #8b949e - slightly brighter for labels
+      disabled: "#768390",    // was #484f58 - that was <2:1 contrast, unreadable
     },
   },
   typography: {

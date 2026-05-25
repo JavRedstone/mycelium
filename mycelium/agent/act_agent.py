@@ -1,5 +1,5 @@
-"""
-Act agent — the autonomous reasoning loop that takes corrective action.
+﻿"""
+Act agent - the autonomous reasoning loop that takes corrective action.
 
 Implements the hackathon's required stack:
     ADK (google.adk.agents.Agent)
@@ -9,8 +9,8 @@ Implements the hackathon's required stack:
     Gemini (via Vertex AI, NOT AI Studio)
         ↓
     Two MCP toolsets exposed to the agent simultaneously:
-        - Official GitLab MCP server (HTTP / streamable-HTTP) — write tools
-        - Official MongoDB MCP server (stdio via `npx`)        — graph queries
+        - Official GitLab MCP server (HTTP / streamable-HTTP) - write tools
+        - Official MongoDB MCP server (stdio via `npx`)        - graph queries
 
 Gemini reasons across both tool surfaces in a single multi-turn loop and decides
 which GitLab actions to perform based on what it finds in the knowledge graph.
@@ -56,7 +56,7 @@ _AGENT_INSTRUCTION = """\
 You are Mycelium, an autonomous engineering continuity agent.
 
 ═══════════════════════════════════════════════════════════
-AGENT AUTHORITY SCOPE — THIS IS A HARD SAFETY CONSTRAINT
+AGENT AUTHORITY SCOPE - THIS IS A HARD SAFETY CONSTRAINT
 ═══════════════════════════════════════════════════════════
 
 You are a CONTAINED ACTOR. You are authorized to act within EXACTLY ONE
@@ -83,11 +83,11 @@ When using GitLab MCP tools that require a project argument:
 ═══════════════════════════════════════════════════════════
 
 Your primary job in each turn is to EXECUTE the planned actions you are given.
-The plan has already been decided by the planner — you are the execution layer.
+The plan has already been decided by the planner - you are the execution layer.
 
 OPERATIONAL CONSTRAINTS:
 - Do not mention tool errors to the user. If a tool fails, skip and move on.
-- Do not ask for clarification — decide autonomously.
+- Do not ask for clarification - decide autonomously.
 - Do not invent severity scores or buckets. Reason from finding narratives.
 - For create_issue: skip if an issue with the same or a closely matching title
   already exists in the project (check via get_gitlab_project_state if needed).
@@ -96,8 +96,8 @@ OPERATIONAL CONSTRAINTS:
 
 You have three tool surfaces:
 
-1. Mycelium MCP tools — primary surface for ALL reads AND writes.
-   Pre-scoped to the authorized project — no project argument needed.
+1. Mycelium MCP tools - primary surface for ALL reads AND writes.
+   Pre-scoped to the authorized project - no project argument needed.
    READ:  get_concerns, get_module_experts, get_orphaned_modules,
           suggest_assignee, get_gitlab_project_state
    WRITE: create_issue, add_comment, assign_issue, edit_issue, close_issue
@@ -111,16 +111,16 @@ You have three tool surfaces:
    transferability reported by the investigator.
 
    edit_issue: correct an existing issue's description in place (Tier 1 fix).
-   close_issue: close a superseded issue — always add a linking comment first.
+   close_issue: close a superseded issue - always add a linking comment first.
 
-2. GitLab MCP tools — supplementary surface (may be unavailable).
+2. GitLab MCP tools - supplementary surface (may be unavailable).
    When using these tools, pass ONLY the authorized project_path from the
    authority scope block. Never pass any other project path.
    Prefer Mycelium MCP write tools when both surfaces are available.
 
-3. MongoDB MCP tools — raw query fallback for custom aggregations only.
+3. MongoDB MCP tools - raw query fallback for custom aggregations only.
 
-Execution loop — follow this EXACTLY:
+Execution loop - follow this EXACTLY:
 1. For each action in the PLAN, call the corresponding Mycelium MCP tool IMMEDIATELY:
    - create_issue   → call create_issue with the title and description from the plan
    - add_comment    → call add_comment
@@ -133,12 +133,12 @@ Execution loop — follow this EXACTLY:
 3. If a tool call fails, skip that action and proceed to the next.
 4. Stop after processing every action in the plan.
 
-CRITICAL — DO NOT:
+CRITICAL - DO NOT:
   ✗ Substitute your own assessment for the planner's decisions
   ✗ Create a duplicate issue when one with the same title already exists
-  ✗ Add a comment that only restates the issue title — omit it instead
+  ✗ Add a comment that only restates the issue title - omit it instead
   ✗ Confuse the TOPIC of an issue (which may reference an upstream repo) with
-    the TARGET of the write — all issues are created IN your authorized project,
+    the TARGET of the write - all issues are created IN your authorized project,
     even if their title or description discusses upstream changes
   ✗ Close an issue without first posting a linking comment pointing to its replacement
   ✗ Create a replacement issue and leave the old one open (fragmentation)
@@ -146,7 +146,7 @@ CRITICAL — DO NOT:
 
 _PROMPT_TEMPLATE = """\
 ╔══════════════════════════════════════════════════════════╗
-║  AGENT AUTHORITY SCOPE — BINDING FOR THIS EXECUTION      ║
+║  AGENT AUTHORITY SCOPE - BINDING FOR THIS EXECUTION      ║
 ╠══════════════════════════════════════════════════════════╣
 ║  Authorized project ID:   {project_id:<32} ║
 ║  Authorized project path: {project_path:<32} ║
@@ -154,18 +154,18 @@ _PROMPT_TEMPLATE = """\
 ║  ALL GitLab write actions MUST target this project only. ║
 ║  Any other project_path or project_id = HARD VIOLATION.  ║
 ╚══════════════════════════════════════════════════════════╝
-
+{stabilization_context}
 Continuity interpretation (qualitative findings, no scores):
 {interpretation}
 
-Planned actions — execute ALL of these using your MCP tools:
+Planned actions - execute ALL of these using your MCP tools:
 {plan}
 
 Current repository snapshot:
 {repo}
 
 EXECUTION INSTRUCTIONS:
-1. Call the corresponding Mycelium MCP tool for EACH action in the plan above — right now.
+1. Call the corresponding Mycelium MCP tool for EACH action in the plan above - right now.
    Action kind → tool:
      create_issue   → create_issue(title, description, labels, assignee_username)
      add_comment    → add_comment(iid, body)
@@ -174,14 +174,31 @@ EXECUTION INSTRUCTIONS:
      close_issue    → close_issue(iid)
 2. Issue titles may reference upstream repos (e.g. "javredstone-mcp/gitlab-pages") as
    TOPICS. The write target is always your authorized project. This is NOT a boundary
-   violation — you are tracking the topic in your own project's issue tracker.
+   violation - you are tracking the topic in your own project's issue tracker.
 3. If a tool call fails, skip it and continue to the next action.
-4. Do NOT call get_gitlab_project_state first — execute immediately.
+4. Do NOT call get_gitlab_project_state first - execute immediately.
 5. Do NOT substitute your own assessment for the planner's decisions.
 6. For supersede sequences: execute create_issue first, note its iid, then add_comment on the old
-   issue referencing the new iid, then close_issue the old one — in that exact order.
+   issue referencing the new iid, then close_issue the old one - in that exact order.
 7. When using GitLab MCP tools (if Mycelium MCP is unavailable), pass
-   project_path="{project_path}" — never any other project path.
+   project_path="{project_path}" - never any other project path.
+"""
+
+_STABILIZATION_BLOCK = """\
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STABILIZATION PASS {iteration} of {max_iterations}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Work already completed this run - DO NOT duplicate any of these:
+{prior_work}
+
+Your task: address ONLY the remaining unresolved findings.
+- Skip any subject that appears in the list above.
+- If no meaningful unresolved findings remain, report that and stop without calling any tools.
+- Do NOT re-create, re-comment, or re-assign items already handled above.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 """
 
 
@@ -192,7 +209,7 @@ EXECUTION INSTRUCTIONS:
 def _gitlab_toolset() -> MCPToolset:
     """Official GitLab MCP server proxied via mcp-remote (stdio transport).
 
-    GitLab MCP uses OAuth 2.0 Dynamic Client Registration — not PAT bearer tokens.
+    GitLab MCP uses OAuth 2.0 Dynamic Client Registration - not PAT bearer tokens.
     mcp-remote handles the OAuth handshake and caches the token in ~/.mcp-auth/.
     First run: opens a browser for OAuth authorization (one-time per machine).
     Subsequent runs: reuses the cached OAuth token automatically.
@@ -231,7 +248,7 @@ def _mongodb_toolset() -> MCPToolset:
 
 
 def _mycelium_toolset() -> MCPToolset:
-    """Custom Mycelium MCP server — typed tools over the knowledge graph + GitLab."""
+    """Custom Mycelium MCP server - typed tools over the knowledge graph + GitLab."""
     return MCPToolset(
         connection_params=StdioConnectionParams(
             server_params=StdioServerParameters(
@@ -248,14 +265,14 @@ def build_root_agent() -> Agent:
     Build the Mycelium ADK agent with all three MCP toolsets.
 
     Toolset priority:
-      1. Mycelium MCP  — typed knowledge graph + GitLab write tools, pre-scoped to the
+      1. Mycelium MCP  - typed knowledge graph + GitLab write tools, pre-scoped to the
                          configured project (settings.gitlab_project_id).
-      2. GitLab MCP    — official GitLab MCP via mcp-remote (hackathon partner requirement).
+      2. GitLab MCP    - official GitLab MCP via mcp-remote (hackathon partner requirement).
                          Has broad project access; constrained to the authorized project
                          via instruction-level boundaries + post-hoc audit in act().
-      3. MongoDB MCP   — raw query fallback for custom aggregations.
+      3. MongoDB MCP   - raw query fallback for custom aggregations.
 
-    SAFETY NOTE — GitLab MCP scope:
+    SAFETY NOTE - GitLab MCP scope:
     The official GitLab MCP server (mcp-remote) uses OAuth and can operate on any
     project the token has access to, including upstream repositories. This is
     mitigated by:
@@ -265,28 +282,28 @@ def build_root_agent() -> Agent:
     For all write operations, Mycelium MCP (pre-scoped) is preferred over GitLab MCP.
 
     This is the agent that gets wrapped in AdkApp for the Vertex AI Agent Engine
-    runtime — both for local execution and for deployment to Agent Engine.
+    runtime - both for local execution and for deployment to Agent Engine.
     """
     tools: list = []
     try:
         tools.append(_mycelium_toolset())
     except Exception as exc:
         logger.warning(
-            "[act_agent] Mycelium MCP toolset construction failed (%s) — "
+            "[act_agent] Mycelium MCP toolset construction failed (%s) - "
             "agent will run without Mycelium-specific tools", exc,
         )
     try:
         tools.append(_gitlab_toolset())
     except Exception as exc:
         logger.warning(
-            "[act_agent] GitLab MCP toolset construction failed (%s) — "
+            "[act_agent] GitLab MCP toolset construction failed (%s) - "
             "check that GitLab Duo is enabled and GITLAB_TOKEN has the mcp scope", exc,
         )
     try:
         tools.append(_mongodb_toolset())
     except Exception as exc:
         logger.warning(
-            "[act_agent] MongoDB MCP toolset construction failed (%s) — "
+            "[act_agent] MongoDB MCP toolset construction failed (%s) - "
             "agent will run without raw MongoDB tools", exc,
         )
 
@@ -361,7 +378,7 @@ def _field(obj, *keys):
     """Get the first matching field from a dict OR a Pydantic/proto object.
 
     ADK stream_query may yield plain dicts OR Pydantic model instances depending
-    on the event type — MCP tool-call events often arrive as model objects.
+    on the event type - MCP tool-call events often arrive as model objects.
     """
     for key in keys:
         val = obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
@@ -470,7 +487,7 @@ def _collect_trace(event, sink: list[dict]) -> None:
 async def _direct_execute_actions(
     actions: list[dict],
 ) -> tuple[list[dict], list[dict], list[dict]]:
-    """Execute planned actions directly via Python — bypasses the ADK tool loop.
+    """Execute planned actions directly via Python - bypasses the ADK tool loop.
 
     Used as a reliable fallback when the ADK stream produces no tool calls.
     Emits the same tool_call / tool_response events to the activity bus so the
@@ -550,7 +567,7 @@ async def _direct_execute_actions(
         params = action.get("params", {})
         handler = HANDLERS.get(kind)
         if not handler:
-            logger.warning("[act_agent] unknown action kind %r — skipping", kind)
+            logger.warning("[act_agent] unknown action kind %r - skipping", kind)
             continue
 
         _activity_bus.emit({"type": "tool_call", "stage_id": "act", "tool": kind, "args": params})
@@ -578,26 +595,65 @@ async def _direct_execute_actions(
     return executed, failed, details
 
 
-async def act(interpretation: dict, repo_snapshot: dict, plan: dict | None = None) -> dict:
+async def act(
+    interpretation: dict,
+    repo_snapshot: dict,
+    plan: dict | None = None,
+    prior_interventions: dict | None = None,
+) -> dict:
     """
-    Run one turn of the act agent under the Vertex AI Agent Engine runtime (AdkApp).
+    Run one stabilization pass of the act agent under the Vertex AI Agent Engine runtime.
 
     `interpretation` is the analyst's findings output ({"synthesis", "findings"}).
     `plan` is the planner's output ({"actions": [...], "graph_updates": [...]}).
+    `prior_interventions` is optional context from earlier passes this run:
+        {
+          "iteration": int,           # current pass number (1-based)
+          "max_iterations": int,
+          "addressed_issue_iids": list[int],
+          "addressed_subjects": list[str],
+          "addressed_details": list[str],   # human-readable "#{iid} title" strings
+          "skip_action_titles": set[str],   # exact titles the direct fallback should skip
+        }
 
     The authorized project scope is derived from repo_snapshot so that the agent
     receives the exact project_id / project_path it is permitted to act on in
-    every prompt turn — preventing drift toward upstream project writes.
+    every prompt turn - preventing drift toward upstream project writes.
     """
     authorized_id: int = int(repo_snapshot.get("project_id") or settings.gitlab_project_id)
     authorized_path: str = str(repo_snapshot.get("project_path") or authorized_id)
 
     actions = (plan or {}).get("actions", [])
-    logger.info("[act_agent] starting — %d planned actions, project=%s", len(actions), authorized_path)
+    logger.info("[act_agent] starting - %d planned actions, project=%s", len(actions), authorized_path)
+
+    # Build stabilization context block for subsequent passes
+    stabilization_context = ""
+    if prior_interventions:
+        iteration = prior_interventions.get("iteration", 1)
+        max_iter = prior_interventions.get("max_iterations", 5)
+        details = prior_interventions.get("addressed_details", [])
+        subjects = prior_interventions.get("addressed_subjects", [])
+        prior_work_lines: list[str] = []
+        if details:
+            prior_work_lines.append("Issues/actions already executed:")
+            for d in details:
+                prior_work_lines.append(f"  - {d}")
+        if subjects:
+            prior_work_lines.append("Subjects already addressed (do not create new issues for these):")
+            for s in subjects:
+                prior_work_lines.append(f"  - {s}")
+        if not prior_work_lines:
+            prior_work_lines.append("(none yet - this is the first pass)")
+        stabilization_context = _STABILIZATION_BLOCK.format(
+            iteration=iteration,
+            max_iterations=max_iter,
+            prior_work="\n".join(prior_work_lines),
+        )
 
     prompt = _PROMPT_TEMPLATE.format(
         project_id=authorized_id,
         project_path=authorized_path,
+        stabilization_context=stabilization_context,
         interpretation=json.dumps(interpretation, indent=2, default=str),
         plan=json.dumps(plan or {}, indent=2, default=str),
         repo=json.dumps(repo_snapshot, indent=2, default=str),
@@ -635,7 +691,7 @@ async def act(interpretation: dict, repo_snapshot: dict, plan: dict | None = Non
                     logger.debug("[act_agent] event parse error (type=%s): %s",
                                  type(event).__name__, parse_exc)
         finally:
-            logger.info("[act_agent] stream done — %d tool_calls captured, %d trace entries",
+            logger.info("[act_agent] stream done - %d tool_calls captured, %d trace entries",
                         len(tool_calls), len(trace))
             try:
                 app.delete_session(user_id=_USER_ID, session_id=session["id"])
@@ -648,7 +704,7 @@ async def act(interpretation: dict, repo_snapshot: dict, plan: dict | None = Non
     except Exception as exc:
         logger.exception("[act_agent] AdkApp run failed: %s", exc)
         _activity_bus.emit({"type": "agent_text", "stage_id": "act",
-                            "text": f"Act agent error — check server logs: {exc}"})
+                            "text": f"Act agent error - check server logs: {exc}"})
 
     # --- Ownership boundary audit -------------------------------------------
     violations = _audit_boundary(tool_calls, authorized_id, authorized_path)
@@ -678,14 +734,22 @@ async def act(interpretation: dict, repo_snapshot: dict, plan: dict | None = Non
     # This is the reliable fallback: Gemini reasons (text above) but we act
     # deterministically from the structured plan rather than waiting for the
     # agent to invoke tools through the MCP loop.
-    if not tool_calls and actions:
-        logger.info("[act_agent] ADK produced 0 tool calls — executing %d planned actions directly",
-                    len(actions))
+    # On subsequent stabilization passes, skip actions whose titles were already
+    # executed in an earlier pass so we don't create duplicate issues.
+    skip_titles: set[str] = set(prior_interventions.get("skip_action_titles", [])) if prior_interventions else set()
+    remaining_actions = [
+        a for a in actions
+        if a.get("kind") != "create_issue"
+        or a.get("params", {}).get("title", "") not in skip_titles
+    ]
+    if not tool_calls and remaining_actions:
+        logger.info("[act_agent] ADK produced 0 tool calls - executing %d planned actions directly",
+                    len(remaining_actions))
         _activity_bus.emit({
             "type": "agent_text", "stage_id": "act",
-            "text": f"Executing {len(actions)} planned action(s) directly…",
+            "text": f"Executing {len(remaining_actions)} planned action(s) directly…",
         })
-        direct_executed, direct_failed, direct_details = await _direct_execute_actions(actions)
+        direct_executed, direct_failed, direct_details = await _direct_execute_actions(remaining_actions)
         executed.extend(direct_executed)
         failed.extend(direct_failed)
         details.extend(direct_details)

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Sanity check: ADK (google.adk) is installed and Vertex AI Agent Engine's
 AdkApp runtime can execute a no-tools agent end-to-end against Vertex AI Gemini.
 
@@ -23,7 +23,7 @@ def main() -> int:
     try:
         project = os.environ["GOOGLE_CLOUD_PROJECT"]
     except KeyError:
-        print("[FAIL] ADK — GOOGLE_CLOUD_PROJECT is not set")
+        print("[FAIL] ADK - GOOGLE_CLOUD_PROJECT is not set")
         return 1
 
     location = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
@@ -42,7 +42,7 @@ def main() -> int:
         agent = Agent(
             model=model,
             name="adk_smoketest_agent",
-            description="ADK smoke-test agent — no tools.",
+            description="ADK smoke-test agent - no tools.",
             instruction="You are a smoke-test agent. Reply with one word only: ok",
         )
         app = AdkApp(agent=agent)
@@ -68,11 +68,11 @@ def main() -> int:
             except Exception:
                 pass
 
-        print(f"[OK] ADK + AdkApp — model={model}")
+        print(f"[OK] ADK + AdkApp - model={model}")
         print(f"     response: {text[:120]}")
         return 0
     except Exception as exc:
-        print(f"[FAIL] ADK — {type(exc).__name__}: {exc}")
+        print(f"[FAIL] ADK - {type(exc).__name__}: {exc}")
         return 1
 
 

@@ -241,8 +241,8 @@ async def inspect_graph(graph: KnowledgeGraph) -> None:
             identity = d.get("developer_identity") or d.get("name") or ""
             row(d["username"], identity, flag="[upstream]")
 
-    # --- All modules (measurements only — no scoring) ---
-    sub(f"Modules  ({len(all_modules)} tracked) — observational measurements only")
+    # --- All modules (measurements only - no scoring) ---
+    sub(f"Modules  ({len(all_modules)} tracked) - observational measurements only")
     if not all_modules:
         note("(none yet -- run the pipeline to populate)")
     else:
@@ -343,7 +343,7 @@ async def inspect_developer(graph: KnowledgeGraph, username: str) -> None:
         note("Tip: run the pipeline first, or check username spelling.", indent=2)
         return
 
-    note(f"Name:  {dev.get('name') or dev.get('developer_identity') or '—'}", indent=2)
+    note(f"Name:  {dev.get('name') or dev.get('developer_identity') or '-'}", indent=2)
     ext_flag = "  [upstream/external]" if dev.get("external") else ""
     demo_flag = "  [demo]" if dev.get("demo") else ""
     note(f"Type:  {'external' if dev.get('external') else 'internal'}{ext_flag}{demo_flag}", indent=2)
@@ -423,13 +423,13 @@ async def inspect_developer(graph: KnowledgeGraph, username: str) -> None:
 
 async def inspect_busfactor(graph: KnowledgeGraph) -> None:
     """Overview: all modules ranked by bus-factor with per-contributor breakdown."""
-    hdr("BUS FACTOR OVERVIEW — ALL MODULES", ch="=")
+    hdr("BUS FACTOR OVERVIEW - ALL MODULES", ch="=")
     note("bus_factor = min contributors whose combined expertise covers 80% of commits.", indent=2)
     note("Lower = more concentrated. * marks contributors in the threshold.", indent=2)
 
     all_modules = await graph.modules.find({}, {"_id": 0}).sort("bus_factor", 1).to_list(None)
     if not all_modules:
-        note("No modules tracked yet — run the pipeline first.", indent=2)
+        note("No modules tracked yet - run the pipeline first.", indent=2)
         return
 
     blank()
@@ -475,7 +475,7 @@ async def rescore_graph(graph: KnowledgeGraph) -> None:
     """Recompute MEASUREMENTS (bus_factor) from current graph data.
 
     Per PROJECT_IDEA: there are no scalar risk scores. This function refreshes
-    bus_factor counts (a measurement) — qualitative findings are produced only
+    bus_factor counts (a measurement) - qualitative findings are produced only
     by running the full pipeline (investigators + analyst).
     """
     from graph.models import ModuleNode
@@ -483,7 +483,7 @@ async def rescore_graph(graph: KnowledgeGraph) -> None:
 
     hdr("RECOMPUTING BUS_FACTOR MEASUREMENTS FROM GRAPH DATA", ch="=")
     note("bus_factor is a count of internal committers covering 80% of commits.", indent=2)
-    note("No scoring or aggregation here — run the full pipeline to refresh findings.", indent=2)
+    note("No scoring or aggregation here - run the full pipeline to refresh findings.", indent=2)
 
     all_modules = await graph.modules.find({}, {"_id": 0}).to_list(None)
     if not all_modules:
@@ -518,7 +518,7 @@ async def rescore_graph(graph: KnowledgeGraph) -> None:
             "external": len(external_committers),
         })
 
-    sub(f"Results ({len(results)} modules) — sorted by concentration (lowest bus_factor first)")
+    sub(f"Results ({len(results)} modules) - sorted by concentration (lowest bus_factor first)")
     for r in sorted(results, key=lambda x: x["bus"]):
         ext_str = f"  dark_knowledge: {r['external']} upstream authors" if r["external"] > 0 else ""
         row(

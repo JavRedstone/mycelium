@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Box from "@mui/material/Box";
@@ -13,6 +13,7 @@ import Typography from "@mui/material/Typography";
 import RefreshOutlinedIcon from "@mui/icons-material/RefreshOutlined";
 import ScienceOutlinedIcon from "@mui/icons-material/ScienceOutlined";
 import { filterModules } from "../lib/graphFilters";
+import { scrollbarSx } from "../lib/sx";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -104,7 +105,7 @@ function timeAgoFull(ms: number): string {
   return months === 1 ? "1mo ago" : `${months}mo ago`;
 }
 
-/** ISO date string "YYYY-MM-DD" from a millisecond timestamp — used for line labels. */
+/** ISO date string "YYYY-MM-DD" from a millisecond timestamp - used for line labels. */
 function fmtDateIso(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
@@ -329,7 +330,7 @@ export default function RepoHistory() {
     ...contribHistory.map((r) => r.developer_username),
   ]);
 
-  // Time range — wide enough to cover all monthly history
+  // Time range - wide enough to cover all monthly history
   const allTimestamps: number[] = [now - 180 * 86_400_000]; // minimum 6 months
   for (const dev of allDevs)
     if (dev.last_seen) allTimestamps.push(new Date(dev.last_seen).getTime());
@@ -413,7 +414,7 @@ export default function RepoHistory() {
     return Math.max(0, Math.min(PLOT_W, ((ms - startMs) / rangeMs) * PLOT_W));
   }
 
-  // X axis tick marks — one per N months depending on zoom
+  // X axis tick marks - one per N months depending on zoom
   const tickEvery = Math.max(1, Math.round(monthCount / Math.floor(dataWidth / 70)));
   const xTicks: { ms: number; label: string }[] = [];
   {
@@ -557,13 +558,7 @@ export default function RepoHistory() {
             sx={{
               overflowX: "auto",
               flex: 1,
-              "&::-webkit-scrollbar": { height: 5 },
-              "&::-webkit-scrollbar-track": { bgcolor: "rgba(255,255,255,0.03)" },
-              "&::-webkit-scrollbar-thumb": {
-                bgcolor: "rgba(255,255,255,0.18)",
-                borderRadius: 3,
-                "&:hover": { bgcolor: "rgba(255,255,255,0.32)" },
-              },
+              ...scrollbarSx,
             }}
           >
             <Box sx={{ width: dataWidth }}>
@@ -604,9 +599,9 @@ export default function RepoHistory() {
                   const fx = msToX(repoStartMs);
                   return (
                     <g>
-                      {/* Category label — sits at the top of the reserved headroom */}
+                      {/* Category label - sits at the top of the reserved headroom */}
                       <text x={fx} y={gridY1 - 17} textAnchor="middle" fill="rgba(255,255,255,0.35)" fontSize={8} fontFamily="monospace">{repoStartLabel}</text>
-                      {/* Exact date — just above the line start */}
+                      {/* Exact date - just above the line start */}
                       <text x={fx} y={gridY1 - 5} textAnchor="middle" fill="rgba(255,255,255,0.55)" fontSize={9} fontFamily="monospace" fontWeight="bold">{fmtDateIso(repoStartMs)}</text>
                       <line x1={fx} y1={gridY1} x2={fx} y2={gridY2} stroke="rgba(255,255,255,0.5)" strokeWidth={1.5} strokeDasharray="6 3" />
                     </g>

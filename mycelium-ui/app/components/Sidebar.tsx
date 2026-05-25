@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -105,7 +105,7 @@ function usePipelineStatus(): PipelineStatus {
           stagesTotal: total,
         });
       } catch {
-        // backend unreachable — leave status unchanged
+        // backend unreachable - leave status unchanged
       }
     }
 
@@ -153,7 +153,7 @@ function pipelineColors(status: PipelineStatus, active: boolean) {
 }
 
 // ---------------------------------------------------------------------------
-// Pipeline nav button — live status-aware
+// Pipeline nav button - live status-aware
 // ---------------------------------------------------------------------------
 
 function PipelineNavButton({ item, active, pipelineStatus }: {
@@ -191,7 +191,7 @@ function PipelineNavButton({ item, active, pipelineStatus }: {
             border: "1px solid",
             borderColor: c.border,
             "&:hover": { bgcolor: c.bg, filter: "brightness(1.15)" },
-            // Disable default MUI selected style — we manage it ourselves
+            // Disable default MUI selected style - we manage it ourselves
             "&.Mui-selected": { bgcolor: c.bg },
             "&.Mui-selected:hover": { bgcolor: c.bg, filter: "brightness(1.15)" },
           }}
@@ -218,7 +218,7 @@ function PipelineNavButton({ item, active, pipelineStatus }: {
             )}
           </Box>
 
-          {/* Progress bar — pinned to bottom edge */}
+          {/* Progress bar - pinned to bottom edge */}
           {isRunning && (
             <Box
               sx={{

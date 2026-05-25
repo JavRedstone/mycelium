@@ -1,4 +1,4 @@
-# checks/mcp/
+﻿# checks/mcp/
 
 MCP (Model Context Protocol) server connectivity checks.
 Mycelium uses three MCP servers; this folder has a check for each.
@@ -7,7 +7,7 @@ Run from the project root (`mycelium/mycelium/`):
 
 ---
 
-## check_mcp_mycelium.py — Mycelium custom MCP
+## check_mcp_mycelium.py - Mycelium custom MCP
 
 ```
 python checks/mcp/check_mcp_mycelium.py
@@ -31,7 +31,7 @@ expected tools are registered:
 
 ---
 
-## check_mcp_gitlab.py — GitLab OAuth MCP
+## check_mcp_gitlab.py - GitLab OAuth MCP
 
 ```
 python checks/mcp/check_mcp_gitlab.py
@@ -62,7 +62,7 @@ rm -rf ~/.mcp-auth/mcp-remote*                   # Linux/macOS
 
 ---
 
-## check_mcp_mongo.py — MongoDB MCP
+## check_mcp_mongo.py - MongoDB MCP
 
 ```
 python checks/mcp/check_mcp_mongo.py
@@ -75,7 +75,7 @@ as `MDB_MCP_CONNECTION_STRING`. Lists all available tools.
 
 ---
 
-## check_mcp.py — general MCP client smoke test
+## check_mcp.py - general MCP client smoke test
 
 ```
 python checks/mcp/check_mcp.py

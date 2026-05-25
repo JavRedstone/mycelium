@@ -1,4 +1,4 @@
-from datetime import datetime
+﻿from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel, Field
 import uuid
@@ -14,11 +14,11 @@ class DeveloperNode(BaseModel):
     first_seen: Optional[datetime] = None   # exact date of first observed commit
     last_seen: Optional[datetime] = None    # exact date of most recent observed commit
     updated_at: datetime = Field(default_factory=datetime.utcnow)
-    demo: bool = False  # True for seeded simulation entries — safe to bulk-delete
+    demo: bool = False  # True for seeded simulation entries - safe to bulk-delete
 
 
 class ModuleNode(BaseModel):
-    """Observational state for a module — measurements only.
+    """Observational state for a module - measurements only.
 
     Per PROJECT_IDEA, there is no scalar risk model. Severity and concern
     are qualitative and live in Finding records produced by the analyst,
@@ -30,7 +30,7 @@ class ModuleNode(BaseModel):
     bus_factor: int = 0                          # measurement: contributors covering 80% of commits
     last_commit_at: Optional[datetime] = None
     updated_at: datetime = Field(default_factory=datetime.utcnow)
-    demo: bool = False  # True for seeded simulation entries — safe to bulk-delete
+    demo: bool = False  # True for seeded simulation entries - safe to bulk-delete
 
 
 class Finding(BaseModel):
@@ -38,7 +38,7 @@ class Finding(BaseModel):
 
     Findings replace risk scores. Each finding describes a structural pattern
     in the knowledge graph and what the agent thinks should be done about it.
-    No severity buckets — the narrative carries the meaning.
+    No severity buckets - the narrative carries the meaning.
     """
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     run_id: Optional[str] = None
@@ -76,11 +76,11 @@ class ContributionEdge(BaseModel):
     # Optional metadata for contributions originating outside project members
     external: bool = False
     developer_identity: Optional[str] = None  # freeform name/email for external contributors
-    demo: bool = False  # True for seeded simulation entries — safe to bulk-delete
+    demo: bool = False  # True for seeded simulation entries - safe to bulk-delete
 
 
 class ContributionHistory(BaseModel):
-    """Monthly commit count per (developer, module) — the timeline backbone."""
+    """Monthly commit count per (developer, module) - the timeline backbone."""
     developer_username: str
     module_path: str
     year_month: str          # "YYYY-MM"

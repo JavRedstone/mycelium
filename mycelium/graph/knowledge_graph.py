@@ -1,4 +1,4 @@
-from datetime import datetime
+﻿from datetime import datetime
 from motor.motor_asyncio import AsyncIOMotorClient
 from config.settings import settings
 from graph.models import DeveloperNode, ModuleNode, TaskNode, ContributionEdge, ActionRecord, Finding, ContributionHistory
@@ -76,7 +76,7 @@ class KnowledgeGraph:
         ).to_list(None)
 
     async def list_upstream_authors(self) -> list[dict]:
-        """Alias for list_external_contributors — upstream/fork authors not in current project members."""
+        """Alias for list_external_contributors - upstream/fork authors not in current project members."""
         return await self.list_external_contributors()
 
     # --- Modules ---
@@ -99,7 +99,7 @@ class KnowledgeGraph:
     async def list_concentrated_modules(self, max_bus_factor: int = 1, exclude_demo: bool = True) -> list[dict]:
         """Modules with low contributor concentration (a measurement, not a score).
 
-        Returned as a structural observation only — the analyst decides what
+        Returned as a structural observation only - the analyst decides what
         weight to give it in context. No severity attached.
         """
         query: dict = {"bus_factor": {"$lte": max_bus_factor}}
@@ -221,7 +221,7 @@ class KnowledgeGraph:
         """Delete all documents flagged demo=True across every collection.
 
         Also clears the fork-date override that demo scenarios write into the
-        settings collection — otherwise the Repo History chart retains the demo
+        settings collection - otherwise the Repo History chart retains the demo
         fork line after the rest of the data is gone.
         """
         filter_ = {"demo": True}
@@ -257,6 +257,25 @@ class KnowledgeGraph:
             await self.settings.update_one(
                 {"_id": "config"}, {"$set": {"fork_date_override": date_iso}}, upsert=True
             )
+
+    async def get_runtime_config(self) -> dict:
+        """Return the mutable runtime configuration (loop, investigators).
+
+        Returns an empty dict when no config has been saved yet; callers should
+        merge with RUNTIME_DEFAULTS in main.py.
+        """
+        doc = await self.settings.find_one({"_id": "runtime"})
+        if doc is None:
+            return {}
+        doc.pop("_id", None)
+        return doc
+
+    async def set_runtime_config(self, patch: dict) -> dict:
+        """Merge *patch* into the runtime config document and return the result."""
+        await self.settings.update_one(
+            {"_id": "runtime"}, {"$set": patch}, upsert=True
+        )
+        return await self.get_runtime_config()
 
     # --- Contribution history (monthly timeline buckets) ---
 

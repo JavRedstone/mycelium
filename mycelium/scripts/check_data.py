@@ -1,4 +1,4 @@
-"""
+﻿"""
 Data check suite for Mycelium UI pages.
 
 Hits every backend API endpoint used by the frontend, prints a structured
@@ -58,7 +58,7 @@ def count_label(n: int, noun: str = "record") -> str:
 
 def fmt_date(s) -> str:
     if not s:
-        return dim("—")
+        return dim("-")
     try:
         # Handle Unix float timestamps (e.g. from pipeline runs)
         if isinstance(s, (int, float)):
@@ -106,7 +106,7 @@ async def check_health(client):
         print(f"    {ok('Backend reachable')}  {dim('GET /health → 200')}")
     else:
         print(f"    {err(f'Backend unreachable (status={status})')}")
-        print(f"\n    {RED}Cannot continue — start the backend first.{RESET}\n")
+        print(f"\n    {RED}Cannot continue - start the backend first.{RESET}\n")
         sys.exit(1)
 
 
@@ -128,10 +128,10 @@ async def check_repo(client):
     status, data = await get(client, "/project")
     if status == 200 and isinstance(data, dict):
         print(f"    {ok('GET /project')}")
-        print_kv("name",        data.get("name", "—"))
-        print_kv("namespace",   data.get("namespace_name", "—"))
-        print_kv("default_branch", data.get("default_branch", "—"))
-        print_kv("is_fork",     str(data.get("is_fork", "—")))
+        print_kv("name",        data.get("name", "-"))
+        print_kv("namespace",   data.get("namespace_name", "-"))
+        print_kv("default_branch", data.get("default_branch", "-"))
+        print_kv("is_fork",     str(data.get("is_fork", "-")))
         print_kv("created_at",  fmt_date(data.get("created_at")))
     else:
         print(f"    {warn(f'GET /project → {status} (GitLab may be unreachable)')}")
@@ -166,9 +166,9 @@ async def check_history(client):
     _, cfg = await get(client, "/config")
     demo_mode = bool(cfg.get("demo_mode")) if isinstance(cfg, dict) else False
     if demo_mode:
-        print(f"    {info(f'{MAGENTA}DEMO_MODE=true{RESET} — demo data visible to pipeline agents')}")
+        print(f"    {info(f'{MAGENTA}DEMO_MODE=true{RESET} - demo data visible to pipeline agents')}")
     else:
-        print(f"    {dim('DEMO_MODE=false — demo data excluded from pipeline agents')}")
+        print(f"    {dim('DEMO_MODE=false - demo data excluded from pipeline agents')}")
 
     # /developers
     status, data = await get(client, "/developers")
@@ -195,7 +195,7 @@ async def check_history(client):
         project_created = fdata.get("project_created_at")
         src = f"{MAGENTA}MongoDB override{RESET}" if override else (f"{CYAN}GitLab project.created_at{RESET}" if project_created else f"{RED}not set{RESET}")
         print(f"    {ok('GET /settings/fork-date')}")
-        print_kv("effective",        fmt_date(eff) if eff else f"{RED}MISSING — fork line won't render{RESET}")
+        print_kv("effective",        fmt_date(eff) if eff else f"{RED}MISSING - fork line won't render{RESET}")
         print_kv("source",           src)
         if not eff:
             print(f"    {warn('No fork date → reference line will not appear on chart')}")
@@ -223,7 +223,7 @@ async def check_history(client):
     n = len(devs_with_contribs)
     print(f"    {info(f'{GREEN}{n}{RESET} dev on Y axis')} after excluding synthetic 'repository' module")
     if len(devs_with_contribs) == 0:
-        print(f"    {warn('No contributors matched — chart Y axis will be empty')}")
+        print(f"    {warn('No contributors matched - chart Y axis will be empty')}")
 
     print(f"    {ok('GET /graph/contribution-history') if hist_status == 200 else err(f'GET /graph/contribution-history → {hist_status}')}")
     if records:
@@ -237,13 +237,13 @@ async def check_history(client):
         print_kv("demo records",  f"{MAGENTA}{demo_count}{RESET}" if demo_count else "0")
         print_kv("real records",  f"{GREEN}{real_count}{RESET}" if real_count else dim("0 (run pipeline to populate)"))
         if demo_count and not demo_mode:
-            print(f"    {warn('Demo data present but DEMO_MODE=false — agents will NOT see these records')}")
+            print(f"    {warn('Demo data present but DEMO_MODE=false - agents will NOT see these records')}")
         if demo_count and not real_count:
-            print(f"    {warn('Only demo data — timeline shows seeded data, not real commits')}")
+            print(f"    {warn('Only demo data - timeline shows seeded data, not real commits')}")
         elif not records:
             print(f"    {warn('No monthly history → chart will fall back to last-contribution dots')}")
     else:
-        print(f"    {warn('Empty — chart falls back to per-module last-contribution dots (less informative)')}")
+        print(f"    {warn('Empty - chart falls back to per-module last-contribution dots (less informative)')}")
         print(f"    {dim('    Seed demo data or run the pipeline to populate.')}")
 
 
@@ -256,7 +256,7 @@ async def check_pipeline(client):
         state = run.get("status", "?")
         color = GREEN if state == "completed" else (YELLOW if state == "running" else RED)
         print(f"    {ok('GET /pipeline/current')}  →  {color}{state}{RESET}")
-        print_kv("run_id",     run.get("run_id", "—")[:16])
+        print_kv("run_id",     run.get("run_id", "-")[:16])
         print_kv("started_at", fmt_date(run.get("started_at")))
         print_kv("stages",     str(len(run.get("stages", []))))
     else:
@@ -311,7 +311,7 @@ async def check_activity_logs(client):
 
 
 async def check_insights(client):
-    print(page_hdr("Insights — Actions / Investigations / Timeline / Analytics", "🔍"))
+    print(page_hdr("Insights - Actions / Investigations / Timeline / Analytics", "🔍"))
 
     # /actions
     status, data = await get(client, "/actions?limit=500")
@@ -352,7 +352,7 @@ async def check_insights(client):
 
 
 async def summary(client):
-    print(page_hdr("Summary — page render readiness", "📋"))
+    print(page_hdr("Summary - page render readiness", "📋"))
     print()
 
     checks = [

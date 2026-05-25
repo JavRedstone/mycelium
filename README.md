@@ -1,4 +1,4 @@
-# Continuity Engine (Mycelium)
+﻿# Continuity Engine (Mycelium)
 GitLab Track
 
 ## What this is
@@ -414,7 +414,7 @@ project and cannot address upstream repositories.
 
 The GitLab MCP is included as a required hackathon partner integration. Its
 broad project access is bounded by instruction-level constraints, per-run scope
-injection, and post-hoc boundary audit — see Agent authority scope above.
+injection, and post-hoc boundary audit - see Agent authority scope above.
 
 ---
 
@@ -459,10 +459,10 @@ environment. It is a **contained actor**, not a global actor.
 Upstream repositories belong to their maintainers' workflow and decision
 process. Cross-project writes are:
 
-- **Semantically contaminating** — the agent models your organization's
+- **Semantically contaminating** - the agent models your organization's
   continuity state, not the upstream's
-- **Socially invasive** — automated noise in repositories you do not own
-- **Contextually wrong** — the agent is acting on state it does not own
+- **Socially invasive** - automated noise in repositories you do not own
+- **Contextually wrong** - the agent is acting on state it does not own
   and cannot model correctly
 
 ### How this is enforced
@@ -470,11 +470,11 @@ process. Cross-project writes are:
 The GitLab MCP server (hackathon partner requirement) has broad project access
 by design. Mycelium enforces the project boundary through three layers:
 
-1. **Instruction-level constraint** — the agent's system prompt hard-prohibits
+1. **Instruction-level constraint** - the agent's system prompt hard-prohibits
    cross-project writes and names the upstream as explicitly excluded
-2. **Per-run scope block** — every prompt includes the authorized `project_id`
+2. **Per-run scope block** - every prompt includes the authorized `project_id`
    and `project_path`; GitLab MCP tool calls are instructed to use only these values
-3. **Post-hoc boundary audit** — after each act stage, all tool calls are
+3. **Post-hoc boundary audit** - after each act stage, all tool calls are
    scanned for project arguments that don't match the authorized project;
    violations are logged at CRITICAL level
 
@@ -561,7 +561,7 @@ inside the development workflow itself.
 
 ---
 
-## Phase 2 roadmap — org-level multi-repo
+## Phase 2 roadmap - org-level multi-repo
 
 The current system is a single-repo agent. This is intentional: depth and
 operability inside one repo is more valuable for a production system than
@@ -572,7 +572,7 @@ The correct expansion path, when ready:
 ### Multi-repo support (tactical)
 
 Add `project_id` as a scope key to every MongoDB collection. The `GitLabClient`
-and `PipelineRunner` already accept a single project as a parameter — parameterize
+and `PipelineRunner` already accept a single project as a parameter - parameterize
 them and add a `repos` configuration collection. The pipeline scheduler fans out
 across configured repos on independent intervals.
 
@@ -589,7 +589,7 @@ expertise spans multiple repos. In this model:
 - the system can surface "this engineer is a critical node across 3 repos"
 
 This requires restructuring the knowledge graph so developers are top-level org
-entities and repos are scoped under them — a larger schema redesign.
+entities and repos are scoped under them - a larger schema redesign.
 
 **Current recommendation:** deploy separate instances per repo. The ops overhead
 is low (Cloud Run + environment variables), isolation is clean, and it avoids

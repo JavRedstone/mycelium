@@ -1,6 +1,6 @@
-"""
-Integration tests — requires a live MongoDB connection (.env must be configured).
-Uses an isolated 'mycelium_test' database — safe to run, will not touch production data.
+﻿"""
+Integration tests - requires a live MongoDB connection (.env must be configured).
+Uses an isolated 'mycelium_test' database - safe to run, will not touch production data.
 
 Run with: pytest tests/test_integration.py -v
 """
@@ -13,7 +13,7 @@ from config.settings import settings
 
 
 # ---------------------------------------------------------------------------
-# Isolated test graph — same logic as production, different DB
+# Isolated test graph - same logic as production, different DB
 # ---------------------------------------------------------------------------
 
 class _TestGraph(KnowledgeGraph):
@@ -198,7 +198,7 @@ class TestContributions:
 
 
 # ---------------------------------------------------------------------------
-# Module concentration (measurement only — no scoring)
+# Module concentration (measurement only - no scoring)
 # ---------------------------------------------------------------------------
 
 class TestModuleConcentration:

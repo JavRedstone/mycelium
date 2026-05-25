@@ -1,5 +1,5 @@
-"""
-Investigator subagents — content-aware judgment.
+﻿"""
+Investigator subagents - content-aware judgment.
 
 Spawned concurrently by the pipeline's investigate stage. Each subagent focuses
 on one entity (member, module, or drift) and reads actual file content via the
@@ -40,7 +40,7 @@ _GENAI = genai.Client(
     location=settings.google_cloud_location,
 )
 
-# Budget caps — adaptive within these limits, the subagent decides when to stop.
+# Budget caps - adaptive within these limits, the subagent decides when to stop.
 _MAX_FILES_PER_MODULE_INVESTIGATION = 30
 _MAX_FILES_PER_MEMBER_INVESTIGATION = 10
 _MAX_DEPTH = 3
@@ -48,7 +48,7 @@ _MAX_SUBDIRS_PER_LEVEL = 2
 _MAX_CODE_SAMPLES_PER_DIR = 3
 _MAX_UPSTREAM_COMMITS_TO_READ = 25
 
-# Always-read filenames (case-insensitive) — these are the highest-value reads.
+# Always-read filenames (case-insensitive) - these are the highest-value reads.
 _KEY_DOC_FILES = {
     "readme.md", "readme.rst", "readme.txt", "readme",
     "contributing.md", "contributing.rst",
@@ -178,21 +178,21 @@ Files read ({file_count}):
 Top contributors:
 {chr(10).join(contributors_summary) if contributors_summary else "(no contributor data)"}
 
-How to judge transferability — read the actual content, do not count files:
+How to judge transferability - read the actual content, do not count files:
 - A module is TRANSFERABLE when a new engineer can read these files and understand what
   the module does, how to change it, what conventions apply, and who to ask. README explains
   intent. Code has meaningful naming and comments at decision points. Setup is documented.
 - A module is NOT TRANSFERABLE when the README is empty, a placeholder, or just "TODO";
   source files lack comments at non-obvious decisions; setup steps live only in one person's
   head; design decisions are nowhere recorded.
-- Placeholder docs ("TODO: add docs", "Coming soon") are WORSE than no docs — they signal
+- Placeholder docs ("TODO: add docs", "Coming soon") are WORSE than no docs - they signal
   abandoned intent.
 
 Return ONLY valid JSON, no markdown. Schema:
 {{
   "module": "{module_path}",
   "transferability_assessment": "<one paragraph: can a new engineer pick this up>",
-  "doc_coverage": <float 0.0-1.0 — your own judgment from reading the content>,
+  "doc_coverage": <float 0.0-1.0 - your own judgment from reading the content>,
   "documentation_state": "<excellent|adequate|sparse|placeholder|missing>",
   "key_concerns": ["<specific concern 1>", "<specific concern 2>"],
   "knowledge_at_risk_if_top_contributor_leaves": "<one paragraph: what would be lost>",
@@ -264,13 +264,13 @@ Sample file content from their modules:
 Member metadata: {json.dumps(member, default=str, indent=2)}
 
 How to judge:
-- "sole_contributor" — they are the only meaningful committer in one or more modules.
+- "sole_contributor" - they are the only meaningful committer in one or more modules.
   Their leaving means no internal knowledge of those modules.
-- "recently_inactive" — they were contributing, now silent. Could be vacation, role change,
+- "recently_inactive" - they were contributing, now silent. Could be vacation, role change,
   or actual departure. Assess what is at risk if they don't return.
-- "recent_joiner" — they recently started contributing. Risk is different: they may not
+- "recent_joiner" - they recently started contributing. Risk is different: they may not
   yet have deep context, and assigning critical work to them prematurely is itself risky.
-- "multi_module_concentration" — they own multiple critical modules. Concentration risk.
+- "multi_module_concentration" - they own multiple critical modules. Concentration risk.
 
 Do not threshold. Read the modules' actual content (above) to judge how documented their
 work is and whether someone else could pick it up from the code alone.

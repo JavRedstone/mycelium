@@ -1,27 +1,27 @@
-"""
+﻿"""
 Mycelium custom MCP server.
 
 Exposes all tools the act agent needs: knowledge graph reads AND GitLab write
 actions.  The official GitLab MCP (mcp-remote) requires OAuth/Duo and is
-unreliable — all write operations go through this server via the configured
+unreliable - all write operations go through this server via the configured
 GITLAB_TOKEN instead.
 
 Entry point (stdio):
     python connectors/mcp_server.py
 
 Read tools:
-    get_concerns            — Recent analyst findings (qualitative, no scores)
-    get_module_experts      — Top contributors for a specific module
-    get_orphaned_modules    — Modules with bus_factor <= 1 or no declared owner
-    suggest_assignee        — Best person to receive a knowledge transfer
-    get_gitlab_project_state — Compact GitLab snapshot (issues + MRs)
+    get_concerns            - Recent analyst findings (qualitative, no scores)
+    get_module_experts      - Top contributors for a specific module
+    get_orphaned_modules    - Modules with bus_factor <= 1 or no declared owner
+    suggest_assignee        - Best person to receive a knowledge transfer
+    get_gitlab_project_state - Compact GitLab snapshot (issues + MRs)
 
-Write tools (GitLab — project is pre-configured, no project_id needed):
-    create_issue            — Open a new GitLab issue
-    add_comment             — Comment on an issue or MR
-    assign_issue            — Assign an issue to a team member
-    edit_issue              — Edit an existing issue's description (and optionally title)
-    close_issue             — Close an existing issue (e.g. superseded)
+Write tools (GitLab - project is pre-configured, no project_id needed):
+    create_issue            - Open a new GitLab issue
+    add_comment             - Comment on an issue or MR
+    assign_issue            - Assign an issue to a team member
+    edit_issue              - Edit an existing issue's description (and optionally title)
+    close_issue             - Close an existing issue (e.g. superseded)
 """
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ def _db():
 
 
 # ---------------------------------------------------------------------------
-# Tool: get_concerns  (replaces get_risk_summary — no scores, qualitative)
+# Tool: get_concerns  (replaces get_risk_summary - no scores, qualitative)
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
@@ -65,7 +65,7 @@ async def get_concerns(limit: int = 50) -> dict:
     Return recent continuity findings from the knowledge graph.
 
     Findings are qualitative analyst output (concern_type + narrative + evidence
-    + recommended_actions). The system does NOT compute scalar risk scores —
+    + recommended_actions). The system does NOT compute scalar risk scores -
     you reason over the narratives directly.
 
     Args:
@@ -152,7 +152,7 @@ async def get_orphaned_modules(max_results: int = 20) -> list[dict]:
     - bus_factor <= 1 (one or fewer contributors hold 80%+ of the commits), OR
     - owners list is empty (no CODEOWNERS entry).
 
-    This is a structural observation, not a severity judgment — the caller
+    This is a structural observation, not a severity judgment - the caller
     should reason about whether each entry actually warrants action.
 
     Args:
@@ -266,7 +266,7 @@ async def get_gitlab_project_state() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Write tools — GitLab actions via the pre-configured GITLAB_TOKEN
+# Write tools - GitLab actions via the pre-configured GITLAB_TOKEN
 # The project is already set in settings; callers must NOT pass a project_id.
 # ---------------------------------------------------------------------------
 
@@ -282,7 +282,7 @@ async def create_issue(
 
     Args:
         title: Short issue title (50 chars or less works best).
-        description: Markdown body — include context, affected module, and a
+        description: Markdown body - include context, affected module, and a
                      checklist of recommended actions.
         labels: Optional list of label strings to apply (e.g. ["continuity-risk"]).
         assignee_username: Optional GitLab username to assign the issue to.
@@ -409,7 +409,7 @@ async def generate_onboarding_pack(new_member_username: str) -> dict:
     Queries the knowledge graph to produce:
     - Active team roster with names and usernames
     - Module map with expert contact for each area
-    - Modules flagged as concentrated (bus_factor <= 1) — areas needing care
+    - Modules flagged as concentrated (bus_factor <= 1) - areas needing care
     - A starter checklist for the new member
 
     The issue is tagged 'onboarding' and 'mycelium' so it can be filtered later.
@@ -443,8 +443,8 @@ async def generate_onboarding_pack(new_member_username: str) -> dict:
         "",
     ]
     for dev in developers[:15]:
-        lines.append(f"- **{dev.get('name', dev['username'])}** — @{dev['username']}")
-    lines += ["", "## Codebase — Who Knows What", ""]
+        lines.append(f"- **{dev.get('name', dev['username'])}** - @{dev['username']}")
+    lines += ["", "## Codebase - Who Knows What", ""]
 
     for m in sorted(modules, key=lambda x: x.get("bus_factor", 0)):
         path = m["path"]
@@ -523,7 +523,7 @@ async def generate_offboarding_artifact(departing_member_username: str) -> dict:
 
     high_value = [c for c in contributions if c.get("expertise_score", 0) >= 0.3]
     if not high_value:
-        lines.append("_No significant module ownership detected yet — run the pipeline to populate._")
+        lines.append("_No significant module ownership detected yet - run the pipeline to populate._")
         lines.append("")
     else:
         for c in high_value[:10]:

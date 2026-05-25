@@ -1,4 +1,4 @@
-"""
+﻿"""
 Mycelium custom MCP server connectivity check.
 
 Starts the custom MCP server (connectors/mcp_server.py) as a stdio subprocess and
@@ -61,7 +61,7 @@ async def main() -> int:
                 await asyncio.wait_for(session.initialize(), timeout=_TIMEOUT)
                 result = await asyncio.wait_for(session.list_tools(), timeout=_TIMEOUT)
                 tool_names = {t.name for t in result.tools}
-                print(f"[OK] Mycelium MCP — {len(result.tools)} tools registered")
+                print(f"[OK] Mycelium MCP - {len(result.tools)} tools registered")
                 for t in result.tools:
                     desc = (t.description or "").splitlines()[0][:80]
                     status = "[OK]" if t.name in _EXPECTED_TOOLS else "[EXTRA]"
@@ -74,15 +74,15 @@ async def main() -> int:
         return 0
 
     except asyncio.TimeoutError:
-        print(f"[FAIL] Mycelium MCP — timed out after {_TIMEOUT}s")
+        print(f"[FAIL] Mycelium MCP - timed out after {_TIMEOUT}s")
         return 1
 
     except FileNotFoundError as exc:
-        print(f"[FAIL] Mycelium MCP — {exc}")
+        print(f"[FAIL] Mycelium MCP - {exc}")
         return 1
 
     except Exception as exc:
-        print(f"[FAIL] Mycelium MCP — {type(exc).__name__}: {exc}")
+        print(f"[FAIL] Mycelium MCP - {type(exc).__name__}: {exc}")
         return 1
 
 

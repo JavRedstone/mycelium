@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Box from "@mui/material/Box";
@@ -28,6 +28,7 @@ import SmartToyOutlinedIcon from "@mui/icons-material/SmartToyOutlined";
 import SyncProblemOutlinedIcon from "@mui/icons-material/SyncProblemOutlined";
 import WarningAmberOutlinedIcon from "@mui/icons-material/WarningAmberOutlined";
 import Md from "./Md";
+import { scrollbarSx } from "../lib/sx";
 
 // ---------------------------------------------------------------------------
 // Event types (mirroring activity_bus.py schema)
@@ -266,7 +267,7 @@ function ToolCallRow({ e }: { e: ToolCall }) {
             <Box sx={{ px: 1.25, pb: 1, pt: 0.5, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
               <Box component="pre" sx={{ m: 0, fontSize: "0.62rem", color: "text.secondary",
                   fontFamily: "var(--font-google-sans-code)", whiteSpace: "pre-wrap",
-                  wordBreak: "break-word", maxHeight: 240, overflow: "auto" }}>
+                  wordBreak: "break-word", maxHeight: 240, overflow: "auto", ...scrollbarSx }}>
                 {JSON.stringify(e.args, null, 2)}
               </Box>
             </Box>
@@ -313,7 +314,7 @@ function ToolResponseRow({ e }: { e: ToolResponse }) {
             <Box sx={{ px: 1.25, pb: 1, pt: 0.5, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
               <Box component="pre" sx={{ m: 0, fontSize: "0.62rem", color: "text.secondary",
                   fontFamily: "var(--font-google-sans-code)", whiteSpace: "pre-wrap",
-                  wordBreak: "break-word", maxHeight: 240, overflow: "auto" }}>
+                  wordBreak: "break-word", maxHeight: 240, overflow: "auto", ...scrollbarSx }}>
                 {JSON.stringify(e.result, null, 2)}
               </Box>
             </Box>
@@ -504,7 +505,7 @@ export default function ActivityFeed({ height = 640 }: { height?: number | strin
 
   useEffect(() => {
     const es = new EventSource(`${apiUrl}/pipeline/activity/stream`);
-    // Do NOT clear events on reconnect — history replay will fill them back in.
+    // Do NOT clear events on reconnect - history replay will fill them back in.
     // Clearing here is what causes the "disappears after tab switch" bug.
     es.onmessage = (e) => {
       try {
@@ -553,16 +554,12 @@ export default function ActivityFeed({ height = 640 }: { height?: number | strin
         </Tooltip>
       </Box>
 
-      {/* Stage progress bar — always visible regardless of scroll */}
+      {/* Stage progress bar - always visible regardless of scroll */}
       <StageProgressBar events={events} />
 
-      {/* Feed — no auto-scroll; user controls position */}
+      {/* Feed - no auto-scroll; user controls position */}
       <Box ref={containerRef}
-        sx={{ flex: 1, overflowY: "auto", p: 1.25,
-          "&::-webkit-scrollbar": { width: 4 },
-          "&::-webkit-scrollbar-track": { bgcolor: "transparent" },
-          "&::-webkit-scrollbar-thumb": { bgcolor: "rgba(255,255,255,0.1)", borderRadius: 2 },
-        }}>
+        sx={{ flex: 1, overflowY: "auto", p: 1.25, ...scrollbarSx }}>
         {events.length === 0 ? (
           <Typography variant="caption" color="text.disabled"
             sx={{ fontFamily: "var(--font-google-sans-code)", fontSize: "0.65rem" }}>

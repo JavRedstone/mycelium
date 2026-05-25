@@ -1,4 +1,4 @@
-"""
+﻿"""
 Seed synthetic developer/module data for pipeline demo and testing.
 
 All seeded entries are flagged demo=True so they are clearly identifiable
@@ -6,15 +6,15 @@ in the UI and can be bulk-deleted via the API or the --clear flag.
 
 Demo scenario (realistic team on a gitlab-pages fork):
   - alex.chen       Senior engineer, owns internal/ and shared/. Active.
-  - priya.sharma    Senior, owns scripts/ exclusively. Inactive 6 months — RISK.
+  - priya.sharma    Senior, owns scripts/ exclusively. Inactive 6 months - RISK.
   - marco.torres    New joiner, 2 weeks in. No commits yet.
   - lisa.park       Mid-level, distributed contributions across test/ and shared/.
 
 Concern types triggered:
-  sole_contributor      scripts/ — priya is the only person who touched it, now inactive
-  fading_contributor    priya — high expertise, last seen 6 months ago
-  recent_joiner_exposure  marco — just joined, no commits, not paired with anyone
-  knowledge_concentration  app/ — JavRedstone is sole internal committer
+  sole_contributor      scripts/ - priya is the only person who touched it, now inactive
+  fading_contributor    priya - high expertise, last seen 6 months ago
+  recent_joiner_exposure  marco - just joined, no commits, not paired with anyone
+  knowledge_concentration  app/ - JavRedstone is sole internal committer
 
 Usage (run from the mycelium/ directory):
     python -m scripts.seed_scenarios team        # full demo team + modules
@@ -216,10 +216,10 @@ async def scenario_full_team():
 
     Module ownership matrix:
       internal/  bus=2  alex(0.82), javier-implied, lisa(0.31)
-      scripts/   bus=1  priya(0.97) — SOLE HOLDER, now inactive!
+      scripts/   bus=1  priya(0.97) - SOLE HOLDER, now inactive!
       shared/    bus=3  alex(0.74), lisa(0.68), priya(0.41)
       test/      bus=3  lisa(0.71), alex(0.58), marco(0.04)
-      app/       bus=1  alex(0.89) — high concentration
+      app/       bus=1  alex(0.89) - high concentration
 
     Concern signals:
       - priya: sole scripts/ owner, 6mo inactive → fading_contributor + offboarding_artifact
@@ -274,25 +274,25 @@ async def scenario_full_team():
 
     # ── Contributions ────────────────────────────────────────────────────────
 
-    # internal/ — Alex is primary, Lisa is backup, Priya touched it historically
+    # internal/ - Alex is primary, Lisa is backup, Priya touched it historically
     await _seed_contribution("alex.chen",    "internal", commit_count=187, lines_changed=4210, expertise_score=0.82, last_contribution_at=yesterday)
     await _seed_contribution("lisa.park",    "internal", commit_count=54,  lines_changed=890,  expertise_score=0.31, last_contribution_at=three_days_ago)
     await _seed_contribution("priya.sharma", "internal", commit_count=38,  lines_changed=640,  expertise_score=0.29, last_contribution_at=six_months_ago)
 
-    # scripts/ — Priya is the ONLY person who has ever touched this
+    # scripts/ - Priya is the ONLY person who has ever touched this
     await _seed_contribution("priya.sharma", "scripts", commit_count=142, lines_changed=3870, expertise_score=0.97, last_contribution_at=six_months_ago)
 
-    # shared/ — distributed ownership
+    # shared/ - distributed ownership
     await _seed_contribution("alex.chen",    "shared", commit_count=103, lines_changed=2150, expertise_score=0.74, last_contribution_at=yesterday)
     await _seed_contribution("lisa.park",    "shared", commit_count=98,  lines_changed=1980, expertise_score=0.68, last_contribution_at=three_days_ago)
     await _seed_contribution("priya.sharma", "shared", commit_count=47,  lines_changed=870,  expertise_score=0.41, last_contribution_at=six_months_ago)
 
-    # test/ — Lisa leads, Alex solid backup, Marco has 1 commit (his first PR)
+    # test/ - Lisa leads, Alex solid backup, Marco has 1 commit (his first PR)
     await _seed_contribution("lisa.park",    "test", commit_count=119, lines_changed=3410, expertise_score=0.71, last_contribution_at=three_days_ago)
     await _seed_contribution("alex.chen",    "test", commit_count=88,  lines_changed=2240, expertise_score=0.58, last_contribution_at=yesterday)
     await _seed_contribution("marco.torres", "test", commit_count=1,   lines_changed=18,   expertise_score=0.04, last_contribution_at=two_weeks_ago)
 
-    # app/ — Alex is sole internal committer (most upstream-authored module)
+    # app/ - Alex is sole internal committer (most upstream-authored module)
     await _seed_contribution("alex.chen",    "app",  commit_count=74,  lines_changed=1620, expertise_score=0.89, last_contribution_at=yesterday)
 
     # ── Fork date override ────────────────────────────────────────────────────
@@ -309,17 +309,17 @@ async def scenario_full_team():
     await _seed_upstream_author("remi.pages",   "Remi Pages",   5002, last_seen=fourteen_months)
     await _seed_upstream_author("sofia.mueller","Sofia Mueller", 5003, last_seen=sixteen_months)
 
-    # Tim Arch — primary upstream author of app/ and internal/ (explains why Alex
+    # Tim Arch - primary upstream author of app/ and internal/ (explains why Alex
     # inherited a well-structured codebase but has no backup)
     await _seed_contribution("tim.arch", "app",      commit_count=318, lines_changed=9140, expertise_score=0.95, last_contribution_at=twelve_months,   external=True)
     await _seed_contribution("tim.arch", "internal", commit_count=244, lines_changed=5920, expertise_score=0.88, last_contribution_at=twelve_months,   external=True)
     await _seed_contribution("tim.arch", "shared",   commit_count=191, lines_changed=3510, expertise_score=0.72, last_contribution_at=fourteen_months, external=True)
 
-    # Remi Pages — wrote the original scripts/ tooling that Priya inherited
+    # Remi Pages - wrote the original scripts/ tooling that Priya inherited
     await _seed_contribution("remi.pages", "scripts", commit_count=201, lines_changed=4380, expertise_score=0.83, last_contribution_at=fourteen_months, external=True)
     await _seed_contribution("remi.pages", "shared",  commit_count=114, lines_changed=2410, expertise_score=0.62, last_contribution_at=sixteen_months,  external=True)
 
-    # Sofia Mueller — early test/ framework author, no longer active
+    # Sofia Mueller - early test/ framework author, no longer active
     await _seed_contribution("sofia.mueller", "test",   commit_count=287, lines_changed=6780, expertise_score=0.91, last_contribution_at=sixteen_months, external=True)
     await _seed_contribution("sofia.mueller", "shared", commit_count=88,  lines_changed=1640, expertise_score=0.54, last_contribution_at=sixteen_months, external=True)
 
@@ -334,7 +334,7 @@ async def scenario_full_team():
     await _seed_monthly_history("priya.sharma", "scripts", _month_range_data(11, 6, [13,15,12,11,14,13]))
     await _seed_monthly_history("priya.sharma", "shared",  _month_range_data(11, 7, [5,6,4,5,6]))
 
-    # marco.torres: new joiner — only the last 2 months
+    # marco.torres: new joiner - only the last 2 months
     await _seed_monthly_history("marco.torres", "test", _month_range_data(1, 0, [2, 1]))
 
     # lisa.park: consistently active all 12 months post-fork
@@ -375,7 +375,7 @@ async def scenario_full_team():
 # ---------------------------------------------------------------------------
 
 async def scenario_new_joiner():
-    """Marco Torres — joined 2 weeks ago, 1 test commit. → generate_onboarding_pack"""
+    """Marco Torres - joined 2 weeks ago, 1 test commit. → generate_onboarding_pack"""
     await _delete_by_usernames(["marco.torres"])
     await _seed_developer(
         username="marco.torres", name="Marco Torres", gitlab_id=9013,
@@ -390,7 +390,7 @@ async def scenario_new_joiner():
 
 
 async def scenario_fading_contributor():
-    """Priya Sharma — sole scripts/ owner, 6 months inactive. → generate_offboarding_artifact"""
+    """Priya Sharma - sole scripts/ owner, 6 months inactive. → generate_offboarding_artifact"""
     await _delete_by_usernames(["priya.sharma"])
     await _delete_by_modules(["scripts"])
     six_months_ago = _now() - timedelta(days=183)
@@ -409,7 +409,7 @@ async def scenario_fading_contributor():
 
 
 async def scenario_sole_owner():
-    """Alex Chen — sole owner of app/ with no backup. → create_issue (Knowledge Transfer)"""
+    """Alex Chen - sole owner of app/ with no backup. → create_issue (Knowledge Transfer)"""
     await _delete_by_usernames(["alex.chen"])
     await _delete_by_modules(["app"])
     yesterday = _now() - timedelta(days=1)

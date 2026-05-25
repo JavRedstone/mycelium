@@ -1,10 +1,10 @@
-# connectors/
+﻿# connectors/
 
 External data sources: GitLab and the custom Mycelium MCP server.
 
 ---
 
-## gitlab_client.py — GitLab API wrapper
+## gitlab_client.py - GitLab API wrapper
 
 `GitLabClient` wraps `python-gitlab` and provides all read + write operations
 the pipeline and checks use.
@@ -47,7 +47,7 @@ self._project.http_list("/repository/commits", query_data={"path": dir_path}, ..
 
 ---
 
-## mcp_server.py — Mycelium MCP server
+## mcp_server.py - Mycelium MCP server
 
 Runs as a stdio subprocess. Exposes the knowledge graph and GitLab write
 operations as MCP tools that ADK agents call via the MCP protocol.
@@ -76,5 +76,5 @@ operations as MCP tools that ADK agents call via the MCP protocol.
 python connectors/mcp_server.py
 ```
 
-The server blocks on stdio — use `checks/mcp/check_mcp_mycelium.py` to
+The server blocks on stdio - use `checks/mcp/check_mcp_mycelium.py` to
 connect and inspect its tool list without writing any data.

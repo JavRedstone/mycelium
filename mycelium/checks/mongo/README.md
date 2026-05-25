@@ -1,4 +1,4 @@
-# checks/mongo/
+﻿# checks/mongo/
 
 MongoDB Atlas connectivity check.
 
@@ -30,5 +30,5 @@ MONGODB_DB=mycelium   # optional, defaults to "mycelium"
 ```
 
 The URI must be a valid MongoDB connection string (Atlas `+srv` or direct).
-Application-layer authentication (e.g. Atlas Data API) is **not** used —
+Application-layer authentication (e.g. Atlas Data API) is **not** used -
 Mycelium uses Motor (Motor wraps PyMongo) for direct driver access.

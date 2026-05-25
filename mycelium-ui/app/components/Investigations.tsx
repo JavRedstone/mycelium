@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useState } from "react";
 import Box from "@mui/material/Box";
@@ -19,7 +19,7 @@ import SyncProblemOutlinedIcon from "@mui/icons-material/SyncProblemOutlined";
 import Md from "./Md";
 
 // ---------------------------------------------------------------------------
-// Types — match the investigate stage output in agent/pipeline.py
+// Types - match the investigate stage output in agent/pipeline.py
 // ---------------------------------------------------------------------------
 type MemberInvestigation = {
   member: string;

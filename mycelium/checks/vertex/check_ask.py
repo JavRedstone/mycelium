@@ -1,5 +1,5 @@
-"""
-Interactive ADK agent runner — ask Mycelium's act agent a question.
+﻿"""
+Interactive ADK agent runner - ask Mycelium's act agent a question.
 
 Spins up the same ADK Agent that the pipeline uses (GitLab MCP + MongoDB MCP),
 wraps it in `AdkApp`, and streams events for one prompt. The agent runs on
@@ -60,7 +60,7 @@ def main() -> None:
     if len(sys.argv) > 1:
         question = " ".join(sys.argv[1:])
     else:
-        print(f"Mycelium — interactive ADK agent  (Vertex AI, model: {model})")
+        print(f"Mycelium - interactive ADK agent  (Vertex AI, model: {model})")
         print("Tools: GitLab MCP + MongoDB MCP. Ctrl+C to quit.\n")
         try:
             question = input("Question: ").strip()

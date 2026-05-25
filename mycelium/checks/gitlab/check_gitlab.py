@@ -1,4 +1,4 @@
-from dotenv import load_dotenv
+﻿from dotenv import load_dotenv
 import os
 import gitlab
 
@@ -13,7 +13,7 @@ try:
     gl.auth()
     project_id = int(os.environ["GITLAB_PROJECT_ID"])
     project = gl.projects.get(project_id)
-    print(f"[OK] GitLab — authenticated as {gl.user.username}")
-    print(f"[OK] GitLab — project '{project.name}' accessible")
+    print(f"[OK] GitLab - authenticated as {gl.user.username}")
+    print(f"[OK] GitLab - project '{project.name}' accessible")
 except Exception as e:
-    print(f"[FAIL] GitLab — {e}")
+    print(f"[FAIL] GitLab - {e}")

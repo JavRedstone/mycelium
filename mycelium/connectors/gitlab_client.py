@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 
 import gitlab
 from config.settings import settings
@@ -32,7 +32,7 @@ class GitLabClient:
         # so that GitLabClient() construction never makes a network call at import time.
         self._project_obj = None
         self._default_branch: str = "main"  # updated on first _project access
-        # Per-run caches — reset by invalidate_cache() at the start of each pipeline run
+        # Per-run caches - reset by invalidate_cache() at the start of each pipeline run
         self._cached_member_usernames: set[str] | None = None
         self._cached_member_names: set[str] | None = None
         self._cached_member_emails: set[str] | None = None
@@ -46,14 +46,14 @@ class GitLabClient:
         return self._project_obj
 
     # ---------------------------------------------------------------------------
-    # Member caches — built once per run for O(1) membership lookups
+    # Member caches - built once per run for O(1) membership lookups
     # ---------------------------------------------------------------------------
 
     def _refresh_member_cache(self) -> None:
         members = self.get_members()
         self._cached_member_usernames = {m["username"].lower() for m in members if m.get("username")}
         self._cached_member_names = {m["name"].lower() for m in members if m.get("name")}
-        # Fetch public emails — best-effort, often empty on GitLab.com
+        # Fetch public emails - best-effort, often empty on GitLab.com
         emails: set[str] = set()
         try:
             for m in self._project.members.list(all=True):
@@ -88,7 +88,7 @@ class GitLabClient:
     def _is_member(self, name: str, email: str) -> bool:
         """Check if a commit author is a current project member.
 
-        Matches on display name, username, or email — all lowercased.
+        Matches on display name, username, or email - all lowercased.
         Name matching is the most reliable on GitLab.com where public_email
         is usually hidden.
         """
@@ -381,7 +381,7 @@ class GitLabClient:
             return []
 
     def get_mr_approvers(self, limit: int = 20) -> list[dict]:
-        """Approvers of recently merged MRs — implicit knowledge holders."""
+        """Approvers of recently merged MRs - implicit knowledge holders."""
         try:
             mrs = self._project.mergerequests.list(
                 state="merged", order_by="updated_at", sort="desc",
@@ -410,7 +410,7 @@ class GitLabClient:
             return []
 
     def get_module_contributor_map(self) -> dict[str, list[dict]]:
-        """Per-directory contributor map — who knows what part of the codebase."""
+        """Per-directory contributor map - who knows what part of the codebase."""
         result: dict[str, list[dict]] = {}
         dirs = self.get_top_level_dirs()
         logger.info("[gitlab] map_modules: %d top-level directories: %s", len(dirs), dirs)
@@ -424,7 +424,7 @@ class GitLabClient:
         return result
 
     # ---------------------------------------------------------------------------
-    # Investigator helpers — file content + member temporal data
+    # Investigator helpers - file content + member temporal data
     # ---------------------------------------------------------------------------
 
     def get_directory_tree(self, dir_path: str, recursive: bool = False) -> list[dict]:
@@ -465,7 +465,7 @@ class GitLabClient:
         try:
             raw = self._project.files.raw(file_path=file_path, ref=self._default_branch)
             if isinstance(raw, bytes):
-                # Reject obvious binaries — null byte in first chunk is a strong signal.
+                # Reject obvious binaries - null byte in first chunk is a strong signal.
                 if b"\x00" in raw[:512]:
                     return None
                 try:
@@ -485,7 +485,7 @@ class GitLabClient:
         """First and last commit timestamps per author (by name and by email).
 
         Used to derive 'recently joined' and 'recently inactive' member labels
-        from commit history alone — no GitLab member.created_at fetch needed.
+        from commit history alone - no GitLab member.created_at fetch needed.
 
         Returns {key: {"first_commit": iso, "last_commit": iso, "commit_count": N}}
         keyed by lowercased name AND lowercased email so the caller can match
@@ -522,7 +522,7 @@ class GitLabClient:
         """Return upstream commits the fork hasn't merged yet (most recent first).
 
         For the drift investigator. Returns commit metadata including id, title,
-        author, and file change summary (not full diffs — too expensive).
+        author, and file change summary (not full diffs - too expensive).
         Returns [] if not a fork or upstream is unreachable.
         """
         upstream_info = getattr(self._project, "forked_from_project", None)
@@ -545,7 +545,7 @@ class GitLabClient:
 
             commits = []
 
-            # Strategy 1: compare on the upstream project side — our SHA is in
+            # Strategy 1: compare on the upstream project side - our SHA is in
             # upstream's history for clean forks, so this usually succeeds.
             try:
                 comparison = upstream.repository_compare(from_=our_sha, to=upstream_sha)
@@ -553,7 +553,7 @@ class GitLabClient:
             except Exception:
                 pass
 
-            # Strategy 2: compare on our fork — only works when upstream SHA has
+            # Strategy 2: compare on our fork - only works when upstream SHA has
             # been fetched into our object store.
             if not commits:
                 try:
@@ -564,7 +564,7 @@ class GitLabClient:
                 except Exception:
                     logger.debug(
                         "[gitlab] get_upstream_commits_since_fork: compare API "
-                        "unreachable across projects — returning empty list"
+                        "unreachable across projects - returning empty list"
                     )
                     return []
 
@@ -586,9 +586,9 @@ class GitLabClient:
         """Return how many commits this fork is behind its upstream, if applicable.
 
         Tries two comparison strategies before giving up:
-        1. Compare on the upstream project (from our SHA to upstream HEAD) — works
+        1. Compare on the upstream project (from our SHA to upstream HEAD) - works
            when our fork's HEAD exists in the upstream's git history (clean fork).
-        2. Compare on our fork project (from our branch to upstream SHA) — works
+        2. Compare on our fork project (from our branch to upstream SHA) - works
            when the upstream SHA has been fetched into our fork.
 
         If neither compare works, returns the upstream relationship info with
@@ -639,7 +639,7 @@ class GitLabClient:
                 except Exception:
                     logger.debug(
                         "[gitlab] get_fork_divergence: compare API unreachable across "
-                        "projects — returning upstream info without commit count"
+                        "projects - returning upstream info without commit count"
                     )
 
             return {
@@ -741,3 +741,151 @@ class GitLabClient:
             issue.title = title
         issue.save()
         return {"iid": issue_iid}
+
+    # ------------------------------------------------------------------
+    # Bot-issue cleanup
+    # ------------------------------------------------------------------
+
+    def list_bot_issues(self) -> list[dict]:
+        """Return all open issues that were created by the Mycelium bot.
+
+        An issue is considered bot-created if:
+          (a) its author matches settings.gitlab_bot_username, OR
+          (b) it carries the "mycelium" label (applied by the MCP tools).
+        """
+        from config.settings import settings
+        bot = settings.gitlab_bot_username.lower()
+        result = []
+        for i in self._project.issues.list(state="opened", all=True):
+            author_obj = getattr(i, "author", None) or {}
+            author_username = (
+                author_obj.get("username")
+                if isinstance(author_obj, dict)
+                else getattr(author_obj, "username", None)
+            ) or ""
+            labels: list[str] = list(getattr(i, "labels", []) or [])
+            is_bot_authored = author_username.lower() == bot
+            has_mycelium_label = "mycelium" in labels
+            if is_bot_authored or has_mycelium_label:
+                result.append({
+                    "iid": i.iid,
+                    "title": i.title,
+                    "created_at": i.created_at,
+                    "labels": labels,
+                    "web_url": getattr(i, "web_url", None),
+                    "bot_authored": is_bot_authored,
+                })
+        return result
+
+    def close_bot_issues(self) -> dict:
+        """Close every open bot-created issue, leaving an explanatory comment first.
+
+        Returns a summary: {"closed": N, "errors": N, "total": N}.
+        """
+        issues = self.list_bot_issues()
+        closed = 0
+        errors = 0
+        for iss in issues:
+            iid = iss["iid"]
+            try:
+                self.comment_on_issue(
+                    issue_iid=iid,
+                    body=(
+                        "Closed by Mycelium Continuity Engine (automated cleanup).\n\n"
+                        "This issue was created automatically and has been closed via the "
+                        "Mycelium configuration panel. Re-run the pipeline to generate "
+                        "fresh findings and actions."
+                    ),
+                )
+                self.close_issue(issue_iid=iid)
+                closed += 1
+            except Exception as exc:
+                errors += 1
+        return {"closed": closed, "errors": errors, "total": len(issues)}
+
+    def close_stale_bot_issue(
+        self,
+        issue_iid: int,
+        superseded_by: dict | None = None,
+    ) -> None:
+        """Close a single bot issue that is stale or superseded by a newer one.
+
+        Leaves an explanatory comment before closing so the audit trail is preserved.
+
+        Args:
+            issue_iid: IID of the issue to close.
+            superseded_by: Optional dict with ``iid`` and ``web_url`` of the new
+                           issue that replaces this one.
+        """
+        if superseded_by:
+            new_iid = superseded_by.get("iid", "")
+            new_url = superseded_by.get("web_url", "")
+            body = (
+                f"This issue has been superseded by #{new_iid}.\n\n"
+                f"A new pipeline run produced updated findings for this subject. "
+                f"Please refer to {new_url} for current information."
+            )
+        else:
+            body = (
+                "This issue is no longer an active concern based on the latest analysis.\n\n"
+                "The most recent pipeline run did not identify this subject as requiring "
+                "attention. It has been closed automatically. Re-run the pipeline at any "
+                "time to refresh findings."
+            )
+        self.comment_on_issue(issue_iid=issue_iid, body=body)
+        self.close_issue(issue_iid=issue_iid)
+
+    def seed_stale_demo_issues(self) -> list[dict]:
+        """Create sample 'outdated' bot issues for demo purposes.
+
+        These issues are intentionally stale - they describe findings from a
+        hypothetical prior run. The next pipeline run will detect that their
+        subjects are no longer present (or are superseded) and close them
+        automatically, demonstrating the stale-issue cleanup flow.
+
+        Returns a list of created issue dicts (iid, title, web_url).
+        """
+        stale_templates = [
+            {
+                "title": "Knowledge concentration: priya.sharma owns scripts/ exclusively",
+                "description": (
+                    "**Subject:** priya.sharma\n\n"
+                    "**Concern:** priya.sharma is the sole internal contributor to `scripts/` "
+                    "and has not committed in over 6 months. No other team member has working "
+                    "knowledge of this module.\n\n"
+                    "**Status:** This issue was generated by a prior pipeline run and may no "
+                    "longer reflect current team composition. It will be superseded or closed "
+                    "on the next analysis run.\n\n"
+                    "_Generated by Mycelium Continuity Engine (demo seed)._"
+                ),
+                "labels": ["mycelium", "continuity-risk"],
+            },
+            {
+                "title": "New joiner without onboarding pair: marco.torres",
+                "description": (
+                    "**Subject:** marco.torres\n\n"
+                    "**Concern:** marco.torres joined the team within the last 30 days and has "
+                    "not yet been paired with a module owner for knowledge transfer. No commits "
+                    "have been recorded.\n\n"
+                    "**Status:** This issue was generated by a prior pipeline run. "
+                    "It will be superseded or closed on the next analysis run.\n\n"
+                    "_Generated by Mycelium Continuity Engine (demo seed)._"
+                ),
+                "labels": ["mycelium", "onboarding"],
+            },
+        ]
+        created = []
+        for t in stale_templates:
+            try:
+                result = self.create_issue(
+                    title=t["title"],
+                    description=t["description"],
+                    labels=t["labels"],
+                )
+                created.append(result)
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "[gitlab] Failed to seed demo issue '%s': %s", t["title"], exc
+                )
+        return created

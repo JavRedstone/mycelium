@@ -1,4 +1,4 @@
-from dotenv import load_dotenv
+﻿from dotenv import load_dotenv
 import os
 from pymongo import MongoClient
 from pymongo.server_api import ServerApi
@@ -10,6 +10,6 @@ client = MongoClient(uri, server_api=ServerApi('1'))
 
 try:
     client.admin.command('ping')
-    print("[OK] MongoDB — connected to Atlas")
+    print("[OK] MongoDB - connected to Atlas")
 except Exception as e:
-    print(f"[FAIL] MongoDB — {e}")
+    print(f"[FAIL] MongoDB - {e}")

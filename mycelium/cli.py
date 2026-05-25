@@ -1,5 +1,5 @@
-"""
-Mycelium CLI — interact with the running Continuity Engine from the terminal.
+﻿"""
+Mycelium CLI - interact with the running Continuity Engine from the terminal.
 
 Usage (from the mycelium/ directory with .venv active):
     python -m cli <command> [options]
@@ -90,7 +90,7 @@ def _delete(url: str, path: str) -> dict:
 
 def _time_ago(ts: float | str | None) -> str:
     if ts is None:
-        return "—"
+        return "-"
     try:
         if isinstance(ts, str):
             from datetime import datetime, timezone
@@ -153,7 +153,7 @@ def _event_line(event: dict) -> Text:
         ts.append(f"    ✓ {subject}", style="green")
         summary = str(event.get("summary", ""))[:100]
         if summary:
-            ts.append(f" — {summary}", style="dim")
+            ts.append(f" - {summary}", style="dim")
     elif t == "finding":
         concern = event.get("concern_type", "")
         subject = event.get("subject", "")
@@ -178,7 +178,7 @@ def _event_line(event: dict) -> Text:
 @click.option("--url", default=DEFAULT_URL, envvar="MYCELIUM_URL", help="Mycelium server URL", show_default=True)
 @click.pass_context
 def cli(ctx: click.Context, url: str) -> None:
-    """Mycelium — Engineering Continuity Engine CLI"""
+    """Mycelium - Engineering Continuity Engine CLI"""
     ctx.ensure_object(dict)
     ctx.obj["url"] = url.rstrip("/")
 
@@ -298,7 +298,7 @@ def status(ctx: click.Context) -> None:
         mt.add_column("Bus factor")
         mt.add_column("Owners")
         for m in mods[:10]:
-            owners = ", ".join(m.get("owners", [])) or "—"
+            owners = ", ".join(m.get("owners", [])) or "-"
             bf = str(m.get("bus_factor", "?"))
             color = "red" if m.get("bus_factor", 1) <= 1 else "yellow"
             mt.add_row(m.get("path", "?") + "/", Text(bf, style=color), owners)
@@ -549,7 +549,7 @@ def replay(ctx: click.Context, run_id: Optional[str], speed: float) -> None:
         console.print(_event_line(event))
 
     console.print()
-    console.print("[dim]— end of replay —[/dim]")
+    console.print("[dim]- end of replay -[/dim]")
 
 
 # ---------------------------------------------------------------------------

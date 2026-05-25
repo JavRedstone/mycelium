@@ -1,4 +1,4 @@
-import Box from "@mui/material/Box";
+﻿import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import ActivityFeed from "../components/ActivityFeed";
@@ -36,7 +36,7 @@ export default function PipelinePage() {
           </Box>
         </Box>
 
-        {/* Bottom: agent activity feed — full width */}
+        {/* Bottom: agent activity feed - full width */}
         <ActivityFeed height={520} />
       </Stack>
     </Box>

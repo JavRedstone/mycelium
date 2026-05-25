@@ -1,4 +1,4 @@
-"""
+﻿"""
 Real-time agent activity broadcast bus.
 
 Collects structured activity events from the pipeline and all agent subprocesses
@@ -8,9 +8,9 @@ thread-safe: emit() may be called from any thread (e.g. ADK agent threads runnin
 inside asyncio.to_thread). Events are scheduled onto the main event loop via
 run_coroutine_threadsafe.
 
-Event schema — all events share these fields:
-    type   : str   — discriminant (see EVENT TYPES below)
-    ts     : float — unix timestamp (time.time())
+Event schema - all events share these fields:
+    type   : str   - discriminant (see EVENT TYPES below)
+    ts     : float - unix timestamp (time.time())
 
 Plus type-specific fields documented below.
 
@@ -51,7 +51,7 @@ class ActivityBus:
         self._loop = loop
 
     # ------------------------------------------------------------------
-    # Emit (thread-safe — safe to call from any thread)
+    # Emit (thread-safe - safe to call from any thread)
     # ------------------------------------------------------------------
 
     def emit(self, event: dict) -> None:
@@ -83,7 +83,7 @@ class ActivityBus:
             try:
                 q.put_nowait(event)
             except asyncio.QueueFull:
-                pass  # slow subscriber — drop rather than block
+                pass  # slow subscriber - drop rather than block
 
     # ------------------------------------------------------------------
     # Helpers
@@ -114,6 +114,6 @@ class ActivityBus:
 
 
 # ---------------------------------------------------------------------------
-# Module-level singleton — import this everywhere
+# Module-level singleton - import this everywhere
 # ---------------------------------------------------------------------------
 bus = ActivityBus()
