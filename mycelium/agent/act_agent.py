@@ -583,7 +583,8 @@ async def _direct_execute_actions(
                 iid = _extract_iid(result)
                 title = params.get("title", kind)
                 label = (f"#{iid} " if iid else "") + title
-                details.append({"kind": kind, "detail": label})
+                # Include iid and params so the pipeline can build its skip sets
+                details.append({"kind": kind, "detail": label, "iid": iid, "params": params})
                 _activity_bus.emit({"type": "tool_response", "stage_id": "act", "tool": kind, "result": result})
                 logger.info("[act_agent] direct %r → %s", kind, label)
         except Exception as exc:
@@ -728,20 +729,39 @@ async def act(
             iid = _extract_iid(result)
             title = args.get("title") or (args.get("body") or "")[:60]
             label = f"#{iid} {title}".strip() if iid else title
-            details.append({"kind": name, "detail": label})
+            # Include iid and params so the pipeline can build its skip sets
+            details.append({"kind": name, "detail": label, "iid": iid, "params": args})
 
     # If the ADK stream produced no tool calls, execute the plan directly.
     # This is the reliable fallback: Gemini reasons (text above) but we act
     # deterministically from the structured plan rather than waiting for the
     # agent to invoke tools through the MCP loop.
-    # On subsequent stabilization passes, skip actions whose titles were already
-    # executed in an earlier pass so we don't create duplicate issues.
-    skip_titles: set[str] = set(prior_interventions.get("skip_action_titles", [])) if prior_interventions else set()
-    remaining_actions = [
-        a for a in actions
-        if a.get("kind") != "create_issue"
-        or a.get("params", {}).get("title", "") not in skip_titles
-    ]
+    # On subsequent stabilization passes, skip actions already executed in an
+    # earlier pass.  Each action kind has its own deduplication key:
+    #   create_issue              → by title
+    #   edit_issue / assign_issue → by iid
+    #   generate_*_artifact       → by username
+    skip_titles:    set[str] = set(prior_interventions.get("skip_action_titles",      [])) if prior_interventions else set()
+    skip_iids:      set[int] = set(prior_interventions.get("skip_edit_iids",          [])) if prior_interventions else set()
+    skip_usernames: set[str] = set(prior_interventions.get("skip_artifact_usernames", [])) if prior_interventions else set()
+
+    def _should_skip(action: dict) -> bool:
+        kind   = action.get("kind", "")
+        params = action.get("params", {})
+        if kind == "create_issue":
+            return params.get("title", "") in skip_titles
+        if kind in ("edit_issue", "assign_issue"):
+            return int(params.get("iid", 0) or 0) in skip_iids
+        if kind in ("generate_onboarding_pack", "generate_offboarding_artifact"):
+            username = (
+                params.get("new_member_username")
+                or params.get("departing_member_username")
+                or params.get("username", "")
+            )
+            return username in skip_usernames
+        return False
+
+    remaining_actions = [a for a in actions if not _should_skip(a)]
     if not tool_calls and remaining_actions:
         logger.info("[act_agent] ADK produced 0 tool calls - executing %d planned actions directly",
                     len(remaining_actions))

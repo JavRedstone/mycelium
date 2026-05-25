@@ -33,15 +33,14 @@ class _PipelineCancelled(Exception):
 
 
 STAGE_DEFS = [
-    {"id": "observe_repo", "label": "Observe Repo", "description": "Read GitLab project state: members, issues, MRs, pipelines, CODEOWNERS, fork divergence"},
-    {"id": "map_modules", "label": "Map Modules", "description": "Map per-directory upstream authorship - who knows what part of the codebase"},
-    {"id": "investigate", "label": "Investigate", "description": "Spawn concurrent subagents to read actual file content and judge transferability"},
-    {"id": "observe_graph", "label": "Observe Graph", "description": "Read continuity graph snapshot"},
-    {"id": "interpret", "label": "Interpret", "description": "Reason over signals + investigator findings; produce qualitative findings"},
-    {"id": "plan", "label": "Plan", "description": "Build recommended remediation actions"},
-    {"id": "act", "label": "Execute", "description": "Perform GitLab operations from plan"},
-    {"id": "learn", "label": "Persist", "description": "Write back knowledge graph updates and findings"},
-    {"id": "summary", "label": "Summary", "description": "Compile run-level outcome metrics"},
+    {"id": "observe",  "label": "Observe",  "description": "Parallel state capture: repository snapshot, knowledge graph, and GitLab baseline (issues, MRs) — all reads happen here"},
+    {"id": "model",    "label": "Model",    "description": "Integrate repository snapshot into knowledge graph; update inferred ownership and contributor-module relationships"},
+    {"id": "analyze",  "label": "Analyze",  "description": "Spawn concurrent investigator subagents over modules and members; synthesize findings into structured concern types"},
+    {"id": "decide",   "label": "Decide",   "description": "Select bounded intervention set; deduplicate against GitLab baseline to prevent redundant action creation"},
+    {"id": "act",      "label": "Act",      "description": "Execute GitLab mutations: create issues, update MRs, assign ownership, generate artifacts"},
+    {"id": "reflect",  "label": "Reflect",  "description": "Reconcile intended actions against observed GitLab state; annotate findings with causal metadata"},
+    {"id": "persist",  "label": "Persist",  "description": "Write updated graph state, annotated findings, and causal action history to MongoDB"},
+    {"id": "summary",  "label": "Summary",  "description": "Compile cycle outcome: structural changes, verified interventions, and key metrics"},
 ]
 
 
@@ -89,9 +88,14 @@ class PipelineRunner:
         self._module_contributors: dict = {}
         self._investigations: dict = {}      # {"members": [...], "modules": [...], "drift": {...}}
         self._graph_data: dict = {}
-        self._interpretation: dict = {}      # {"synthesis": "...", "findings": [...]}
+        self._interpretation: dict = {}      # {"synthesis": "...", "findings": [...], "annotated_findings": [...]}
         self._plan: dict = {}
         self._act_result: dict = {}
+        self._reflect_result: dict = {}
+
+        # GitLab state captured at OBSERVE time — REFLECT diffs against this baseline
+        self._pre_run_gitlab_snapshot: dict = {}    # {"issue_iids": set, "mr_iids": set}
+        self._pre_run_gitlab_issues: list = []      # full issue objects for DECIDE deduplication
 
     @property
     def current_run(self) -> Optional[PipelineRun]:
@@ -152,30 +156,32 @@ class PipelineRunner:
         _activity_bus.emit({"type": "run_start", "run_id": run.run_id})
 
         try:
-            if not await self._execute("observe_repo", self._observe_repo):
+            # OBSERVE: single unified state ingestion boundary.
+            # All reads happen here; all downstream stages operate on a frozen snapshot.
+            if not await self._execute("observe", self._observe):
                 run.status = "failed"
                 return
 
-            await self._execute("map_modules", self._observe_modules)
+            # MODEL: integrate repo snapshot into knowledge graph.
+            await self._execute("model", self._model)
 
-            # Investigate is best-effort: if subagents fail the pipeline still continues
-            # with whatever findings were collected.
-            await self._execute("investigate", self._investigate)
+            # ANALYZE: concurrent investigation + central synthesis.
+            # Best-effort — pipeline continues with whatever findings were collected.
+            await self._execute("analyze", self._analyze)
 
-            if not await self._execute("observe_graph", self._observe_graph):
+            # DECIDE: select bounded, deduplicated intervention set.
+            if not await self._execute("decide", self._decide):
                 run.status = "failed"
                 return
 
-            if not await self._execute("interpret", self._interpret):
-                run.status = "failed"
-                return
-
-            if not await self._execute("plan", self._plan_stage):
-                run.status = "failed"
-                return
-
+            # ACT: execute GitLab mutations.
             await self._execute("act", self._act)
-            await self._execute("learn", self._learn)
+
+            # REFLECT: reconcile intended actions against observed GitLab state.
+            await self._execute("reflect", self._reflect)
+
+            # PERSIST: write annotated findings + updated graph to MongoDB.
+            await self._execute("persist", self._persist)
             await self._execute("summary", self._summary)
 
             run.status = (
@@ -241,8 +247,36 @@ class PipelineRunner:
     # Stage implementations
     # ------------------------------------------------------------------
 
-    async def _observe_repo(self) -> dict:
-        self._repo = await asyncio.to_thread(self._gitlab.snapshot)
+    async def _observe(self) -> dict:
+        """OBSERVE: single unified state ingestion boundary.
+
+        Loads all three state domains in parallel so no domain is stale relative
+        to another.  All reads happen here.  Downstream stages operate on this
+        frozen snapshot — they do not make additional read calls to GitLab or
+        MongoDB (except REFLECT, which re-fetches GitLab to verify ACT outcomes).
+        """
+        from config.settings import settings
+
+        # Parallel load: repository state (GitLab) + graph state (MongoDB)
+        self._repo, self._graph_data = await asyncio.gather(
+            asyncio.to_thread(self._gitlab.snapshot),
+            self._graph.snapshot(),
+        )
+
+        # Extract GitLab baseline — REFLECT diffs against this to determine what
+        # actually changed as a result of ACT, vs what was already there.
+        self._pre_run_gitlab_issues = self._repo.get("open_issues", [])
+        self._pre_run_gitlab_snapshot = {
+            "issue_iids": {i["iid"] for i in self._pre_run_gitlab_issues},
+            "mr_iids":    {m["iid"] for m in self._repo.get("open_merge_requests", [])},
+        }
+        logger.info(
+            "[observe] Baseline: %d open issues, %d open MRs",
+            len(self._pre_run_gitlab_snapshot["issue_iids"]),
+            len(self._pre_run_gitlab_snapshot["mr_iids"]),
+        )
+
+        # Repo summary metrics
         upstream_authors = self._repo.get("upstream_authors", [])
         codeowners = self._repo.get("codeowners", {})
         pipelines = self._repo.get("pipeline_status", [])
@@ -251,10 +285,8 @@ class PipelineRunner:
         upstream_ratio = self._repo.get("upstream_author_ratio", 0.0)
         members = self._repo.get("members", [])
 
-        # Infer project lifecycle from observable signals.
-        # Agents use this to calibrate how they interpret risk scores.
         if is_fork and upstream_ratio >= 0.7:
-            lifecycle = "fresh_fork"   # team is onboarding, dark knowledge is expected
+            lifecycle = "fresh_fork"
         elif not members:
             lifecycle = "uninitialized"
         elif len(members) == 1:
@@ -262,10 +294,16 @@ class PipelineRunner:
         else:
             lifecycle = "active"
 
-        fork_divergence = self._repo.get("fork_divergence")
+        # Graph summary metrics (previously the separate observe_graph stage output)
+        graph_developers  = len(self._graph_data.get("developers", []))
+        graph_upstream    = len(self._graph_data.get("upstream_authors", []))
+        graph_concentrated = len(self._graph_data.get("concentrated_modules", []))
+        graph_findings    = len(self._graph_data.get("recent_findings", []))
+
         return {
+            # Repository domain
             "members": len(members),
-            "open_issues": len(self._repo.get("open_issues", [])),
+            "open_issues": len(self._pre_run_gitlab_issues),
             "open_mrs": len(self._repo.get("open_merge_requests", [])),
             "commit_contributors": len(self._repo.get("commit_contributors", [])),
             "upstream_authors": len(upstream_authors),
@@ -278,10 +316,23 @@ class PipelineRunner:
             "is_fork": is_fork,
             "upstream_author_ratio": upstream_ratio,
             "lifecycle_context": lifecycle,
-            "fork_divergence": fork_divergence,
+            "fork_divergence": self._repo.get("fork_divergence"),
+            # Graph domain (baseline memory state at run start)
+            "graph_developers_tracked": graph_developers,
+            "graph_upstream_tracked": graph_upstream,
+            "graph_concentrated_modules": graph_concentrated,
+            "graph_recent_findings": graph_findings,
+            "demo_mode": settings.demo_mode,
+            "demo_data_present": bool(self._graph_data.get("demo_data_present", False)),
         }
 
-    async def _observe_modules(self) -> dict:
+    async def _model(self) -> dict:
+        """MODEL: integrate repository snapshot into the ownership graph.
+
+        Walks top-level directories to build a per-module contributor map.
+        This is the structural inference step — no agents, no GitLab reads beyond
+        what gitlab_client already has cached from OBSERVE.
+        """
         self._module_contributors = await asyncio.to_thread(
             self._gitlab.get_module_contributor_map
         )
@@ -397,13 +448,13 @@ class PipelineRunner:
 
         return attention
 
-    async def _investigate(self) -> dict:
-        """Spawn concurrent investigator subagents over modules, members, and drift.
+    async def _run_investigation(self) -> dict:
+        """Investigation sub-step of ANALYZE.
 
-        This is where the system stops being algorithmic. Each subagent reads
-        actual file content (via the GitLab client) and produces a structured
-        assessment with its own reasoning. No thresholds - the subagent's
-        judgment is the output.
+        Spawns concurrent investigator subagents over modules, members, and drift.
+        This is where the system stops being algorithmic — each subagent reads
+        actual file content and produces a structured assessment with its own
+        reasoning. No thresholds; the subagent's judgment is the output.
         """
         # Capture member activity for high-attention detection
         try:
@@ -411,16 +462,16 @@ class PipelineRunner:
                 self._gitlab.get_member_activity_dates
             )
         except Exception as exc:
-            logger.warning("[investigate] member activity fetch failed: %s", exc)
+            logger.warning("[analyze/investigate] member activity fetch failed: %s", exc)
             self._repo["member_activity"] = {}
 
         high_attention = self._detect_high_attention_members()
-        logger.info("[investigate] High-attention members: %d", len(high_attention))
+        logger.info("[analyze/investigate] High-attention members: %d", len(high_attention))
 
         # Member investigators - one per high-attention member, concurrent
         for item in high_attention:
             subject = (item["member"].get("username") or item["member"].get("name") or "?")
-            _activity_bus.emit({"type": "subagent_spawn", "stage_id": "investigate",
+            _activity_bus.emit({"type": "subagent_spawn", "stage_id": "analyze",
                                 "kind": "member", "subject": subject,
                                 "reason": item["attention_reason"]})
         member_tasks = [
@@ -436,7 +487,7 @@ class PipelineRunner:
         # Module investigators - one per discovered module, concurrent
         module_tasks = []
         for module_path, contribs in self._module_contributors.items():
-            _activity_bus.emit({"type": "subagent_spawn", "stage_id": "investigate",
+            _activity_bus.emit({"type": "subagent_spawn", "stage_id": "analyze",
                                 "kind": "module", "subject": module_path})
             module_tasks.append(
                 investigator.investigate_module(
@@ -458,7 +509,7 @@ class PipelineRunner:
         # Cap concurrency from runtime config (default 10, hard max 20)
         cfg = await self._graph.get_runtime_config()
         max_inv = max(1, min(20, int(cfg.get("analyst_max_investigators", 10))))
-        logger.info("[investigate] max concurrent investigators: %d", max_inv)
+        logger.info("[analyze/investigate] max concurrent investigators: %d", max_inv)
         sem = asyncio.Semaphore(max_inv)
 
         async def _bounded(coro):
@@ -477,7 +528,7 @@ class PipelineRunner:
 
         def _ok(r):
             if isinstance(r, Exception):
-                logger.warning("[investigate] subagent raised: %s", r)
+                logger.warning("[analyze/investigate] subagent raised: %s", r)
                 return None
             return r
 
@@ -489,16 +540,16 @@ class PipelineRunner:
         for item, result in zip(high_attention, member_results):
             subject = (item["member"].get("username") or item["member"].get("name") or "?")
             summary = result.get("knowledge_at_risk") or result.get("urgency_reasoning") or "investigated"
-            _activity_bus.emit({"type": "subagent_result", "stage_id": "investigate",
+            _activity_bus.emit({"type": "subagent_result", "stage_id": "analyze",
                                 "kind": "member", "subject": subject,
                                 "summary": str(summary)[:200]})
         for module_path, result in zip(self._module_contributors.keys(), module_results):
             summary = result.get("transferability_assessment") or result.get("documentation_state") or "investigated"
-            _activity_bus.emit({"type": "subagent_result", "stage_id": "investigate",
+            _activity_bus.emit({"type": "subagent_result", "stage_id": "analyze",
                                 "kind": "module", "subject": module_path,
                                 "summary": str(summary)[:200]})
         if drift_result and drift_result.get("investigated"):
-            _activity_bus.emit({"type": "subagent_result", "stage_id": "investigate",
+            _activity_bus.emit({"type": "subagent_result", "stage_id": "analyze",
                                 "kind": "drift", "subject": drift_result.get("upstream_project", "upstream"),
                                 "summary": str(drift_result.get("urgency_assessment", "investigated"))[:200]})
 
@@ -513,57 +564,88 @@ class PipelineRunner:
             "member_investigations": len(member_results),
             "module_investigations": len(module_results),
             "drift_investigated": drift_result is not None and drift_result.get("investigated", False),
-            "members": member_results,
-            "modules": module_results,
-            "drift": drift_result,
         }
 
-    async def _observe_graph(self) -> dict:
-        from config.settings import settings
-        self._graph_data = await self._graph.snapshot()
-        return {
-            "developers_tracked": len(self._graph_data.get("developers", [])),
-            "upstream_authors_tracked": len(self._graph_data.get("upstream_authors", [])),
-            "concentrated_modules": len(self._graph_data.get("concentrated_modules", [])),
-            "open_tasks_tracked": len(self._graph_data.get("open_tasks", [])),
-            "recent_findings": len(self._graph_data.get("recent_findings", [])),
-            "demo_mode": settings.demo_mode,
-            "demo_data_present": bool(self._graph_data.get("demo_data_present", False)),
-        }
+    async def _run_interpretation(self) -> dict:
+        """Interpretation sub-step of ANALYZE.
 
-    async def _interpret(self) -> dict:
-        """Continuity interpretation stage - replaces the old 'analyze' stage.
-
-        Produces qualitative findings (no scores) by reasoning over signals
-        plus investigator outputs.
+        Central synthesis: analyst agent reasons over all investigator findings
+        and produces qualitative concern-typed findings.  No thresholds — the
+        agent's judgment is the output.
         """
         self._interpretation = await asyncio.to_thread(
             analyst_agent.analyze, self._repo, self._graph_data, self._investigations
         )
         findings = self._interpretation.get("findings", [])
         for f in findings:
-            _activity_bus.emit({"type": "finding", "stage_id": "interpret",
+            _activity_bus.emit({"type": "finding", "stage_id": "analyze",
                                 "subject": str(f.get("subject", "?")),
                                 "concern_type": str(f.get("concern_type", "?")),
                                 "narrative": str(f.get("narrative", ""))[:300]})
         return {
-            "synthesis": self._interpretation.get("synthesis"),
             "finding_count": len(findings),
-            "findings": findings,
             "concern_types": sorted({f.get("concern_type", "?") for f in findings}),
+            "synthesis": self._interpretation.get("synthesis"),
         }
 
-    async def _plan_stage(self) -> dict:
+    async def _analyze(self) -> dict:
+        """ANALYZE: concurrent investigation + central synthesis.
+
+        Runs investigation (parallel subagents) then interpretation (single
+        synthesis agent) as sequential sub-steps within the same stage.
+        Kept separate internally for parallelism and depth control; exposed as
+        one stage to the UI for a clean 8-stage narrative.
+        """
+        inv = await self._run_investigation()
+        interp = await self._run_interpretation()
+        return {**inv, **interp}
+
+    async def _decide(self) -> dict:
+        """DECIDE: select a bounded, deduplicated intervention set.
+
+        Runs the planner agent, then removes any create_issue actions whose
+        title closely matches an issue already open at OBSERVE time.  This is
+        the first stage that explicitly reasons about existing GitLab state.
+        """
         self._plan = await asyncio.to_thread(
             planner_agent.plan, self._interpretation, self._repo, self._graph_data
         )
+
+        # Deduplicate against GitLab baseline captured in OBSERVE.
+        # Prevents re-creating issues for findings that already have open coverage.
+        pre_titles = {
+            iss.get("title", "").lower()
+            for iss in self._pre_run_gitlab_issues
+            if iss.get("title")
+        }
+        if pre_titles:
+            filtered: list[dict] = []
+            deduped = 0
+            for action in self._plan.get("actions", []):
+                if action.get("kind") == "create_issue":
+                    planned_title = (action.get("params") or {}).get("title", "").lower()
+                    if planned_title and any(
+                        planned_title in pt or pt in planned_title
+                        for pt in pre_titles
+                    ):
+                        logger.info("[decide] Deduplicating action — title matches pre-existing issue: %s", planned_title)
+                        deduped += 1
+                        continue
+                filtered.append(action)
+            if deduped:
+                logger.info("[decide] Removed %d duplicate action(s) against %d pre-existing issues", deduped, len(pre_titles))
+                self._plan["actions"] = filtered
+        else:
+            deduped = 0
+
         for action in self._plan.get("actions", []):
             params = action.get("params") or {}
-            _activity_bus.emit({"type": "action_planned", "stage_id": "plan",
+            _activity_bus.emit({"type": "action_planned", "stage_id": "decide",
                                 "kind": str(action.get("kind", "?")),
                                 "title": str(params.get("title", json.dumps(params)[:80]))})
         return {
             "actions_planned": len(self._plan.get("actions", [])),
+            "actions_deduplicated": deduped,
             "graph_updates_planned": len(self._plan.get("graph_updates", [])),
             "actions": self._plan.get("actions", []),
         }
@@ -583,7 +665,10 @@ class PipelineRunner:
         each pass sees the updated GitLab state left by the previous one.
         """
         cfg = await self._graph.get_runtime_config()
-        MAX_STABILIZATION_PASSES = max(1, min(10, int(cfg.get("act_max_stabilization_passes", 5))))
+        # Default is 1: ACT executes once; REFLECT is the verification step.
+        # Increase via MongoDB settings {"_id":"runtime","act_max_stabilization_passes":N}
+        # only when you need genuine multi-pass remediation (e.g. dependency cascades).
+        MAX_STABILIZATION_PASSES = max(1, min(10, int(cfg.get("act_max_stabilization_passes", 1))))
 
         actions = self._plan.get("actions") or []
         if actions:
@@ -617,8 +702,10 @@ class PipelineRunner:
         known_iids: set[int] = {i["iid"] for i in pre_act_issues}
         addressed_issue_iids: list[int] = []
         addressed_subjects: list[str] = []
-        addressed_details: list[str] = []    # "#{iid} title" strings shown to agent
-        skip_action_titles: set[str] = set() # titles executed via direct fallback
+        addressed_details: list[str] = []     # "#{iid} title" strings shown to agent
+        skip_action_titles: set[str] = set()  # create_issue titles already executed
+        skip_edit_iids: set[int] = set()      # edit_issue / assign_issue iids already executed
+        skip_artifact_usernames: set[str] = set()  # generate_onboarding/offboarding usernames
 
         # Accumulated across all passes
         all_details: list[dict] = []
@@ -650,6 +737,8 @@ class PipelineRunner:
                     "addressed_subjects": list(addressed_subjects),
                     "addressed_details": list(addressed_details),
                     "skip_action_titles": list(skip_action_titles),
+                    "skip_edit_iids": list(skip_edit_iids),
+                    "skip_artifact_usernames": list(skip_artifact_usernames),
                 }
 
             result = await act_agent.act(
@@ -669,14 +758,31 @@ class PipelineRunner:
             if result.get("summary"):
                 last_summary = result["summary"]
 
-            # Update skip list so the direct fallback won't re-run create_issue
+            # Update skip sets so the direct fallback won't re-execute completed actions.
+            # Each action kind gets its own deduplication key:
+            #   create_issue              → by title
+            #   edit_issue / assign_issue → by issue iid
+            #   generate_*_artifact       → by username
             for d in pass_details:
-                if d.get("kind") == "create_issue":
+                kind = d.get("kind", "")
+                params = d.get("params", {})  # populated by act_agent when iid/username needed
+                if kind == "create_issue":
                     raw = d.get("detail", "")
-                    # detail format is "#{iid} title" or just "title"
                     title = raw.split(" ", 1)[-1] if raw.startswith("#") else raw
                     if title:
                         skip_action_titles.add(title)
+                elif kind in ("edit_issue", "assign_issue"):
+                    iid = d.get("iid") or int(params.get("iid", 0) or 0)
+                    if iid:
+                        skip_edit_iids.add(int(iid))
+                elif kind in ("generate_onboarding_pack", "generate_offboarding_artifact"):
+                    username = (
+                        params.get("new_member_username")
+                        or params.get("departing_member_username")
+                        or params.get("username", "")
+                    )
+                    if username:
+                        skip_artifact_usernames.add(username)
 
             # Detect newly created issues this pass (convergence signal)
             new_issue_count = 0
@@ -703,9 +809,14 @@ class PipelineRunner:
                 pass_num, MAX_STABILIZATION_PASSES, len(pass_details), new_issue_count,
             )
 
-            # Terminate if no new issues were produced (frontier exhausted)
-            # Always run at least one full pass even if 0 issues are created.
-            if pass_num > 1 and new_issue_count == 0:
+            # Terminate early when the intervention frontier is exhausted.
+            # Two signals (either is sufficient):
+            #   1. pass_details is empty → nothing was actually executed this pass
+            #      (all remaining_actions were filtered out by the skip sets)
+            #   2. new_issue_count == 0 → no novel issues appeared
+            #      (the original convergence signal, kept as defence-in-depth)
+            # Always run at least one full pass regardless.
+            if pass_num > 1 and (len(pass_details) == 0 or new_issue_count == 0):
                 logger.info("[act] Intervention frontier exhausted after %d pass(es)", pass_num)
                 _activity_bus.emit({
                     "type": "agent_text", "stage_id": "act",
@@ -820,7 +931,86 @@ class PipelineRunner:
 
         return closed
 
-    async def _learn(self) -> dict:
+    async def _reflect(self) -> dict:
+        """REFLECT: external state reconciliation after ACT.
+
+        Re-fetches GitLab state and diffs against the OBSERVE baseline to
+        determine which planned actions actually materialized, which findings
+        already had open coverage, and which went unaddressed this cycle.
+
+        This is the only stage that bridges intended actions and observed reality.
+        Writes causal annotations into self._interpretation for PERSIST to store.
+        """
+        # Re-fetch post-ACT GitLab state (lightweight — bot issues only)
+        try:
+            post_act_issues = await asyncio.to_thread(self._gitlab.list_bot_issues)
+        except Exception as exc:
+            logger.warning("[reflect] GitLab re-fetch failed: %s", exc)
+            post_act_issues = []
+
+        pre_iids = self._pre_run_gitlab_snapshot.get("issue_iids", set())
+
+        # Build title → issue lookup for matching findings to issues
+        post_by_title: dict[str, dict] = {
+            iss["title"].lower(): iss for iss in post_act_issues
+        }
+
+        findings = (self._interpretation or {}).get("findings", [])
+        newly_created_iids: list[int] = []
+        pre_existing_iids: list[int] = []
+        unaddressed_subjects: list[str] = []
+        annotated: list[dict] = []
+
+        for f in findings:
+            subject = str(f.get("subject", "")).lower().strip()
+            annotation: dict = {
+                "actioned_at": None,
+                "gitlab_iid": None,
+                "pre_existing": False,
+                "duplicate_of": None,
+            }
+
+            # Match finding subject as substring in issue title
+            matched: dict | None = None
+            for title_lower, iss in post_by_title.items():
+                if subject and subject in title_lower:
+                    matched = iss
+                    break
+
+            if matched:
+                annotation["gitlab_iid"] = matched["iid"]
+                if matched["iid"] in pre_iids:
+                    annotation["pre_existing"] = True
+                    pre_existing_iids.append(matched["iid"])
+                    logger.info("[reflect] Finding '%s' → pre-existing issue #%d", f.get("subject"), matched["iid"])
+                else:
+                    annotation["actioned_at"] = time.time()
+                    newly_created_iids.append(matched["iid"])
+                    logger.info("[reflect] Finding '%s' → new issue #%d confirmed", f.get("subject"), matched["iid"])
+            else:
+                unaddressed_subjects.append(str(f.get("subject", "?")))
+
+            annotated.append({**f, **annotation})
+
+        # Store annotated findings so PERSIST can write causal metadata
+        self._interpretation["annotated_findings"] = annotated
+
+        self._reflect_result = {
+            "findings_total": len(findings),
+            "findings_actioned": len(newly_created_iids),
+            "findings_pre_existing": len(pre_existing_iids),
+            "findings_unaddressed": len(unaddressed_subjects),
+            "newly_created_iids": newly_created_iids,
+            "unaddressed_subjects": unaddressed_subjects[:10],  # cap for output size
+        }
+        logger.info(
+            "[reflect] %d actioned, %d pre-existing, %d unaddressed (of %d findings)",
+            len(newly_created_iids), len(pre_existing_iids),
+            len(unaddressed_subjects), len(findings),
+        )
+        return self._reflect_result
+
+    async def _persist(self) -> dict:
         count, total = 0, len(self._plan.get("graph_updates", []))
         for update in self._plan.get("graph_updates", []):
             collection = update.get("collection")
@@ -1073,12 +1263,11 @@ class PipelineRunner:
         # Refresh bus_factor measurements only. No scoring, no aggregation.
         # Severity lives in Finding records (persisted below), not on modules.
         rescored = await self._refresh_bus_factors()
-        logger.info("[pipeline] Refreshed bus_factor on %d module(s)", rescored)
+        logger.info("[persist] Refreshed bus_factor on %d module(s)", rescored)
 
-        # Persist findings produced by the interpret stage. These replace the
-        # old continuity_risk_score field on modules entirely.
+        # Persist findings (with REFLECT causal annotations if available).
         findings_saved = await self._persist_findings()
-        logger.info("[pipeline] Persisted %d finding(s)", findings_saved)
+        logger.info("[persist] Persisted %d finding(s)", findings_saved)
 
         # Persist agent actions to the actions log
         actions_saved = 0
@@ -1155,15 +1344,20 @@ class PipelineRunner:
         return updated
 
     async def _persist_findings(self) -> int:
-        """Persist analyst-produced findings to the findings collection.
+        """Persist findings to the findings collection.
 
-        Findings replace the old continuity_risk_score field. Each finding is a
-        qualitative record (subject, concern_type, narrative, evidence,
-        recommended_actions) tied to this pipeline run.
+        Uses annotated findings from REFLECT (with actioned_at, pre_existing,
+        gitlab_iid causal metadata) when available.  Falls back to raw
+        interpretation findings if REFLECT did not run or failed.
         """
         from graph.models import Finding
 
-        findings = (self._interpretation or {}).get("findings", []) or []
+        # Prefer annotated findings (produced by REFLECT) for causal traceability
+        findings = (
+            (self._interpretation or {}).get("annotated_findings")
+            or (self._interpretation or {}).get("findings", [])
+            or []
+        )
         if not findings:
             return 0
         run_id = self._current_run.run_id if self._current_run else None
@@ -1181,7 +1375,7 @@ class PipelineRunner:
                 await self._graph.insert_finding(finding)
                 saved += 1
             except Exception as exc:
-                logger.error("[pipeline] insert_finding failed: %s", exc)
+                logger.error("[persist] insert_finding failed: %s", exc)
         return saved
 
     async def _summary(self) -> dict:

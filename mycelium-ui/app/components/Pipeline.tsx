@@ -27,7 +27,6 @@ import ErrorOutlinedIcon from "@mui/icons-material/ErrorOutlined";
 import AccessTimeIcon from "@mui/icons-material/AccessTime";
 import FolderOpenOutlinedIcon from "@mui/icons-material/FolderOpenOutlined";
 import BiotechOutlinedIcon from "@mui/icons-material/BiotechOutlined";
-import ScienceOutlinedIcon from "@mui/icons-material/ScienceOutlined";
 import Md from "./Md";
 import AgentTrace, { type TraceEvent } from "./AgentTrace";
 
@@ -130,21 +129,24 @@ function stageSummary(stage: Stage): string | null {
   if (!stage.output) return stage.description ?? null;
   const o = stage.output;
   switch (stage.id) {
-    case "observe_repo":
-      return `${n(o.commit_contributors as number ?? 0, "contributor")} · ${o.upstream_authors ?? 0} upstream`;
-    case "map_modules":
+    // Current stage IDs
+    case "observe":
+      return `${n(o.commit_contributors as number ?? 0, "contributor")} · ${o.upstream_authors ?? 0} upstream · ${o.open_issues ?? 0} open issues`;
+    case "model":
       return `${n(o.modules_discovered as number ?? 0, "module")} · ${n(o.total_attributions as number ?? 0, "author attribution")}`;
-    case "investigate": {
+    case "analyze": {
       const members = o.member_investigations as number ?? 0;
       const modules = o.module_investigations as number ?? 0;
-      return `${n(members, "member")} · ${n(modules, "module")} · ${o.drift_investigated ? "drift" : "no drift"}`;
+      const findings = o.finding_count as number ?? 0;
+      return `${n(members, "member")} · ${n(modules, "module")} investigated · ${n(findings, "finding")}`;
     }
-    case "observe_graph":
-      return `${n(o.developers_tracked as number ?? 0, "dev")} · ${o.upstream_authors_tracked ?? 0} upstream · ${o.concentrated_modules ?? 0} concentrated`;
-    case "interpret":
-      return `${n(o.finding_count as number ?? 0, "finding")} · ${n((o.concern_types as string[])?.length ?? 0, "concern type")}`;
-    case "plan":
-      return `${n(o.actions_planned as number ?? 0, "action")} · ${n(o.graph_updates_planned as number ?? 0, "graph update")}`;
+    case "decide": {
+      const planned = o.actions_planned as number ?? 0;
+      const deduped = o.actions_deduplicated as number ?? 0;
+      let s = `${n(planned, "action")} planned`;
+      if (deduped > 0) s += ` · ${deduped} deduplicated`;
+      return s;
+    }
     case "act": {
       const executed = o.executed as number ?? 0;
       const failed = o.failed as number ?? 0;
@@ -155,7 +157,13 @@ function stageSummary(stage: Stage): string | null {
       if (stale > 0) s += ` · ${stale} stale closed`;
       return s;
     }
-    case "learn":
+    case "reflect": {
+      const actioned = o.findings_actioned as number ?? 0;
+      const preExisting = o.findings_pre_existing as number ?? 0;
+      const unaddressed = o.findings_unaddressed as number ?? 0;
+      return `${actioned} actioned · ${preExisting} pre-existing · ${unaddressed} unaddressed`;
+    }
+    case "persist":
       return `${o.updated ?? 0}/${o.total ?? 0} records · ${n(o.findings_saved as number ?? 0, "finding")} saved`;
     case "summary":
       return `${o.stages_succeeded ?? 0}/${o.stages_total ?? 0} stages · ${fmt(o.total_duration_ms as number)}`;
@@ -338,106 +346,6 @@ function InvestigateDetail({ output }: { output: Record<string, unknown> }) {
   );
 }
 
-function ObserveGraphDetail({ output }: { output: Record<string, unknown> }) {
-  const upstreamTracked = (output.upstream_authors_tracked as number) ?? 0;
-  const demoMode = output.demo_mode as boolean | undefined;
-  const demoDataPresent = output.demo_data_present as boolean | undefined;
-  return (
-    <Stack spacing={2}>
-      <Grid container spacing={2}>
-        <Grid size={3}><MetricCard label="Developers Tracked" value={output.developers_tracked} /></Grid>
-        <Grid size={3}><MetricCard label="Upstream Authors" value={upstreamTracked} highlight={upstreamTracked > 0} /></Grid>
-        <Grid size={3}><MetricCard label="Concentrated Modules" value={output.concentrated_modules} /></Grid>
-        <Grid size={3}><MetricCard label="Recent Findings" value={output.recent_findings} /></Grid>
-      </Grid>
-      {demoMode !== undefined && (
-        <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-          <Chip
-            icon={<ScienceOutlinedIcon sx={{ fontSize: "13px !important" }} />}
-            label={demoMode ? "Demo mode on" : "Demo mode off"}
-            size="small"
-            variant="outlined"
-            sx={{ height: 20, fontSize: "0.68rem", ...(demoMode ? { color: "#a78bfa", borderColor: "#7c3aed" } : { color: "text.disabled", borderColor: "rgba(255,255,255,0.12)" }) }}
-          />
-          {demoMode && demoDataPresent && (
-            <Typography variant="caption" color="text.disabled">
-              seeded contributors included in agent context
-            </Typography>
-          )}
-          {demoMode && !demoDataPresent && (
-            <Typography variant="caption" color="text.disabled">
-              no demo data present, only real data used
-            </Typography>
-          )}
-          {!demoMode && (
-            <Typography variant="caption" color="text.disabled">
-              demo-seeded data excluded from agent context
-            </Typography>
-          )}
-        </Stack>
-      )}
-    </Stack>
-  );
-}
-
-function InterpretDetail({ output }: { output: Record<string, unknown> }) {
-  const findings = (output.findings as Array<Record<string, unknown>>) ?? [];
-  return (
-    <Stack spacing={2}>
-      <Box sx={{ color: "text.secondary" }}>
-        <Md>{String(output.synthesis ?? "")}</Md>
-      </Box>
-      {findings.length > 0 ? (
-        <Stack spacing={1}>
-          {findings.map((f, i) => {
-            const actions = (f.recommended_actions as string[]) ?? [];
-            const evidence = (f.evidence as string[]) ?? [];
-            return (
-              <Paper key={i} elevation={0} sx={{ p: 1.5, bgcolor: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 1.5 }}>
-                <Stack spacing={1}>
-                  <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap" }}>
-                    <Chip
-                      label={String(f.concern_type ?? "concern").replace(/_/g, " ")}
-                      size="small"
-                      variant="outlined"
-                      sx={{ height: 22, fontSize: "0.7rem" }}
-                    />
-                    <Typography variant="body2" sx={{ fontFamily: "var(--font-google-sans-code)", fontWeight: 600 }}>
-                      {String(f.subject ?? "")}
-                    </Typography>
-                  </Stack>
-                  <Md>{String(f.narrative ?? "")}</Md>
-                  {actions.length > 0 && (
-                    <Box>
-                      <Typography variant="caption" color="text.disabled" sx={{ display: "block", mb: 0.5, textTransform: "uppercase", letterSpacing: "0.08em", fontSize: "0.6rem" }}>
-                        Recommended actions
-                      </Typography>
-                      <Box component="ul" sx={{ pl: 2.5, my: 0, color: "text.secondary" }}>
-                        {actions.map((a, j) => (
-                          <Box component="li" key={j} sx={{ fontSize: "0.8rem", lineHeight: 1.5 }}>{a}</Box>
-                        ))}
-                      </Box>
-                    </Box>
-                  )}
-                  {evidence.length > 0 && (
-                    <Stack direction="row" spacing={0.5} sx={{ flexWrap: "wrap" }} useFlexGap>
-                      {evidence.map((e, j) => (
-                        <Chip key={j} label={e} size="small" variant="outlined" sx={{ height: 18, fontSize: "0.6rem", fontFamily: "var(--font-google-sans-code)", color: "text.disabled" }} />
-                      ))}
-                    </Stack>
-                  )}
-                </Stack>
-              </Paper>
-            );
-          })}
-        </Stack>
-      ) : (
-        <Typography variant="body2" color="text.disabled">No findings produced</Typography>
-      )}
-    </Stack>
-  );
-}
-
 function PlanDetail({ output }: { output: Record<string, unknown> }) {
   const actions = (output.actions as Array<Record<string, unknown>>) ?? [];
   return (
@@ -542,6 +450,35 @@ function LearnDetail({ output }: { output: Record<string, unknown> }) {
   );
 }
 
+function ReflectDetail({ output }: { output: Record<string, unknown> }) {
+  const actioned    = (output.findings_actioned    as number) ?? 0;
+  const preExisting = (output.findings_pre_existing as number) ?? 0;
+  const unaddressed = (output.findings_unaddressed  as number) ?? 0;
+  const total       = (output.findings_total        as number) ?? 0;
+  const newIids     = (output.newly_created_iids    as number[]) ?? [];
+  const missed      = (output.unaddressed_subjects  as string[]) ?? [];
+  return (
+    <Stack spacing={2}>
+      <Grid container spacing={2}>
+        <Grid size={3}><MetricCard label="Findings Total"     value={total}       /></Grid>
+        <Grid size={3}><MetricCard label="Actioned"           value={actioned}     highlight={actioned > 0} /></Grid>
+        <Grid size={3}><MetricCard label="Pre-existing"       value={preExisting}  /></Grid>
+        <Grid size={3}><MetricCard label="Unaddressed"        value={unaddressed}  highlight={unaddressed > 0} /></Grid>
+      </Grid>
+      {newIids.length > 0 && (
+        <Typography variant="caption" color="text.secondary">
+          Confirmed new issues: {newIids.map(id => `#${id}`).join(", ")}
+        </Typography>
+      )}
+      {missed.length > 0 && (
+        <Typography variant="caption" color="text.disabled">
+          No issue found for: {missed.join(", ")}
+        </Typography>
+      )}
+    </Stack>
+  );
+}
+
 function SummaryDetail({ output }: { output: Record<string, unknown> }) {
   const narrative = output.narrative as string | undefined;
   return (
@@ -570,16 +507,126 @@ function SummaryDetail({ output }: { output: Record<string, unknown> }) {
 }
 
 const DETAIL_COMPONENT: Record<string, React.ComponentType<{ output: Record<string, unknown> }>> = {
-  observe_repo: ObserveRepoDetail,
-  map_modules: MapModulesDetail,
-  investigate: InvestigateDetail,
-  observe_graph: ObserveGraphDetail,
-  interpret: InterpretDetail,
-  plan: PlanDetail,
-  act: ActDetail,
-  learn: LearnDetail,
-  summary: SummaryDetail,
+  observe:  ObserveRepoDetail,
+  model:    MapModulesDetail,
+  analyze:  InvestigateDetail,
+  decide:   PlanDetail,
+  act:      ActDetail,
+  reflect:  ReflectDetail,
+  persist:  LearnDetail,
+  summary:  SummaryDetail,
 };
+
+// ---------------------------------------------------------------------------
+// DECIDE → ACT → REFLECT stabilization loop bracket
+//
+// These three stages form the primary loop: decide on interventions, execute
+// them, verify outcomes — repeat if needed. The ] bracket wraps the entire
+// group so the cyclic relationship is visible at a glance.
+//
+// Visual (bracket open on the left, spanning all three rows):
+//
+//   ┌── decide ──────────────────────────────────────────────── ─┐
+//   │   act ─────────────────────────────────────────────────── ─│
+//   │   reflect ─────────────────────────────────────────────── ─┘
+//   └── ⟳ 3× stabilization  (label at bracket bottom-right)
+// ---------------------------------------------------------------------------
+
+/** Stage IDs that form the primary stabilization loop. */
+const LOOP_STAGE_IDS = new Set(["decide", "act", "reflect"]);
+
+function LoopBracketGroup({
+  stages,
+  selectedStage,
+  onStageClick,
+}: {
+  stages: Stage[];
+  selectedStage: string | null;
+  onStageClick: (id: string) => void;
+}) {
+  const actStage  = stages.find((s) => s.id === "act");
+  const passes    = (actStage?.output?.stabilization_passes as number) ?? 1;
+  const isRunning = stages.some((s) => s.status === "running");
+  const isPending = stages.every((s) => s.status === "pending");
+  const looped    = !isRunning && passes > 1;
+
+  const railColor  = looped    ? "rgba(96,165,250,0.45)"
+                   : isRunning ? "rgba(96,165,250,0.22)"
+                   :             "rgba(255,255,255,0.1)";
+  const labelColor = looped    ? "#60a5fa"
+                   : isRunning ? "rgba(96,165,250,0.55)"
+                   :             "rgba(255,255,255,0.22)";
+
+  return (
+    // minWidth:0 + overflow:hidden prevent the flex group from stretching the 1fr grid column
+    <Box sx={{ display: "flex", alignItems: "stretch", gap: "5px", minWidth: 0, overflow: "hidden" }}>
+      {/* Left: stage rows, same spacing as the outer stack */}
+      <Stack spacing={0.75} sx={{ flex: 1, minWidth: 0 }}>
+        {stages.map((stage) => (
+          <StageRow
+            key={stage.id}
+            stage={stage}
+            selected={selectedStage === stage.id}
+            onClick={() => onStageClick(stage.id)}
+          />
+        ))}
+      </Stack>
+
+      {/* Right: ] bracket — top + right + bottom borders, open on left */}
+      <Box
+        sx={{
+          width: 32,
+          flexShrink: 0,
+          borderTop:    `1px solid ${railColor}`,
+          borderRight:  `1px solid ${railColor}`,
+          borderBottom: `1px solid ${railColor}`,
+          borderRadius: "0 4px 4px 0",
+          position: "relative",
+          opacity: isPending ? 0.38 : 1,
+          transition: "border-color 0.25s ease, opacity 0.25s ease",
+        }}
+      >
+        {/* icon + count, vertically centred inside the bracket */}
+        <Stack
+          sx={{
+            position: "absolute",
+            top: "50%",
+            left: "50%",
+            transform: "translate(-50%, -50%)",
+            alignItems: "center",
+            gap: "3px",
+          }}
+        >
+          <LoopIcon
+            sx={{
+              fontSize: 14,
+              color: looped ? "#60a5fa" : isRunning ? "rgba(96,165,250,0.75)" : "rgba(255,255,255,0.35)",
+              // spin while the loop stages are active
+              animation: isRunning ? "loopSpin 1.4s linear infinite" : "none",
+              "@keyframes loopSpin": {
+                "0%":   { transform: "rotate(0deg)"   },
+                "100%": { transform: "rotate(360deg)" },
+              },
+            }}
+          />
+          {passes > 1 && (
+            <Typography
+              variant="caption"
+              sx={{
+                color: looped ? "#60a5fa" : "rgba(96,165,250,0.7)",
+                fontSize: "0.6rem",
+                fontWeight: 700,
+                lineHeight: 1,
+              }}
+            >
+              {passes}×
+            </Typography>
+          )}
+        </Stack>
+      </Box>
+    </Box>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Vertical stage row (replaces horizontal StageCard)
@@ -709,7 +756,6 @@ export default function Pipeline() {
         setRun(data);
         // Clear stopping state when the specifically-stopped run terminates, OR when
         // a different run appears (proving the stopped run must have already ended).
-        // This prevents the auto-loop from prematurely reverting "Stopping…" to "Stop".
         if (stoppingRunId.current !== null) {
           const stoppedRunDone = data.run_id === stoppingRunId.current && data.status !== "running";
           const newRunAppeared  = data.run_id !== stoppingRunId.current;
@@ -834,14 +880,44 @@ export default function Pipeline() {
         </Paper>
       ) : (
         <Stack spacing={0.75}>
-          {run.stages.map((stage) => (
-            <StageRow
-              key={stage.id}
-              stage={stage}
-              selected={selectedStage === stage.id}
-              onClick={() => setSelectedStage(selectedStage === stage.id ? null : stage.id)}
-            />
-          ))}
+          {/* Group consecutive DECIDE→ACT→REFLECT stages inside a ] bracket;
+              render all other stages as plain rows. */}
+          {(() => {
+            const elements: React.ReactNode[] = [];
+            let loopBuffer: Stage[] = [];
+
+            const flushLoop = () => {
+              if (loopBuffer.length === 0) return;
+              const group = [...loopBuffer];
+              loopBuffer = [];
+              elements.push(
+                <LoopBracketGroup
+                  key={group.map((s) => s.id).join("|")}
+                  stages={group}
+                  selectedStage={selectedStage}
+                  onStageClick={(id) => setSelectedStage(selectedStage === id ? null : id)}
+                />
+              );
+            };
+
+            for (const stage of run.stages) {
+              if (LOOP_STAGE_IDS.has(stage.id)) {
+                loopBuffer.push(stage);
+              } else {
+                flushLoop();
+                elements.push(
+                  <StageRow
+                    key={stage.id}
+                    stage={stage}
+                    selected={selectedStage === stage.id}
+                    onClick={() => setSelectedStage(selectedStage === stage.id ? null : stage.id)}
+                  />
+                );
+              }
+            }
+            flushLoop();
+            return elements;
+          })()}
         </Stack>
       )}
     </Stack>

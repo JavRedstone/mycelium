@@ -8,20 +8,19 @@ The autonomous agent pipeline and all agent components.
 
 ### pipeline.py - orchestration
 
-The main `Pipeline` class drives the 9-stage cycle. Each run produces a
+The main `Pipeline` class drives the 8-stage cycle. Each run produces a
 structured log that the UI reads from `/pipeline/current`.
 
 | Stage | ID | What happens |
 |-------|----|-------------|
-| 1 | `observe_repo` | Pulls live GitLab state: members, commits, CODEOWNERS, pipelines, MRs, issues, fork divergence |
-| 2 | `map_modules` | Builds the module map from CODEOWNERS + commit history; upserts developers and contributions into MongoDB |
-| 3 | `investigate` | Spawns concurrent Gemini Flash subagents (one per concentrated module, high-attention member, and upstream drift) to read actual file content |
-| 4 | `observe_graph` | Takes a snapshot of the knowledge graph: developers, modules, concentrated modules, recent findings |
-| 5 | `interpret` | Analyst agent synthesises investigator reports into qualitative findings (no numeric scores) |
-| 6 | `plan` | Planner agent reads interpretation + graph snapshot and proposes concrete actions |
-| 7 | `act` | Act agent executes the plan via MCP tools (create issues, add comments, assign work) |
-| 8 | `learn` | Persists findings to MongoDB; refreshes bus_factor measurements on all modules |
-| 9 | `summary` | Produces the human-readable run summary |
+| 1 | `observe` | Parallel snapshot of GitLab state (members, commits, CODEOWNERS, pipelines, MRs, issues, fork divergence) + MongoDB graph. Captures GitLab baseline (`issue_iids`, `mr_iids`) for REFLECT to diff against. All external reads happen here. |
+| 2 | `model` | Builds the module map from CODEOWNERS + commit history; detects high-attention members and flagged modules; upserts developers and contributions into MongoDB |
+| 3 | `analyze` | Runs investigator subagents concurrently (one per concentrated module, high-attention member, and upstream drift), then calls analyst agent to synthesise reports into qualitative findings (no numeric scores) |
+| 4 | `decide` | Planner agent reads interpretation + graph snapshot and proposes concrete actions; deduplicates `create_issue` actions against pre-existing open issues captured at OBSERVE |
+| 5 | `act` | Act agent executes the plan via dual MCP tools (create issues, add comments, assign work through GitLab MCP; read graph through MongoDB MCP) |
+| 6 | `reflect` | Re-fetches GitLab state post-ACT; diffs against OBSERVE baseline; annotates each finding with `actioned_at`, `pre_existing`, `duplicate_of`, `gitlab_iid` |
+| 7 | `persist` | Persists REFLECT-annotated findings to MongoDB; refreshes bus_factor measurements on all modules |
+| 8 | `summary` | Produces the human-readable run summary and writes the complete `pipeline_runs` document |
 
 Key design rule: **no thresholds in the pipeline**. Measurements (bus_factor,
 commit counts) are computed algorithmically. Judgments (what matters, what to

@@ -25,7 +25,7 @@ export default function PipelinePage() {
         <Box
           sx={{
             display: "grid",
-            gridTemplateColumns: { xs: "1fr", lg: "1fr 380px" },
+            gridTemplateColumns: { xs: "1fr", lg: "minmax(0, 1fr) 380px" },
             gap: 3,
             alignItems: "start",
           }}

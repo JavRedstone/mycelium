@@ -18,7 +18,7 @@ MCPToolset(GitLab MCP, HTTP)  +  MCPToolset(MongoDB MCP, stdio)
 GitLab project state  +  MongoDB Atlas knowledge graph
 ```
 
-**Pipeline:** Observe Repo → Map Modules → Investigate → Observe Graph → Analyze → Plan → Execute → Persist → Summary
+**Pipeline:** Observe → Model → Analyze → Decide → Act → Reflect → Persist → Summary
 
 ---
 
@@ -48,16 +48,14 @@ and which modules would be orphaned?"*
 
 For each pipeline run it:
 
-1. **Reads GitLab** - members, issues, MRs, commits, CODEOWNERS, CI pipeline status, MR approvals, fork divergence.
-2. **Maps module expertise** - per-directory commit attribution: who touched `app/`, `lib/`, `internal/`, etc.
-3. **Investigates** - spawns concurrent subagents that read actual file content (READMEs, source, configs) and reason about transferability. One subagent per high-attention member (sole contributors, recently inactive, recent joiners), one per flagged module (adaptive-depth recursive), one for fork divergence. **No thresholds - the subagents judge.**
-4. **Reads the knowledge graph** - current risk scores, tracked developers, open tasks.
-5. **Analyzes risks** (ADK + Vertex AI Gemini) - reasons over numeric signals + investigator findings + raw content excerpts. No hardcoded severity thresholds.
-6. **Plans actions** (ADK + Vertex AI Gemini) - what GitLab actions to take and what graph updates to write.
-7. **Executes** (ADK + Vertex AI Gemini + dual MCP) - the act agent queries the knowledge graph
-   over the official MongoDB MCP server, then creates GitLab issues / posts comments / assigns
-   work through the official GitLab MCP server, all in a single multi-turn reasoning loop.
-8. **Persists** - Writes developer nodes, module nodes, and contribution edges to MongoDB.
+1. **Observe** - Parallel snapshot of GitLab state (members, commits, CODEOWNERS, CI pipelines, MRs, issues, fork divergence) and the MongoDB knowledge graph. All reads happen here; no external calls in later stages.
+2. **Model** - Builds the module map from CODEOWNERS + commit history; detects high-attention members and flagged modules; spawns concurrent Gemini Flash investigator subagents that read actual file content and reason about transferability. **No thresholds - the subagents judge.**
+3. **Analyze** - Analyst agent (ADK + Vertex AI Gemini) synthesises investigator reports + graph snapshot into qualitative findings. No hardcoded severity thresholds.
+4. **Decide** - Planner agent (ADK + Vertex AI Gemini) translates findings into concrete GitLab actions; deduplicates against issues that already exist in GitLab.
+5. **Act** (ADK + Vertex AI Gemini + dual MCP) - Act agent executes the plan via the official GitLab MCP server (create issues, post comments, assign work) and queries the knowledge graph via the official MongoDB MCP server, all in a single multi-turn reasoning loop.
+6. **Reflect** - Re-fetches GitLab state post-ACT and diffs against the OBSERVE baseline to verify what was actually created vs. what was pre-existing or duplicated. Annotates each finding with causal metadata (`actioned_at`, `pre_existing`, `duplicate_of`, `gitlab_iid`).
+7. **Persist** - Writes developer nodes, module nodes, contribution edges, and REFLECT-annotated findings to MongoDB; refreshes bus-factor measurements on all modules.
+8. **Summary** - Produces the human-readable run summary and writes the complete `pipeline_runs` document.
 
 ---
 
@@ -367,7 +365,7 @@ orientation map, not exhaustive API docs.
 - `run_loop()` - autonomous pipeline scheduler. Calls `pipeline.run()` every `AGENT_LOOP_INTERVAL_SECONDS` until cancelled. No-op when `PIPELINE_LOOP_ENABLED=false`.
 - The endpoint functions are thin adapters that delegate to `graph.*` (MongoDB), `pipeline.*` (runs), `gitlab.*` (project metadata), or `activity_bus.*` (SSE streams). One helper class `_UILogHandler` injects every uvicorn/Python log line into an in-memory deque the `/logs/stream` endpoint streams over SSE.
 
-### `agent/pipeline.py` - the 9-stage orchestrator
+### `agent/pipeline.py` - the 8-stage orchestrator
 
 The full pipeline lives on `PipelineRunner`. Stages run sequentially; each
 records timings, status, and a JSON payload that flows to subsequent stages
@@ -375,15 +373,14 @@ and the UI via `_broadcast()`.
 
 | Stage | Method | What it does |
 |---|---|---|
-| 1. Observe Repo | `_observe_repo()` | Pulls members, commits, contributors, issues, MRs, CI status, fork divergence via `gitlab_client`. |
-| 2. Map Modules | `_observe_modules()` | Walks top-level directories, captures per-directory commit attribution and monthly histograms. |
-| 3. Investigate | `_investigate()` | Spawns concurrent investigator subagents (member / module / drift) based on `_detect_high_attention_members()`. |
-| 4. Observe Graph | `_observe_graph()` | Reads the current MongoDB graph state to mix into the analyst prompt. |
-| 5. Analyze | `_interpret()` | Calls `analyst_agent.analyze_async()` - qualitative reasoning. |
-| 6. Plan | `_plan_stage()` | Calls `planner_agent.plan_async()` - translates findings into proposed actions. |
-| 7. Execute | `_act()` | Calls `act_agent.act()` - runs ADK + MCP loop to actually create/update GitLab issues. |
-| 8. Persist | `_learn()` | Writes developer/module/contribution updates, monthly history records, and findings to MongoDB; refreshes bus factors via `_refresh_bus_factors()`. |
-| 9. Summary | `_summary()` | Writes `pipeline_runs` document with stage outputs + activity events. |
+| 1. Observe | `_observe()` | Parallel `asyncio.gather` of `gitlab.snapshot()` + `graph.snapshot()`. Captures GitLab baseline (`issue_iids`, `mr_iids`) for REFLECT to diff against. All external reads happen here. |
+| 2. Model | `_model()` | Walks top-level directories, builds module map + commit attribution; detects high-attention members; spawns concurrent investigator subagents (member / module / drift). |
+| 3. Analyze | `_analyze()` | Calls `_run_investigation()` then `_run_interpretation()`: investigator subagents read actual file content; analyst agent synthesises reports into qualitative findings. |
+| 4. Decide | `_decide()` | Calls `planner_agent.plan_async()` - translates findings into concrete actions; deduplicates `create_issue` actions against pre-existing open issues captured at OBSERVE. |
+| 5. Act | `_act()` | Calls `act_agent.act()` - ADK + dual MCP loop; creates GitLab issues / posts comments / assigns work through the official GitLab MCP server. |
+| 6. Reflect | `_reflect()` | Re-fetches GitLab state post-ACT; diffs against OBSERVE baseline; annotates each finding with `actioned_at`, `pre_existing`, `duplicate_of`, `gitlab_iid`; stores in `self._interpretation["annotated_findings"]`. |
+| 7. Persist | `_persist()` | Writes developer/module/contribution updates, monthly history records, and REFLECT-annotated findings to MongoDB; refreshes bus factors via `_refresh_bus_factors()`. |
+| 8. Summary | `_summary()` | Writes `pipeline_runs` document with stage outputs + activity events. |
 
 Cross-cutting:
 - `subscribe()` / `unsubscribe()` / `_broadcast()` - SSE fan-out queues for `/pipeline/stream`.
