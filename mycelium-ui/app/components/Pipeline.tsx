@@ -684,15 +684,7 @@ export default function Pipeline() {
   const [stopping, setStopping] = useState(false);
   const stoppingRunId = useRef<string | null>(null);
   const [tick, setTick] = useState(0);
-  const [demoMode, setDemoMode] = useState<boolean | null>(null);
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-
-  useEffect(() => {
-    fetch(`${apiUrl}/config`)
-      .then((r) => r.ok ? r.json() : null)
-      .then((d) => { if (d) setDemoMode(!!d.demo_mode); })
-      .catch(() => {});
-  }, [apiUrl]);
 
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 5000);
@@ -768,15 +760,6 @@ export default function Pipeline() {
                 color={run.status === "success" ? "success" : run.status === "failed" ? "error" : run.status === "running" ? "primary" : run.status === "cancelled" ? "warning" : "default"}
                 variant="outlined"
                 sx={{ height: 20, fontSize: "0.65rem" }}
-              />
-            )}
-            {demoMode && (
-              <Chip
-                icon={<ScienceOutlinedIcon sx={{ fontSize: "13px !important" }} />}
-                label="Demo mode"
-                size="small"
-                variant="outlined"
-                sx={{ height: 20, fontSize: "0.65rem", color: "#a78bfa", borderColor: "#7c3aed" }}
               />
             )}
           </Stack>

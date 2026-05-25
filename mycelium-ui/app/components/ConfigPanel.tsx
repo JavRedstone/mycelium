@@ -42,6 +42,7 @@ type Config = {
   loop_enabled: boolean;
   loop_interval_seconds: number;
   analyst_max_investigators: number;
+  act_max_stabilization_passes: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -119,6 +120,7 @@ export default function ConfigPanel() {
   // Loop runtime config editing
   const [loopIntervalInput, setLoopIntervalInput] = useState("");
   const [maxInvestigatorsInput, setMaxInvestigatorsInput] = useState("");
+  const [maxStabPassesInput, setMaxStabPassesInput] = useState("");
   const [loopSaving, setLoopSaving] = useState(false);
   const [loopSaveResult, setLoopSaveResult] = useState<string | null>(null);
   const [loopSaveError, setLoopSaveError] = useState<string | null>(null);
@@ -150,6 +152,7 @@ export default function ConfigPanel() {
       setCfg(data);
       setLoopIntervalInput(String(data.loop_interval_seconds));
       setMaxInvestigatorsInput(String(data.analyst_max_investigators));
+      setMaxStabPassesInput(String(data.act_max_stabilization_passes));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Fetch failed");
     } finally {
@@ -157,7 +160,7 @@ export default function ConfigPanel() {
     }
   }, [apiUrl]);
 
-  const patchConfig = useCallback(async (patch: Partial<Pick<Config, "loop_enabled" | "loop_interval_seconds" | "analyst_max_investigators">>) => {
+  const patchConfig = useCallback(async (patch: Partial<Pick<Config, "loop_enabled" | "loop_interval_seconds" | "analyst_max_investigators" | "act_max_stabilization_passes">>) => {
     const res = await fetch(`${apiUrl}/config`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -168,6 +171,7 @@ export default function ConfigPanel() {
     setCfg((prev) => prev ? { ...prev, ...updated } : prev);
     setLoopIntervalInput(String(updated.loop_interval_seconds));
     setMaxInvestigatorsInput(String(updated.analyst_max_investigators));
+    setMaxStabPassesInput(String(updated.act_max_stabilization_passes));
     return updated;
   }, [apiUrl]);
 
@@ -193,6 +197,7 @@ export default function ConfigPanel() {
       await patchConfig({
         loop_interval_seconds: parseInt(loopIntervalInput, 10) || 600,
         analyst_max_investigators: parseInt(maxInvestigatorsInput, 10) || 10,
+        act_max_stabilization_passes: parseInt(maxStabPassesInput, 10) || 5,
       });
       setLoopSaveResult("Saved.");
       setTimeout(() => setLoopSaveResult(null), 3000);
@@ -201,7 +206,7 @@ export default function ConfigPanel() {
     } finally {
       setLoopSaving(false);
     }
-  }, [loopIntervalInput, maxInvestigatorsInput, patchConfig]);
+  }, [loopIntervalInput, maxInvestigatorsInput, maxStabPassesInput, patchConfig]);
 
   const fetchBotCount = useCallback(async () => {
     setBotCountLoading(true);
@@ -535,6 +540,23 @@ export default function ConfigPanel() {
                 </Stack>
               }
             />
+            <Divider sx={{ borderColor: "rgba(255,255,255,0.04)" }} />
+            <Row
+              label="Act stabilization passes"
+              value={
+                <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
+                  <TextField
+                    size="small"
+                    type="number"
+                    value={maxStabPassesInput}
+                    onChange={(e) => { setMaxStabPassesInput(e.target.value); setLoopSaveResult(null); }}
+                    slotProps={{ htmlInput: { min: 1, max: 10 } }}
+                    sx={{ width: 80, "& .MuiInputBase-input": { py: 0.6, fontSize: "0.8rem", fontFamily: "var(--font-google-sans-code)" } }}
+                  />
+                  <Typography variant="caption" color="text.disabled">max passes</Typography>
+                </Stack>
+              }
+            />
             <Box sx={{ py: 1.5 }}>
               <Stack spacing={1}>
                 <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
@@ -543,7 +565,8 @@ export default function ConfigPanel() {
                     variant="outlined"
                     disabled={loopSaving
                       || (loopIntervalInput === String(cfg.loop_interval_seconds)
-                          && maxInvestigatorsInput === String(cfg.analyst_max_investigators))}
+                          && maxInvestigatorsInput === String(cfg.analyst_max_investigators)
+                          && maxStabPassesInput === String(cfg.act_max_stabilization_passes))}
                     onClick={saveLoopNumbers}
                     sx={{ fontSize: "0.75rem", textTransform: "none" }}
                   >

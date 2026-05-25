@@ -582,7 +582,8 @@ class PipelineRunner:
         This is NOT a retry loop. It is iterative environmental modification:
         each pass sees the updated GitLab state left by the previous one.
         """
-        MAX_STABILIZATION_PASSES = 5
+        cfg = await self._graph.get_runtime_config()
+        MAX_STABILIZATION_PASSES = max(1, min(10, int(cfg.get("act_max_stabilization_passes", 5))))
 
         actions = self._plan.get("actions") or []
         if actions:

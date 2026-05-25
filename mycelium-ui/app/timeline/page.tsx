@@ -2,6 +2,7 @@ import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import Timeline from "../components/Timeline";
+import RunHistory from "../components/RunHistory";
 
 export default function TimelinePage() {
   return (
@@ -15,6 +16,8 @@ export default function TimelinePage() {
             Chronological history of pipeline runs, findings detected, and actions taken in GitLab
           </Typography>
         </Box>
+
+        <RunHistory />
 
         <Timeline />
       </Stack>

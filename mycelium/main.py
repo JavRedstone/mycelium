@@ -14,7 +14,7 @@ from config.settings import settings  # initialises Vertex AI env vars on import
 from agent.activity_bus import bus as activity_bus
 from agent.pipeline import PipelineRunner
 from graph.knowledge_graph import KnowledgeGraph
-from graph.service import GraphService, is_real_module, is_real_user
+from graph.service import GraphService, is_real_user
 from connectors.gitlab_client import GitLabClient
 
 # ---------------------------------------------------------------------------
@@ -75,6 +75,7 @@ RUNTIME_DEFAULTS: dict = {
     "loop_enabled": False,
     "loop_interval_seconds": 600,
     "analyst_max_investigators": 10,
+    "act_max_stabilization_passes": 5,
 }
 
 
@@ -146,11 +147,12 @@ class _RuntimeConfigPatch(BaseModel):
     loop_enabled: bool | None = None
     loop_interval_seconds: int | None = None
     analyst_max_investigators: int | None = None
+    act_max_stabilization_passes: int | None = None
 
 
 @app.patch("/config")
 async def patch_config(body: _RuntimeConfigPatch):
-    """Update mutable runtime settings (loop, investigators) without restarting."""
+    """Update mutable runtime settings (loop, investigators, act passes) without restarting."""
     patch: dict = {}
     if body.loop_enabled is not None:
         patch["loop_enabled"] = body.loop_enabled
@@ -158,6 +160,8 @@ async def patch_config(body: _RuntimeConfigPatch):
         patch["loop_interval_seconds"] = max(60, min(86400, body.loop_interval_seconds))
     if body.analyst_max_investigators is not None:
         patch["analyst_max_investigators"] = max(1, min(20, body.analyst_max_investigators))
+    if body.act_max_stabilization_passes is not None:
+        patch["act_max_stabilization_passes"] = max(1, min(10, body.act_max_stabilization_passes))
     if patch:
         await graph.set_runtime_config(patch)
     return await _get_runtime_cfg()
@@ -570,10 +574,23 @@ async def pipeline_history(limit: int = 50):
     try:
         runs = await graph.list_runs(limit=limit)
         if runs:
+            # Inject the in-progress run so page-remount fetchHistory() calls
+            # always include it — without this the live column disappears when
+            # the user navigates away and back, because MongoDB only persists
+            # completed runs.
+            if pipeline.current_run and pipeline.current_run.status == "running":
+                cur = pipeline.current_run.to_dict()
+                if not any(r.get("run_id") == cur["run_id"] for r in runs):
+                    runs = [cur] + list(runs)
             return {"runs": runs}
     except Exception as exc:
         log.warning("MongoDB pipeline history unavailable (%s) - using in-memory", exc)
-    return {"runs": [r.to_dict() for r in pipeline.run_history]}
+    runs_mem = [r.to_dict() for r in pipeline.run_history]
+    if pipeline.current_run and pipeline.current_run.status == "running":
+        cur = pipeline.current_run.to_dict()
+        if not any(r.get("run_id") == cur["run_id"] for r in runs_mem):
+            runs_mem = [cur] + runs_mem
+    return {"runs": runs_mem}
 
 
 @app.get("/pipeline/current")

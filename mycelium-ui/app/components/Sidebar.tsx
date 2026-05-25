@@ -23,6 +23,7 @@ import FolderOutlinedIcon from "@mui/icons-material/FolderOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import HubOutlinedIcon from "@mui/icons-material/HubOutlined";
 import PlayArrowOutlinedIcon from "@mui/icons-material/PlayArrowOutlined";
+import ScienceOutlinedIcon from "@mui/icons-material/ScienceOutlined";
 import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 import TerminalOutlinedIcon from "@mui/icons-material/TerminalOutlined";
 import TimelineOutlinedIcon from "@mui/icons-material/TimelineOutlined";
@@ -115,6 +116,25 @@ function usePipelineStatus(): PipelineStatus {
   }, []);
 
   return status;
+}
+
+// ---------------------------------------------------------------------------
+// Demo mode hook
+// ---------------------------------------------------------------------------
+
+function useDemoMode(): boolean {
+  const [demo, setDemo] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${API}/config`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { if (d && !cancelled) setDemo(!!d.demo_mode); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  return demo;
 }
 
 // ---------------------------------------------------------------------------
@@ -291,6 +311,7 @@ function NavButton({ item, active }: { item: NavItem; active: boolean }) {
 export default function Sidebar() {
   const pathname = usePathname();
   const pipelineStatus = usePipelineStatus();
+  const demoMode = useDemoMode();
 
   function isActive(href: string) {
     return pathname === href || (pathname === "/" && href === "/pipeline");
@@ -374,7 +395,7 @@ export default function Sidebar() {
         </List>
       </Box>
 
-      {/* Connection status */}
+      {/* Connection status + demo mode indicator */}
       <Box sx={{ px: 2, py: 2 }}>
         <Typography
           variant="caption"
@@ -409,6 +430,24 @@ export default function Sidebar() {
               }}
             />
           ))}
+
+          {/* Demo mode pill — only visible when DEMO_MODE=true on the backend */}
+          {demoMode && (
+            <Chip
+              icon={<ScienceOutlinedIcon sx={{ fontSize: "13px !important", color: "#a78bfa !important" }} />}
+              label="Demo mode"
+              size="small"
+              variant="outlined"
+              sx={{
+                height: 20,
+                fontSize: "0.68rem",
+                color: "#a78bfa",
+                borderColor: "#7c3aed",
+                justifyContent: "flex-start",
+                "& .MuiChip-label": { display: "flex", alignItems: "center", px: 1 },
+              }}
+            />
+          )}
         </Stack>
       </Box>
     </Box>

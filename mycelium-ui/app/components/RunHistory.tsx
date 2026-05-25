@@ -65,6 +65,17 @@ const RUN_DOT_COLOR: Record<string, string> = {
   running:   "#1a73e8",
 };
 
+// Bar chart colors aligned with run status
+const BAR_COLOR: Record<string, string> = {
+  success:   "#34a853",
+  partial:   "#fbbc04",
+  cancelled: "#fbbc04",
+  failed:    "#ea4335",
+  running:   "#1a73e8",
+};
+
+const CHART_MAX_H = 64; // px — tallest bar height
+
 const COL_W = 28;
 const LABEL_W = 116;
 const PAPER_BG = "#0d1117"; // matches MUI dark Paper background
@@ -75,6 +86,18 @@ function fmtTime(ts: number): string {
 
 function fmtDate(ts: number): string {
   return new Date(ts * 1000).toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+/** Total run duration in ms — uses summary.total_duration_ms when available,
+ *  otherwise sums individual stage durations. Returns null for in-progress runs. */
+function runDurationMs(run: PipelineRun): number | null {
+  if (run.status === "running") return null;
+  const summary = run.stages.find((s) => s.id === "summary");
+  if (summary?.output && typeof summary.output.total_duration_ms === "number") {
+    return summary.output.total_duration_ms as number;
+  }
+  const total = run.stages.reduce((acc, s) => acc + (s.duration_ms ?? 0), 0);
+  return total > 0 ? total : null;
 }
 
 function GridCell({ status, duration_ms, error }: { status: StageStatus; duration_ms: number | null; error: string | null }) {
@@ -335,6 +358,82 @@ export default function RunHistory() {
               </Stack>
             ))}
           </Stack>
+
+          {/* Duration bar chart */}
+          {(() => {
+            const durations = sorted.map((r) => runDurationMs(r));
+            const maxMs = Math.max(...durations.map((d) => d ?? 0), 1);
+            const anyDuration = durations.some((d) => d != null);
+            if (!anyDuration) return null;
+            return (
+              <>
+                <Box sx={{ height: 1, bgcolor: "rgba(255,255,255,0.06)", mt: 2.5, ml: `${LABEL_W}px` }} />
+                <Stack direction="row" spacing={0} sx={{ pl: `${LABEL_W}px`, mt: 0, alignItems: "flex-end", minWidth: "max-content" }}>
+                  {/* Y-axis label */}
+                  <Box sx={{ position: "sticky", left: 0, width: 0, overflow: "visible", zIndex: 2 }}>
+                    <Typography sx={{
+                      position: "absolute",
+                      left: -LABEL_W,
+                      bottom: 0,
+                      width: LABEL_W - 8,
+                      fontSize: "0.6rem",
+                      color: "rgba(255,255,255,0.25)",
+                      textAlign: "right",
+                      lineHeight: 1,
+                      pb: `${CHART_MAX_H / 2}px`,
+                      userSelect: "none",
+                    }}>
+                      duration
+                    </Typography>
+                  </Box>
+                  {sorted.map((run, i) => {
+                    const ms = durations[i];
+                    const barH = ms != null ? Math.max(3, Math.round((ms / maxMs) * CHART_MAX_H)) : 0;
+                    const color = BAR_COLOR[run.status] ?? "rgba(255,255,255,0.15)";
+                    return (
+                      <Tooltip
+                        key={run.run_id}
+                        title={
+                          ms != null ? (
+                            <Stack spacing={0.25}>
+                              <Typography variant="caption" sx={{ fontWeight: 600, textTransform: "capitalize" }}>{run.status}</Typography>
+                              <Typography variant="caption" color="text.secondary">{fmt(ms)}</Typography>
+                            </Stack>
+                          ) : (
+                            <Typography variant="caption" sx={{ textTransform: "capitalize" }}>{run.status}</Typography>
+                          )
+                        }
+                        placement="top"
+                        arrow
+                      >
+                        <Box sx={{
+                          width: COL_W,
+                          height: CHART_MAX_H,
+                          display: "flex",
+                          alignItems: "flex-end",
+                          justifyContent: "center",
+                          flexShrink: 0,
+                          cursor: "default",
+                        }}>
+                          <Box sx={{
+                            width: COL_W - 10,
+                            height: barH,
+                            bgcolor: color,
+                            borderRadius: "2px 2px 0 0",
+                            opacity: run.status === "running" ? 0.7 : 0.6,
+                            transition: "height 0.3s ease",
+                            "&:hover": { opacity: 1 },
+                          }} />
+                        </Box>
+                      </Tooltip>
+                    );
+                  })}
+                </Stack>
+                {/* X-axis baseline */}
+                <Box sx={{ height: 1, bgcolor: "rgba(255,255,255,0.1)", ml: `${LABEL_W}px` }} />
+              </>
+            );
+          })()}
         </Box>
       </Paper>
     </Stack>
