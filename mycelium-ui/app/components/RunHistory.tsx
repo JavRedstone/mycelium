@@ -20,41 +20,60 @@ import FolderOpenOutlinedIcon from "@mui/icons-material/FolderOpenOutlined";
 import { fmt, timeAgo, fmtDatetime, type PipelineRun } from "./Pipeline";
 import { scrollbarSx } from "../lib/sx";
 
-type StageStatus = "pending" | "running" | "success" | "failed" | "skipped";
+type StageStatus = "pending" | "running" | "success" | "failed" | "skipped" | "outdated";
 
-const STAGE_ORDER = [
-  "observe_repo", "map_modules", "investigate",
-  "observe_graph", "interpret", "plan", "act", "learn", "summary",
-];
-const STAGE_LABEL: Record<string, string> = {
-  observe_repo:  "Observe",
-  map_modules:   "Map",
-  investigate:   "Investigate",
-  observe_graph: "Graph",
-  interpret:     "Interpret",
-  plan:          "Plan",
-  act:           "Execute",
-  learn:         "Persist",
-  summary:       "Summary",
-};
+// Icon hints for well-known stage IDs — any unknown stage falls back to a generic dot.
+// Add entries here when new stages are introduced; nothing else needs updating.
 const STAGE_ICON_EL: Record<string, React.ReactElement> = {
   observe_repo:  <VisibilityOutlinedIcon sx={{ fontSize: 12 }} />,
+  observe:       <VisibilityOutlinedIcon sx={{ fontSize: 12 }} />,
   map_modules:   <FolderOpenOutlinedIcon sx={{ fontSize: 12 }} />,
+  model:         <FolderOpenOutlinedIcon sx={{ fontSize: 12 }} />,
   investigate:   <BiotechOutlinedIcon sx={{ fontSize: 12 }} />,
+  analyze:       <BiotechOutlinedIcon sx={{ fontSize: 12 }} />,
   observe_graph: <AccountTreeOutlinedIcon sx={{ fontSize: 12 }} />,
   interpret:     <BoltOutlinedIcon sx={{ fontSize: 12 }} />,
   plan:          <AssignmentOutlinedIcon sx={{ fontSize: 12 }} />,
+  decide:        <AssignmentOutlinedIcon sx={{ fontSize: 12 }} />,
   act:           <PlayArrowOutlinedIcon sx={{ fontSize: 12 }} />,
+  reflect:       <AccountTreeOutlinedIcon sx={{ fontSize: 12 }} />,
   learn:         <SchoolOutlinedIcon sx={{ fontSize: 12 }} />,
+  persist:       <SchoolOutlinedIcon sx={{ fontSize: 12 }} />,
   summary:       <AssessmentOutlinedIcon sx={{ fontSize: 12 }} />,
 };
+// Fallback icon for any stage ID not in the map above
+const STAGE_ICON_FALLBACK = <PlayArrowOutlinedIcon sx={{ fontSize: 12 }} />;
+
+/** Derive ordered stage list directly from run data.
+ *  Uses the run with the most stages as the canonical order, then appends any
+ *  extra stage IDs seen in other runs.  Labels come from the server — no
+ *  hardcoded strings — so renaming a stage in the pipeline automatically
+ *  propagates here. */
+function deriveStages(runs: PipelineRun[]): Array<{ id: string; label: string }> {
+  if (runs.length === 0) return [];
+  const ref = [...runs].sort((a, b) => b.stages.length - a.stages.length)[0];
+  const seen = new Set<string>();
+  const result: Array<{ id: string; label: string }> = [];
+  for (const s of ref.stages) {
+    if (!seen.has(s.id)) { seen.add(s.id); result.push({ id: s.id, label: s.label }); }
+  }
+  for (const run of runs) {
+    for (const s of run.stages) {
+      if (!seen.has(s.id)) { seen.add(s.id); result.push({ id: s.id, label: s.label }); }
+    }
+  }
+  return result;
+}
 
 const CELL_BG: Record<StageStatus, string> = {
-  pending: "rgba(255,255,255,0.05)",
-  running: "#1a73e8",
-  success: "#34a853",
-  failed:  "#ea4335",
-  skipped: "rgba(255,255,255,0.08)",
+  pending:  "rgba(255,255,255,0.05)",
+  running:  "#1a73e8",
+  success:  "#34a853",
+  failed:   "#ea4335",
+  skipped:  "rgba(255,255,255,0.08)",
+  // Synthetic status: stage exists in the current pipeline but this run
+  // predates it — distinct from "skipped" (which the pipeline chose at runtime).
+  outdated: "rgba(148,163,184,0.07)",
 };
 
 const RUN_DOT_COLOR: Record<string, string> = {
@@ -101,18 +120,21 @@ function runDurationMs(run: PipelineRun): number | null {
 }
 
 function GridCell({ status, duration_ms, error }: { status: StageStatus; duration_ms: number | null; error: string | null }) {
+  const tooltipContent = status === "outdated" ? (
+    <Stack spacing={0.25}>
+      <Typography variant="caption" sx={{ fontWeight: 600, color: "text.disabled" }}>n/a</Typography>
+      <Typography variant="caption" color="text.disabled">This run predates stage</Typography>
+    </Stack>
+  ) : (
+    <Stack spacing={0.25}>
+      <Typography variant="caption" sx={{ fontWeight: 600, textTransform: "capitalize" }}>{status}</Typography>
+      {duration_ms != null && <Typography variant="caption" color="text.secondary">{fmt(duration_ms)}</Typography>}
+      {error && <Typography variant="caption" color="error.light" sx={{ maxWidth: 200, whiteSpace: "normal" }}>{error}</Typography>}
+    </Stack>
+  );
+
   return (
-    <Tooltip
-      title={
-        <Stack spacing={0.25}>
-          <Typography variant="caption" sx={{ fontWeight: 600, textTransform: "capitalize" }}>{status}</Typography>
-          {duration_ms != null && <Typography variant="caption" color="text.secondary">{fmt(duration_ms)}</Typography>}
-          {error && <Typography variant="caption" color="error.light" sx={{ maxWidth: 200, whiteSpace: "normal" }}>{error}</Typography>}
-        </Stack>
-      }
-      placement="top"
-      arrow
-    >
+    <Tooltip title={tooltipContent} placement="top" arrow>
       <Box
         sx={{
           width: COL_W - 8,
@@ -121,6 +143,12 @@ function GridCell({ status, duration_ms, error }: { status: StageStatus; duratio
           bgcolor: CELL_BG[status] ?? "rgba(255,255,255,0.05)",
           flexShrink: 0,
           cursor: "default",
+          // Outdated cells get a subtle dashed border instead of a fill,
+          // making them visually distinct from both "skipped" and empty.
+          ...(status === "outdated" && {
+            bgcolor: "transparent",
+            border: "1px dashed rgba(148,163,184,0.2)",
+          }),
           "&:hover": { opacity: 0.75 },
         }}
       />
@@ -130,6 +158,7 @@ function GridCell({ status, duration_ms, error }: { status: StageStatus; duratio
 
 export default function RunHistory() {
   const [runs, setRuns] = useState<PipelineRun[]>([]);
+  const [canonicalStages, setCanonicalStages] = useState<Array<{ id: string; label: string }> | null>(null);
   const [tick, setTick] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -144,8 +173,19 @@ export default function RunHistory() {
     } catch {}
   }
 
+  async function fetchCanonicalStages() {
+    try {
+      const res = await fetch(`${apiUrl}/pipeline/stages`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.stages) setCanonicalStages(data.stages as Array<{ id: string; label: string }>);
+      }
+    } catch {}
+  }
+
   useEffect(() => {
     fetchHistory();
+    fetchCanonicalStages();
     const es = new EventSource(`${apiUrl}/pipeline/stream`);
     es.onmessage = (e) => {
       try {
@@ -199,7 +239,9 @@ export default function RunHistory() {
       : 0;
 
   const rateColor = successRate >= 80 ? "success.main" : successRate >= 50 ? "warning.main" : "error.main";
-  const stagesPresent = STAGE_ORDER.filter((id) => sorted.some((r) => r.stages.some((s) => s.id === id)));
+  // Canonical stage list from the backend is authoritative.
+  // Falls back to deriving from run data while the API response is in flight.
+  const stagesPresent = canonicalStages ?? deriveStages(sorted);
 
   // Track date boundaries for grouping labels
   const dateLabels: Record<number, string> = {};
@@ -307,7 +349,7 @@ export default function RunHistory() {
 
           {/* Stage rows - labels are sticky-left */}
           <Stack spacing={0.5} sx={{ minWidth: "max-content" }}>
-            {stagesPresent.map((stageId) => (
+            {stagesPresent.map(({ id: stageId, label: stageLabel }) => (
               <Box key={stageId} sx={{ display: "flex", alignItems: "center", height: 22 }}>
                 {/* Sticky label cell */}
                 <Stack
@@ -325,20 +367,26 @@ export default function RunHistory() {
                   }}
                 >
                   <Box sx={{ color: "text.disabled", display: "flex", flexShrink: 0 }}>
-                    {STAGE_ICON_EL[stageId]}
+                    {STAGE_ICON_EL[stageId] ?? STAGE_ICON_FALLBACK}
                   </Box>
                   <Typography variant="caption" color="text.disabled" noWrap sx={{ fontSize: "0.7rem" }}>
-                    {STAGE_LABEL[stageId]}
+                    {stageLabel}
                   </Typography>
                 </Stack>
 
                 {/* Grid cells */}
                 {sorted.map((run) => {
                   const stage = run.stages.find((s) => s.id === stageId);
+                  // Stage exists in canonical pipeline but wasn't present in this
+                  // (older) run → mark as "outdated" (predates this stage) rather
+                  // than "skipped" (which the pipeline chose at runtime).
+                  const effective = stage ?? (canonicalStages
+                    ? { status: "outdated" as StageStatus, duration_ms: null, error: null }
+                    : null);
                   return (
                     <Box key={run.run_id} sx={{ width: COL_W, flexShrink: 0, display: "flex", justifyContent: "center" }}>
-                      {stage ? (
-                        <GridCell status={stage.status as StageStatus} duration_ms={stage.duration_ms} error={stage.error} />
+                      {effective ? (
+                        <GridCell status={effective.status as StageStatus} duration_ms={effective.duration_ms} error={effective.error} />
                       ) : (
                         <Box sx={{ width: COL_W - 8, height: 18, borderRadius: 0.5, bgcolor: "rgba(255,255,255,0.02)" }} />
                       )}
@@ -350,13 +398,17 @@ export default function RunHistory() {
           </Stack>
 
           {/* Legend */}
-          <Stack direction="row" spacing={2} sx={{ mt: 2, pl: `${LABEL_W}px` }}>
+          <Stack direction="row" spacing={2} sx={{ mt: 2, pl: `${LABEL_W}px`, flexWrap: "wrap" }}>
             {(["success", "failed", "running", "skipped"] as StageStatus[]).map((s) => (
               <Stack key={s} direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
                 <Box sx={{ width: 10, height: 10, borderRadius: 0.5, bgcolor: CELL_BG[s], border: "1px solid rgba(255,255,255,0.1)" }} />
                 <Typography variant="caption" color="text.disabled" sx={{ textTransform: "capitalize", fontSize: "0.65rem" }}>{s}</Typography>
               </Stack>
             ))}
+            <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
+              <Box sx={{ width: 10, height: 10, borderRadius: 0.5, border: "1px dashed rgba(148,163,184,0.35)" }} />
+              <Typography variant="caption" color="text.disabled" sx={{ fontSize: "0.65rem" }}>n/a (predates stage)</Typography>
+            </Stack>
           </Stack>
 
           {/* Duration bar chart */}

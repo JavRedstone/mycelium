@@ -51,15 +51,7 @@ type ActivityEvent =
   | SubagentSpawn | SubagentResult
   | Finding | ActionPlanned;
 
-// ---------------------------------------------------------------------------
-// Stage progress bar config
-// ---------------------------------------------------------------------------
-const STAGE_ORDER = ["observe_repo", "map_modules", "investigate", "observe_graph", "interpret", "plan", "act", "learn", "summary"];
-const STAGE_SHORT: Record<string, string> = {
-  observe_repo: "Observe", map_modules: "Map", investigate: "Investigate",
-  observe_graph: "Graph", interpret: "Interpret", plan: "Plan",
-  act: "Execute", learn: "Persist", summary: "Summary",
-};
+// (Stage order and labels are derived from live event data — no hardcoded list needed)
 
 // ---------------------------------------------------------------------------
 // Small display helpers
@@ -453,21 +445,22 @@ function StageProgressBar({ events }: { events: ActivityEvent[] }) {
     return map;
   }, [events]);
 
-  const seen = STAGE_ORDER.filter(id => stages[id]);
-  if (seen.length === 0) return null;
+  // Object.keys preserves insertion order — events arrive in execution order,
+  // so this naturally renders stages in the order they ran without a hardcoded list.
+  const seenIds = Object.keys(stages);
+  if (seenIds.length === 0) return null;
 
   return (
     <Box sx={{ px: 1.5, py: 0.75, borderBottom: "1px solid rgba(255,255,255,0.06)",
                display: "flex", gap: 0.5, flexWrap: "wrap", flexShrink: 0,
                bgcolor: "rgba(255,255,255,0.01)" }}>
-      {STAGE_ORDER.map(id => {
+      {seenIds.map(id => {
         const s = stages[id];
-        if (!s) return null;
         const color = s.status === "running" ? "primary" : s.status === "success" ? "success"
           : s.status === "failed" ? "error" : "default";
         const label = s.duration_ms != null
-          ? `${STAGE_SHORT[id]} ${fmtDuration(s.duration_ms)}`
-          : STAGE_SHORT[id];
+          ? `${s.label} ${fmtDuration(s.duration_ms)}`
+          : s.label;
         return (
           <Tooltip key={id} title={s.status === "running" ? "running…" : s.status} arrow>
             <Chip

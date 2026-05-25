@@ -569,6 +569,18 @@ async def close_bot_issues():
 # Pipeline endpoints
 # ---------------------------------------------------------------------------
 
+@app.get("/pipeline/stages")
+async def pipeline_stages():
+    """Return the current canonical pipeline stage definitions (id + label).
+
+    The UI uses this as the authoritative ordered list when rendering run
+    history grids.  Runs that predate a stage show it as 'skipped'; runs that
+    have stages no longer in the pipeline simply don't display those columns.
+    """
+    from agent.pipeline import STAGE_DEFS
+    return {"stages": [{"id": s["id"], "label": s["label"]} for s in STAGE_DEFS]}
+
+
 @app.get("/pipeline/history")
 async def pipeline_history(limit: int = 50):
     try:

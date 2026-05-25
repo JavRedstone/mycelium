@@ -102,16 +102,25 @@ function n(count: number, word: string, pluralForm?: string): string {
   return `${count} ${count === 1 ? word : (pluralForm ?? word + "s")}`;
 }
 
+// Icon hints for well-known stage IDs. Both current names and anticipated
+// renamed equivalents are listed so renaming stages doesn't break the UI.
+// Unknown IDs fall back to <AccessTimeIcon /> at the call site.
 export const STAGE_ICONS: Record<string, React.ReactElement> = {
-  observe_repo: <VisibilityOutlinedIcon fontSize="small" />,
-  map_modules: <FolderOpenOutlinedIcon fontSize="small" />,
-  investigate: <BiotechOutlinedIcon fontSize="small" />,
+  observe_repo:  <VisibilityOutlinedIcon fontSize="small" />,
+  observe:       <VisibilityOutlinedIcon fontSize="small" />,
+  map_modules:   <FolderOpenOutlinedIcon fontSize="small" />,
+  model:         <FolderOpenOutlinedIcon fontSize="small" />,
+  investigate:   <BiotechOutlinedIcon fontSize="small" />,
+  analyze:       <BiotechOutlinedIcon fontSize="small" />,
   observe_graph: <AccountTreeOutlinedIcon fontSize="small" />,
-  interpret: <BoltOutlinedIcon fontSize="small" />,
-  plan: <AssignmentOutlinedIcon fontSize="small" />,
-  act: <PlayArrowOutlinedIcon fontSize="small" />,
-  learn: <SchoolOutlinedIcon fontSize="small" />,
-  summary: <AssessmentOutlinedIcon fontSize="small" />,
+  interpret:     <BoltOutlinedIcon fontSize="small" />,
+  plan:          <AssignmentOutlinedIcon fontSize="small" />,
+  decide:        <AssignmentOutlinedIcon fontSize="small" />,
+  act:           <PlayArrowOutlinedIcon fontSize="small" />,
+  reflect:       <LoopIcon fontSize="small" />,
+  learn:         <SchoolOutlinedIcon fontSize="small" />,
+  persist:       <SchoolOutlinedIcon fontSize="small" />,
+  summary:       <AssessmentOutlinedIcon fontSize="small" />,
 };
 
 // ---------------------------------------------------------------------------
