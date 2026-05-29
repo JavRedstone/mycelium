@@ -128,7 +128,7 @@ export const STAGE_ICONS: Record<string, React.ReactElement> = {
 function stageSummary(stage: Stage): string | null {
   if (!stage.output) return stage.description ?? null;
   const o = stage.output;
-  switch (stage.id) {
+  switch (stage.id.replace(/_\d+$/, "")) {
     // Current stage IDs
     case "observe":
       return `${n(o.commit_contributors as number ?? 0, "contributor")} · ${o.upstream_authors ?? 0} upstream · ${o.open_issues ?? 0} open issues`;
@@ -520,20 +520,29 @@ const DETAIL_COMPONENT: Record<string, React.ComponentType<{ output: Record<stri
 // ---------------------------------------------------------------------------
 // DECIDE → ACT → REFLECT stabilization loop bracket
 //
-// These three stages form the primary loop: decide on interventions, execute
-// them, verify outcomes — repeat if needed. The ] bracket wraps the entire
-// group so the cyclic relationship is visible at a glance.
+// Stage IDs are suffixed with the pass number: decide_1/act_1/reflect_1,
+// decide_2/act_2/reflect_2, … Each pass renders as its own LoopBracketGroup
+// so the user sees the loop visually duplicate on subsequent passes.
 //
-// Visual (bracket open on the left, spanning all three rows):
+//   ┌── Decide ───────────────── ┐
+//   │   Act   ─────────────────  │  ⟳  1
+//   │   Reflect ───────────────  ┘
 //
-//   ┌── decide ──────────────────────────────────────────────── ─┐
-//   │   act ─────────────────────────────────────────────────── ─│
-//   │   reflect ─────────────────────────────────────────────── ─┘
-//   └── ⟳ 3× stabilization  (label at bracket bottom-right)
+//   ┌── Decide ───────────────── ┐
+//   │   Act   ─────────────────  │  ⟳  2
+//   │   Reflect ───────────────  ┘
 // ---------------------------------------------------------------------------
 
-/** Stage IDs that form the primary stabilization loop. */
-const LOOP_STAGE_IDS = new Set(["decide", "act", "reflect"]);
+/** True for stage IDs of the form decide_N / act_N / reflect_N */
+function isLoopStage(id: string): boolean {
+  return /^(decide|act|reflect)(_\d+)?$/.test(id);
+}
+
+/** Extract the pass number from a loop stage ID (e.g. "act_2" → 2) */
+function loopStagePass(id: string): number {
+  const m = id.match(/_(\d+)$/);
+  return m ? parseInt(m[1], 10) : 1;
+}
 
 function LoopBracketGroup({
   stages,
@@ -544,18 +553,17 @@ function LoopBracketGroup({
   selectedStage: string | null;
   onStageClick: (id: string) => void;
 }) {
-  const actStage  = stages.find((s) => s.id === "act");
-  const passes    = (actStage?.output?.stabilization_passes as number) ?? 1;
+  const passNum   = loopStagePass(stages[0]?.id ?? "decide_1");
   const isRunning = stages.some((s) => s.status === "running");
   const isPending = stages.every((s) => s.status === "pending");
-  const looped    = !isRunning && passes > 1;
+  const isDone    = !isRunning && !isPending;
 
-  const railColor  = looped    ? "rgba(96,165,250,0.45)"
-                   : isRunning ? "rgba(96,165,250,0.22)"
-                   :             "rgba(255,255,255,0.1)";
-  const labelColor = looped    ? "#60a5fa"
-                   : isRunning ? "rgba(96,165,250,0.55)"
-                   :             "rgba(255,255,255,0.22)";
+  const railColor = isRunning ? "rgba(96,165,250,0.22)"
+                  : isDone    ? "rgba(96,165,250,0.35)"
+                  :             "rgba(255,255,255,0.1)";
+  const fgColor   = isRunning ? "rgba(96,165,250,0.75)"
+                  : isDone    ? "#60a5fa"
+                  :             "rgba(255,255,255,0.35)";
 
   return (
     // minWidth:0 + overflow:hidden prevent the flex group from stretching the 1fr grid column
@@ -586,7 +594,7 @@ function LoopBracketGroup({
           transition: "border-color 0.25s ease, opacity 0.25s ease",
         }}
       >
-        {/* icon + count, vertically centred inside the bracket */}
+        {/* icon + pass number, vertically centred inside the bracket */}
         <Stack
           sx={{
             position: "absolute",
@@ -600,8 +608,7 @@ function LoopBracketGroup({
           <LoopIcon
             sx={{
               fontSize: 14,
-              color: looped ? "#60a5fa" : isRunning ? "rgba(96,165,250,0.75)" : "rgba(255,255,255,0.35)",
-              // spin while the loop stages are active
+              color: fgColor,
               animation: isRunning ? "loopSpin 1.4s linear infinite" : "none",
               "@keyframes loopSpin": {
                 "0%":   { transform: "rotate(0deg)"   },
@@ -609,19 +616,12 @@ function LoopBracketGroup({
               },
             }}
           />
-          {passes > 1 && (
-            <Typography
-              variant="caption"
-              sx={{
-                color: looped ? "#60a5fa" : "rgba(96,165,250,0.7)",
-                fontSize: "0.6rem",
-                fontWeight: 700,
-                lineHeight: 1,
-              }}
-            >
-              {passes}×
-            </Typography>
-          )}
+          <Typography
+            variant="caption"
+            sx={{ color: fgColor, fontSize: "0.6rem", fontWeight: 700, lineHeight: 1 }}
+          >
+            {passNum}
+          </Typography>
         </Stack>
       </Box>
     </Box>
@@ -634,7 +634,7 @@ function LoopBracketGroup({
 function StageRow({ stage, selected, onClick }: { stage: Stage; selected: boolean; onClick: () => void }) {
   const isRunning = stage.status === "running";
   const summary = stageSummary(stage);
-  const DetailComponent = DETAIL_COMPONENT[stage.id];
+  const DetailComponent = DETAIL_COMPONENT[stage.id.replace(/_\d+$/, "")];
 
   // A stage is expandable only if it has output to show (skipped/pending/running-without-output → not expandable)
   const isExpandable = !!stage.output && !!DetailComponent;
@@ -664,7 +664,7 @@ function StageRow({ stage, selected, onClick }: { stage: Stage; selected: boolea
         {isRunning && <LinearProgress sx={{ position: "absolute", top: 0, left: 0, right: 0, height: 2 }} />}
         <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
           <Box sx={{ color: selected ? "primary.light" : "text.secondary", display: "flex", flexShrink: 0 }}>
-            {STAGE_ICONS[stage.id] ?? <AccessTimeIcon fontSize="small" />}
+            {STAGE_ICONS[stage.id.replace(/_\d+$/, "")] ?? <AccessTimeIcon fontSize="small" />}
           </Box>
           <Typography variant="body2" sx={{ fontWeight: 600, minWidth: 84, flexShrink: 0 }}>
             {stage.label}
@@ -901,7 +901,11 @@ export default function Pipeline() {
             };
 
             for (const stage of run.stages) {
-              if (LOOP_STAGE_IDS.has(stage.id)) {
+              if (isLoopStage(stage.id)) {
+                // Flush if this stage belongs to a different pass than what's buffered
+                if (loopBuffer.length > 0 && loopStagePass(stage.id) !== loopStagePass(loopBuffer[0].id)) {
+                  flushLoop();
+                }
                 loopBuffer.push(stage);
               } else {
                 flushLoop();

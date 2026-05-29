@@ -13,6 +13,7 @@ import BiotechOutlinedIcon from "@mui/icons-material/BiotechOutlined";
 import BoltOutlinedIcon from "@mui/icons-material/BoltOutlined";
 import AssignmentOutlinedIcon from "@mui/icons-material/AssignmentOutlined";
 import PlayArrowOutlinedIcon from "@mui/icons-material/PlayArrowOutlined";
+import LoopIcon from "@mui/icons-material/Loop";
 import SchoolOutlinedIcon from "@mui/icons-material/SchoolOutlined";
 import AssessmentOutlinedIcon from "@mui/icons-material/AssessmentOutlined";
 import FolderOpenOutlinedIcon from "@mui/icons-material/FolderOpenOutlined";
@@ -36,7 +37,7 @@ const STAGE_ICON_EL: Record<string, React.ReactElement> = {
   plan:          <AssignmentOutlinedIcon sx={{ fontSize: 12 }} />,
   decide:        <AssignmentOutlinedIcon sx={{ fontSize: 12 }} />,
   act:           <PlayArrowOutlinedIcon sx={{ fontSize: 12 }} />,
-  reflect:       <AccountTreeOutlinedIcon sx={{ fontSize: 12 }} />,
+  reflect:       <LoopIcon sx={{ fontSize: 12 }} />,
   learn:         <SchoolOutlinedIcon sx={{ fontSize: 12 }} />,
   persist:       <SchoolOutlinedIcon sx={{ fontSize: 12 }} />,
   summary:       <AssessmentOutlinedIcon sx={{ fontSize: 12 }} />,
@@ -97,7 +98,6 @@ const CHART_MAX_H = 64; // px — tallest bar height
 
 const COL_W = 28;
 const LABEL_W = 116;
-const PAPER_BG = "#0d1117"; // matches MUI dark Paper background
 
 function fmtTime(ts: number): string {
   return new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -361,13 +361,14 @@ export default function RunHistory() {
                     width: LABEL_W,
                     flexShrink: 0,
                     alignItems: "center",
-                    bgcolor: PAPER_BG,
+                    bgcolor: "background.paper",
+                    pl: 1,
                     pr: 1,
                     zIndex: 2,
                   }}
                 >
                   <Box sx={{ color: "text.disabled", display: "flex", flexShrink: 0 }}>
-                    {STAGE_ICON_EL[stageId] ?? STAGE_ICON_FALLBACK}
+                    {STAGE_ICON_EL[stageId.replace(/_\d+$/, "")] ?? STAGE_ICON_FALLBACK}
                   </Box>
                   <Typography variant="caption" color="text.disabled" noWrap sx={{ fontSize: "0.7rem" }}>
                     {stageLabel}

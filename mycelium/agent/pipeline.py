@@ -1,6 +1,7 @@
 ﻿import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 from collections import deque
@@ -28,20 +29,68 @@ def _parse_iso_dt(s: str | None) -> datetime | None:
         return None
 
 
+def _subject_matches_title(subject: str, title_lower: str) -> bool:
+    """Return True if a finding subject is represented in an issue title.
+
+    Handles four cases:
+      1. Direct containment       – "marco.torres" in "onboarding: marco.torres"
+      2. Dot-normalised           – "alex.chen"    matches "alex chen"
+      3. Path-base + dot-norm     – "members/alex.chen" → base "alex.chen" → "alex chen"
+      4. Significant-word overlap – "upstream sync" → all words >4 chars ("upstream")
+                                    appear in "synchronize with upstream: …"
+    """
+    subject = subject.lower().strip()
+    if not subject or not title_lower:
+        return False
+
+    # 1. Direct
+    if subject in title_lower:
+        return True
+
+    # 2. Dot-normalised direct
+    subj_norm = subject.replace(".", " ")
+    if subj_norm != subject and subj_norm in title_lower:
+        return True
+
+    # 3. Path-base (last component) + dot-normalised variant
+    if "/" in subject:
+        base = subject.split("/")[-1]
+        if len(base) > 3:
+            if base in title_lower:
+                return True
+            base_norm = base.replace(".", " ")
+            if base_norm != base and base_norm in title_lower:
+                return True
+
+    # 4. All significant words (>4 chars) of subject appear in title
+    sig_words = [w for w in re.split(r"[\s/._\-]+", subject) if len(w) > 4]
+    if sig_words and all(w in title_lower for w in sig_words):
+        return True
+
+    return False
+
+
 class _PipelineCancelled(Exception):
     pass
 
 
 STAGE_DEFS = [
-    {"id": "observe",  "label": "Observe",  "description": "Parallel state capture: repository snapshot, knowledge graph, and GitLab baseline (issues, MRs) — all reads happen here"},
-    {"id": "model",    "label": "Model",    "description": "Integrate repository snapshot into knowledge graph; update inferred ownership and contributor-module relationships"},
-    {"id": "analyze",  "label": "Analyze",  "description": "Spawn concurrent investigator subagents over modules and members; synthesize findings into structured concern types"},
-    {"id": "decide",   "label": "Decide",   "description": "Select bounded intervention set; deduplicate against GitLab baseline to prevent redundant action creation"},
-    {"id": "act",      "label": "Act",      "description": "Execute GitLab mutations: create issues, update MRs, assign ownership, generate artifacts"},
-    {"id": "reflect",  "label": "Reflect",  "description": "Reconcile intended actions against observed GitLab state; annotate findings with causal metadata"},
-    {"id": "persist",  "label": "Persist",  "description": "Write updated graph state, annotated findings, and causal action history to MongoDB"},
-    {"id": "summary",  "label": "Summary",  "description": "Compile cycle outcome: structural changes, verified interventions, and key metrics"},
+    {"id": "observe",   "label": "Observe",  "description": "Parallel state capture: repository snapshot, knowledge graph, and GitLab baseline (issues, MRs) — all reads happen here"},
+    {"id": "model",     "label": "Model",    "description": "Integrate repository snapshot into knowledge graph; update inferred ownership and contributor-module relationships"},
+    {"id": "analyze",   "label": "Analyze",  "description": "Spawn concurrent investigator subagents over modules and members; synthesize findings into structured concern types"},
+    {"id": "decide_1",  "label": "Decide",   "description": "Select bounded intervention set; deduplicate against GitLab baseline to prevent redundant action creation"},
+    {"id": "act_1",     "label": "Act",      "description": "Execute GitLab mutations: create issues, update MRs, assign ownership, generate artifacts"},
+    {"id": "reflect_1", "label": "Reflect",  "description": "Reconcile intended actions against observed GitLab state; annotate findings with causal metadata"},
+    {"id": "persist",   "label": "Persist",  "description": "Write updated graph state, annotated findings, and causal action history to MongoDB"},
+    {"id": "summary",   "label": "Summary",  "description": "Compile cycle outcome: structural changes, verified interventions, and key metrics"},
 ]
+
+# Labels/descriptions for dynamically-inserted DAR pass stages (pass 2, 3, …)
+_LOOP_STAGE_META: dict[str, tuple[str, str]] = {
+    "decide":  ("Decide",  "Select bounded intervention set; deduplicate against GitLab baseline to prevent redundant action creation"),
+    "act":     ("Act",     "Execute GitLab mutations: create issues, update MRs, assign ownership, generate artifacts"),
+    "reflect": ("Reflect", "Reconcile intended actions against observed GitLab state; annotate findings with causal metadata"),
+}
 
 
 @dataclass
@@ -169,26 +218,192 @@ class PipelineRunner:
             # Best-effort — pipeline continues with whatever findings were collected.
             await self._execute("analyze", self._analyze)
 
-            # DECIDE: select bounded, deduplicated intervention set.
-            if not await self._execute("decide", self._decide):
+            # ── DECIDE → ACT → REFLECT stabilization loop ──────────────────
+            # Each pass is a separate set of numbered stages (decide_1/act_1/reflect_1,
+            # decide_2/act_2/reflect_2, …).  Pass 2+ stages are injected into
+            # run.stages dynamically just before persist so the UI shows them.
+            cfg = await self._graph.get_runtime_config()
+            # Default 3: the new architecture runs a full decide/act/reflect per pass
+            # so the old rampant-agent risk is gone.  Raise via MongoDB settings
+            # {"_id":"runtime","act_max_stabilization_passes":N} to increase.
+            MAX_DAR_PASSES = max(1, min(10, int(cfg.get("act_max_stabilization_passes", 5))))
+
+            # Snapshot bot issues before the first pass (used for stale-close after loop)
+            pre_loop_issues: list[dict] = []
+            try:
+                pre_loop_issues = await asyncio.to_thread(self._gitlab.list_bot_issues)
+            except Exception as exc:
+                logger.warning("[pipeline] Could not snapshot pre-loop bot issues: %s", exc)
+
+            # Cross-pass intervention memory
+            known_iids:              set[int] = {i["iid"] for i in pre_loop_issues}
+            addressed_issue_iids:    list[int] = []
+            addressed_subjects:      list[str] = []
+            addressed_details:       list[str] = []
+            skip_action_titles:      set[str]  = set()
+            skip_edit_iids:          set[int]  = set()
+            skip_artifact_usernames: set[str]  = set()
+
+            # Accumulated act metrics (for _persist / _summary compatibility)
+            all_act_details:    list[dict] = []
+            all_act_executed  = 0
+            all_act_failed    = 0
+            all_act_violations: list[str] = []
+            all_act_mcp_calls:  list[dict] = []
+            last_act_summary:   str | None = None
+            passes_run        = 1
+            dar_failed        = False
+
+            for pass_num in range(1, MAX_DAR_PASSES + 1):
+                passes_run = pass_num
+                decide_id  = f"decide_{pass_num}"
+                act_id     = f"act_{pass_num}"
+                reflect_id = f"reflect_{pass_num}"
+
+                # Inject stage placeholders for passes beyond the first
+                if pass_num > 1:
+                    persist_idx = next(
+                        i for i, s in enumerate(run.stages) if s.id == "persist"
+                    )
+                    for base_id in ("decide", "act", "reflect"):
+                        lbl, desc = _LOOP_STAGE_META[base_id]
+                        run.stages.insert(
+                            persist_idx,
+                            StageState(id=f"{base_id}_{pass_num}", label=lbl, description=desc),
+                        )
+                        persist_idx += 1
+                    self._broadcast()
+
+                # Build prior-interventions context (None on pass 1)
+                prior: dict | None = None
+                if pass_num > 1:
+                    prior = {
+                        "iteration": pass_num,
+                        "max_iterations": MAX_DAR_PASSES,
+                        "addressed_issue_iids": list(addressed_issue_iids),
+                        "addressed_subjects": list(addressed_subjects),
+                        "addressed_details": list(addressed_details),
+                        "skip_action_titles": list(skip_action_titles),
+                        "skip_edit_iids": list(skip_edit_iids),
+                        "skip_artifact_usernames": list(skip_artifact_usernames),
+                    }
+
+                # DECIDE
+                _p, _prior = pass_num, prior
+                if not await self._execute(decide_id, lambda: self._decide(_p, _prior)):
+                    dar_failed = True
+                    break
+
+                # ACT (single pass — no internal loop)
+                _p2, _prior2 = pass_num, prior
+                await self._execute(act_id, lambda: self._act_single(_p2, _prior2))
+
+                # Harvest pass results from stage output
+                act_stage    = next(s for s in run.stages if s.id == act_id)
+                pass_result  = act_stage.output or {}
+                pass_details = pass_result.get("details", [])
+                all_act_details.extend(pass_details)
+                all_act_executed   += pass_result.get("executed", 0)
+                all_act_failed     += pass_result.get("failed", 0)
+                all_act_violations.extend(pass_result.get("boundary_violations", []))
+                all_act_mcp_calls.extend(pass_result.get("mcp_calls", []))
+                if pass_result.get("summary"):
+                    last_act_summary = pass_result["summary"]
+
+                # Update skip sets so next pass doesn't re-execute completed actions
+                for d in pass_details:
+                    kind   = d.get("kind", "")
+                    params = d.get("params", {})
+                    if kind == "create_issue":
+                        raw   = d.get("detail", "")
+                        title = raw.split(" ", 1)[-1] if raw.startswith("#") else raw
+                        if title:
+                            skip_action_titles.add(title)
+                    elif kind in ("edit_issue", "assign_issue"):
+                        iid = d.get("iid") or int(params.get("iid", 0) or 0)
+                        if iid:
+                            skip_edit_iids.add(int(iid))
+                    elif kind in ("generate_onboarding_pack", "generate_offboarding_artifact"):
+                        username = (
+                            params.get("new_member_username")
+                            or params.get("departing_member_username")
+                            or params.get("username", "")
+                        )
+                        if username:
+                            skip_artifact_usernames.add(username)
+
+                # REFLECT
+                await self._execute(reflect_id, self._reflect)
+
+                # Update intervention tracking from newly created issues.
+                # Used to build prior_interventions context for the next pass.
+                # Uses the same base-component normalisation as _reflect() so that
+                # path-style subjects like "members/marco.torres" match issue titles.
+                new_issue_count = 0
+                try:
+                    current_issues = await asyncio.to_thread(self._gitlab.list_bot_issues)
+                    for iss in current_issues:
+                        if iss["iid"] not in known_iids:
+                            known_iids.add(iss["iid"])
+                            addressed_issue_iids.append(iss["iid"])
+                            addressed_details.append(f"#{iss['iid']} {iss['title']}")
+                            new_issue_count += 1
+                            title_lower = iss["title"].lower()
+                            for f in (self._interpretation or {}).get("findings", []):
+                                sub = str(f.get("subject", "")).lower().strip()
+                                if sub and _subject_matches_title(sub, title_lower) and sub not in addressed_subjects:
+                                    addressed_subjects.append(sub)
+                                    break
+                except Exception as exc:
+                    logger.warning("[pipeline] Pass %d: issue count check failed: %s", pass_num, exc)
+
+                # Convergence: all findings addressed → no point in another pass
+                unaddressed = self._reflect_result.get("findings_unaddressed", 0)
+                if unaddressed == 0:
+                    logger.info("[pipeline] All findings addressed after %d pass(es)", pass_num)
+                    break
+                # Convergence: nothing was executed at all → further passes won't help.
+                # Only check on pass 2+ (pass 1 may legitimately execute nothing if the
+                # plan is empty, e.g. all actions were deduplicated).
+                if pass_num > 1 and len(pass_details) == 0:
+                    logger.info("[pipeline] No actions taken in pass %d - frontier exhausted", pass_num)
+                    break
+
+            # Close stale/superseded issues once all passes are done
+            stale_closed = 0
+            if not dar_failed:
+                stale_closed = await self._close_stale_bot_issues(pre_loop_issues)
+                if stale_closed:
+                    _activity_bus.emit({
+                        "type": "agent_text", "stage_id": f"act_{passes_run}",
+                        "text": f"Closed {stale_closed} stale or superseded bot issue(s).",
+                    })
+
+            # Store accumulated result for _persist / _summary
+            self._act_result = {
+                "executed": all_act_executed,
+                "failed": all_act_failed,
+                "details": all_act_details,
+                "mcp_calls": all_act_mcp_calls,
+                "summary": last_act_summary,
+                "boundary_violations": all_act_violations,
+                "stabilization_passes": passes_run,
+                "stale_issues_closed": stale_closed,
+            }
+            # ── End stabilization loop ──────────────────────────────────────
+
+            if dar_failed:
                 run.status = "failed"
-                return
+            else:
+                # PERSIST: write annotated findings + updated graph to MongoDB.
+                await self._execute("persist", self._persist)
+                await self._execute("summary", self._summary)
 
-            # ACT: execute GitLab mutations.
-            await self._execute("act", self._act)
-
-            # REFLECT: reconcile intended actions against observed GitLab state.
-            await self._execute("reflect", self._reflect)
-
-            # PERSIST: write annotated findings + updated graph to MongoDB.
-            await self._execute("persist", self._persist)
-            await self._execute("summary", self._summary)
-
-            run.status = (
-                "success"
-                if all(s.status in ("success", "skipped") for s in run.stages)
-                else "partial"
-            )
+                run.status = (
+                    "success"
+                    if all(s.status in ("success", "skipped") for s in run.stages)
+                    else "partial"
+                )
         except _PipelineCancelled:
             run.status = "cancelled"
             logger.info("[pipeline] Run cancelled by user request")
@@ -600,27 +815,85 @@ class PipelineRunner:
         interp = await self._run_interpretation()
         return {**inv, **interp}
 
-    async def _decide(self) -> dict:
+    def _get_covered_subjects(self, issues: list[dict]) -> set[str]:
+        """Return finding subjects already covered by open issues.
+
+        Uses the same subject→title matching as _reflect() so that deduplication
+        and reflection stay consistent — if reflect will confirm it, decide will
+        not re-plan it.
+        """
+        findings = (self._interpretation or {}).get("findings", [])
+        covered: set[str] = set()
+        for f in findings:
+            subject = str(f.get("subject", "")).lower().strip()
+            if not subject:
+                continue
+            for iss in issues:
+                if _subject_matches_title(subject, iss.get("title", "").lower()):
+                    covered.add(subject)
+                    break
+        return covered
+
+    async def _decide(self, pass_num: int = 1, prior_interventions: dict | None = None) -> dict:
         """DECIDE: select a bounded, deduplicated intervention set.
 
-        Runs the planner agent, then removes any create_issue actions whose
-        title closely matches an issue already open at OBSERVE time.  This is
-        the first stage that explicitly reasons about existing GitLab state.
+        Before calling the planner, filters out findings whose subjects are
+        already covered by open issues — both from previous runs (OBSERVE
+        baseline) and from earlier passes of this run (refreshed on pass 2+).
+        This is the primary deduplication gate: the planner never sees a finding
+        that already has an open issue, so it cannot re-propose it regardless of
+        how it phrases the title.
         """
+        # Refresh open issues on pass 2+ so the planner sees issues created
+        # by earlier passes of this same run.
+        if pass_num > 1:
+            try:
+                self._pre_run_gitlab_issues = await asyncio.to_thread(
+                    self._gitlab.list_bot_issues
+                )
+                logger.info("[decide] Pass %d: refreshed to %d open issues",
+                            pass_num, len(self._pre_run_gitlab_issues))
+            except Exception as exc:
+                logger.warning("[decide] Pass %d: failed to refresh issue list: %s", pass_num, exc)
+
+        # Subject-based pre-filter: remove findings already covered by open issues.
+        # This is done BEFORE calling the planner so it cannot propose duplicate work.
+        covered = self._get_covered_subjects(self._pre_run_gitlab_issues)
+
+        # On pass 2+, also mark subjects confirmed actioned by prior reflects.
+        if pass_num > 1:
+            for f in self._interpretation.get("annotated_findings", []):
+                if f.get("actioned_at") or f.get("pre_existing"):
+                    covered.add(str(f.get("subject", "")).lower().strip())
+
+        all_findings = self._interpretation.get("findings", [])
+        if covered:
+            remaining = [
+                f for f in all_findings
+                if str(f.get("subject", "")).lower().strip() not in covered
+            ]
+            n_filtered = len(all_findings) - len(remaining)
+            if n_filtered:
+                logger.info("[decide] Pass %d: pre-filtered %d/%d already-covered finding(s)",
+                            pass_num, n_filtered, len(all_findings))
+            interpretation = {**self._interpretation, "findings": remaining}
+        else:
+            interpretation = self._interpretation
+
         self._plan = await asyncio.to_thread(
-            planner_agent.plan, self._interpretation, self._repo, self._graph_data
+            planner_agent.plan, interpretation, self._repo, self._graph_data
         )
 
-        # Deduplicate against GitLab baseline captured in OBSERVE.
-        # Prevents re-creating issues for findings that already have open coverage.
+        # Secondary dedup: title-substring check catches anything the subject
+        # matching misses (e.g. a subject not mentioned verbatim in the title).
         pre_titles = {
             iss.get("title", "").lower()
             for iss in self._pre_run_gitlab_issues
             if iss.get("title")
         }
+        deduped = 0
         if pre_titles:
             filtered: list[dict] = []
-            deduped = 0
             for action in self._plan.get("actions", []):
                 if action.get("kind") == "create_issue":
                     planned_title = (action.get("params") or {}).get("title", "").lower()
@@ -628,19 +901,17 @@ class PipelineRunner:
                         planned_title in pt or pt in planned_title
                         for pt in pre_titles
                     ):
-                        logger.info("[decide] Deduplicating action — title matches pre-existing issue: %s", planned_title)
+                        logger.info("[decide] Title-dedup: '%s' matches pre-existing issue",
+                                    planned_title)
                         deduped += 1
                         continue
                 filtered.append(action)
             if deduped:
-                logger.info("[decide] Removed %d duplicate action(s) against %d pre-existing issues", deduped, len(pre_titles))
                 self._plan["actions"] = filtered
-        else:
-            deduped = 0
 
         for action in self._plan.get("actions", []):
             params = action.get("params") or {}
-            _activity_bus.emit({"type": "action_planned", "stage_id": "decide",
+            _activity_bus.emit({"type": "action_planned", "stage_id": f"decide_{pass_num}",
                                 "kind": str(action.get("kind", "?")),
                                 "title": str(params.get("title", json.dumps(params)[:80]))})
         return {
@@ -650,205 +921,52 @@ class PipelineRunner:
             "actions": self._plan.get("actions", []),
         }
 
-    async def _act(self) -> dict:
-        """Bounded stabilization loop for the act stage.
+    async def _act_single(self, pass_num: int = 1, prior_interventions: dict | None = None) -> dict:
+        """ACT: execute one pass of the act agent.
 
-        Runs the act agent for up to MAX_STABILIZATION_PASSES iterations.
-        Each pass receives context about what was already done so the agent
-        can focus on remaining unresolved findings without creating duplicates.
-
-        Terminates early when:
-          - No new issues were created in the latest pass (frontier exhausted), OR
-          - The iteration cap is reached.
-
-        This is NOT a retry loop. It is iterative environmental modification:
-        each pass sees the updated GitLab state left by the previous one.
+        The stabilization loop lives in run(); this method handles exactly one
+        pass — building prompt context, calling act_agent.act(), and emitting
+        activity bus events.
         """
-        cfg = await self._graph.get_runtime_config()
-        # Default is 1: ACT executes once; REFLECT is the verification step.
-        # Increase via MongoDB settings {"_id":"runtime","act_max_stabilization_passes":N}
-        # only when you need genuine multi-pass remediation (e.g. dependency cascades).
-        MAX_STABILIZATION_PASSES = max(1, min(10, int(cfg.get("act_max_stabilization_passes", 1))))
-
         actions = self._plan.get("actions") or []
-        if actions:
-            lines = [
-                f"Executing {len(actions)} planned action(s) across up to "
-                f"{MAX_STABILIZATION_PASSES} stabilization passes:\n"
-            ]
-            for a in actions[:8]:
-                kind = a.get("kind", "?")
-                title = (a.get("params") or {}).get("title", "")
-                lines.append(f"- `{kind}`: {title}")
-            if len(actions) > 8:
-                lines.append(f"- (+{len(actions) - 8} more)")
-            _activity_bus.emit({"type": "agent_text", "stage_id": "act",
-                                "text": "\n".join(lines)})
+        stage_id = f"act_{pass_num}"
+
+        if pass_num == 1:
+            if actions:
+                lines = [f"Executing {len(actions)} planned action(s):\n"]
+                for a in actions[:8]:
+                    kind  = a.get("kind", "?")
+                    title = (a.get("params") or {}).get("title", "")
+                    lines.append(f"- `{kind}`: {title}")
+                if len(actions) > 8:
+                    lines.append(f"- (+{len(actions) - 8} more)")
+                _activity_bus.emit({"type": "agent_text", "stage_id": stage_id,
+                                    "text": "\n".join(lines)})
+            else:
+                _activity_bus.emit({"type": "agent_text", "stage_id": stage_id,
+                                    "text": "No actions planned - assessing project state."})
         else:
-            _activity_bus.emit({"type": "agent_text", "stage_id": "act",
-                                "text": "No actions planned - assessing project state."})
-
-        # Snapshot existing bot issues before the loop so we can:
-        #   (a) detect which issues are newly created each pass (convergence signal)
-        #   (b) detect stale issues after all passes complete
-        pre_act_issues: list[dict] = []
-        try:
-            pre_act_issues = await asyncio.to_thread(self._gitlab.list_bot_issues)
-            logger.info("[act] Pre-act bot issues: %d open", len(pre_act_issues))
-        except Exception as exc:
-            logger.warning("[act] Could not snapshot existing bot issues: %s", exc)
-
-        # Intervention memory - grows each pass, passed as context to the next one
-        known_iids: set[int] = {i["iid"] for i in pre_act_issues}
-        addressed_issue_iids: list[int] = []
-        addressed_subjects: list[str] = []
-        addressed_details: list[str] = []     # "#{iid} title" strings shown to agent
-        skip_action_titles: set[str] = set()  # create_issue titles already executed
-        skip_edit_iids: set[int] = set()      # edit_issue / assign_issue iids already executed
-        skip_artifact_usernames: set[str] = set()  # generate_onboarding/offboarding usernames
-
-        # Accumulated across all passes
-        all_details: list[dict] = []
-        all_executed = 0
-        all_failed = 0
-        all_boundary_violations: list[str] = []
-        all_mcp_calls: list[dict] = []
-        last_summary: str | None = None
-        passes_run = 0
-
-        for pass_num in range(1, MAX_STABILIZATION_PASSES + 1):
-            passes_run = pass_num
-
-            if pass_num > 1:
-                _activity_bus.emit({
-                    "type": "agent_text", "stage_id": "act",
-                    "text": (
-                        f"Stabilization pass {pass_num}/{MAX_STABILIZATION_PASSES} - "
-                        "checking for remaining unresolved findings..."
-                    ),
-                })
-
-            prior_interventions: dict | None = None
-            if pass_num > 1:
-                prior_interventions = {
-                    "iteration": pass_num,
-                    "max_iterations": MAX_STABILIZATION_PASSES,
-                    "addressed_issue_iids": list(addressed_issue_iids),
-                    "addressed_subjects": list(addressed_subjects),
-                    "addressed_details": list(addressed_details),
-                    "skip_action_titles": list(skip_action_titles),
-                    "skip_edit_iids": list(skip_edit_iids),
-                    "skip_artifact_usernames": list(skip_artifact_usernames),
-                }
-
-            result = await act_agent.act(
-                self._interpretation,
-                self._repo,
-                self._plan,
-                prior_interventions=prior_interventions,
-            )
-
-            # Accumulate results
-            pass_details = result.get("details", [])
-            all_details.extend(pass_details)
-            all_executed += result.get("executed", 0)
-            all_failed += result.get("failed", 0)
-            all_boundary_violations.extend(result.get("boundary_violations", []))
-            all_mcp_calls.extend(result.get("mcp_calls", []))
-            if result.get("summary"):
-                last_summary = result["summary"]
-
-            # Update skip sets so the direct fallback won't re-execute completed actions.
-            # Each action kind gets its own deduplication key:
-            #   create_issue              → by title
-            #   edit_issue / assign_issue → by issue iid
-            #   generate_*_artifact       → by username
-            for d in pass_details:
-                kind = d.get("kind", "")
-                params = d.get("params", {})  # populated by act_agent when iid/username needed
-                if kind == "create_issue":
-                    raw = d.get("detail", "")
-                    title = raw.split(" ", 1)[-1] if raw.startswith("#") else raw
-                    if title:
-                        skip_action_titles.add(title)
-                elif kind in ("edit_issue", "assign_issue"):
-                    iid = d.get("iid") or int(params.get("iid", 0) or 0)
-                    if iid:
-                        skip_edit_iids.add(int(iid))
-                elif kind in ("generate_onboarding_pack", "generate_offboarding_artifact"):
-                    username = (
-                        params.get("new_member_username")
-                        or params.get("departing_member_username")
-                        or params.get("username", "")
-                    )
-                    if username:
-                        skip_artifact_usernames.add(username)
-
-            # Detect newly created issues this pass (convergence signal)
-            new_issue_count = 0
-            try:
-                current_issues = await asyncio.to_thread(self._gitlab.list_bot_issues)
-                for iss in current_issues:
-                    if iss["iid"] not in known_iids:
-                        known_iids.add(iss["iid"])
-                        addressed_issue_iids.append(iss["iid"])
-                        addressed_details.append(f"#{iss['iid']} {iss['title']}")
-                        new_issue_count += 1
-                        # Match to a finding subject for deduplication on next pass
-                        title_lower = iss["title"].lower()
-                        for f in (self._interpretation or {}).get("findings", []):
-                            sub = str(f.get("subject", "")).lower().strip()
-                            if sub and sub in title_lower and sub not in addressed_subjects:
-                                addressed_subjects.append(sub)
-                                break
-            except Exception as exc:
-                logger.warning("[act] Pass %d: issue count check failed: %s", pass_num, exc)
-
-            logger.info(
-                "[act] Pass %d/%d: %d action(s), %d new issue(s) created",
-                pass_num, MAX_STABILIZATION_PASSES, len(pass_details), new_issue_count,
-            )
-
-            # Terminate early when the intervention frontier is exhausted.
-            # Two signals (either is sufficient):
-            #   1. pass_details is empty → nothing was actually executed this pass
-            #      (all remaining_actions were filtered out by the skip sets)
-            #   2. new_issue_count == 0 → no novel issues appeared
-            #      (the original convergence signal, kept as defence-in-depth)
-            # Always run at least one full pass regardless.
-            if pass_num > 1 and (len(pass_details) == 0 or new_issue_count == 0):
-                logger.info("[act] Intervention frontier exhausted after %d pass(es)", pass_num)
-                _activity_bus.emit({
-                    "type": "agent_text", "stage_id": "act",
-                    "text": f"Intervention frontier exhausted after {pass_num} stabilization pass(es).",
-                })
-                break
-
-            if pass_num == MAX_STABILIZATION_PASSES:
-                _activity_bus.emit({
-                    "type": "agent_text", "stage_id": "act",
-                    "text": f"Stabilization cap reached ({MAX_STABILIZATION_PASSES} passes).",
-                })
-
-        # Close stale/superseded issues once all passes are done
-        stale_closed = await self._close_stale_bot_issues(pre_act_issues)
-        if stale_closed:
             _activity_bus.emit({
-                "type": "agent_text", "stage_id": "act",
-                "text": f"Closed {stale_closed} stale or superseded bot issue(s).",
+                "type": "agent_text", "stage_id": stage_id,
+                "text": f"Pass {pass_num}: executing remaining unresolved actions...",
             })
 
-        self._act_result = {
-            "executed": all_executed,
-            "failed": all_failed,
-            "details": all_details,
-            "mcp_calls": all_mcp_calls,
-            "summary": last_summary,
-            "boundary_violations": all_boundary_violations,
-            "stabilization_passes": passes_run,
-            "stale_issues_closed": stale_closed,
+        result = await act_agent.act(
+            self._interpretation,
+            self._repo,
+            self._plan,
+            prior_interventions=prior_interventions,
+        )
+
+        return {
+            "executed":            result.get("executed", 0),
+            "failed":              result.get("failed", 0),
+            "details":             result.get("details", []),
+            "mcp_calls":           result.get("mcp_calls", []),
+            "summary":             result.get("summary"),
+            "boundary_violations": result.get("boundary_violations", []),
+            "trace":               result.get("trace", []),
         }
-        return self._act_result
 
     async def _close_stale_bot_issues(self, pre_act_issues: list[dict]) -> int:
         """Close open bot issues whose subject is no longer in the current findings.
@@ -970,12 +1088,12 @@ class PipelineRunner:
                 "duplicate_of": None,
             }
 
-            # Match finding subject as substring in issue title
             matched: dict | None = None
-            for title_lower, iss in post_by_title.items():
-                if subject and subject in title_lower:
-                    matched = iss
-                    break
+            if subject:
+                for title_lower, iss in post_by_title.items():
+                    if _subject_matches_title(subject, title_lower):
+                        matched = iss
+                        break
 
             if matched:
                 annotation["gitlab_iid"] = matched["iid"]
