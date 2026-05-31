@@ -58,6 +58,32 @@ CREATING ISSUES
     prior run. The bot owns those issues and may freely edit or supersede them.
   - Issues with `bot_authored: false` were created by a human. Be conservative:
     prefer add_comment or leave them alone rather than editing or closing them.
+  - NEVER create an issue whose purpose is to report that bot-authored issues are
+    unassigned, stalled, or lacking owners. Bot-authored issues being open and
+    unassigned is expected — do not self-report on them.
+
+TITLE MUST CONTAIN THE SUBJECT IDENTIFIER
+  - Every create_issue title MUST include the subject name from the finding so
+    that deduplication can match it on future runs.
+  - For member findings (subject "members/<username>"): include the username or
+    display name in the title. e.g. "Knowledge Transfer: Alex Chen for `app` module"
+    not "Reduce Bus Factor in App Module".
+  - For module findings (subject is a module path): include the module name in
+    backticks. e.g. "Documentation Gap: `scripts` module" not "Improve Documentation".
+  - For cross-cutting findings (upstream sync, CODEOWNERS, admin access): include a
+    recognisable keyword from the finding's subject field in the title.
+  - This rule is absolute. Titles without the subject identifier will cause duplicates.
+
+LABELS ARE MANDATORY
+  - Every create_issue action MUST include at least one label in the labels array.
+  - Always include the concern_type as a label (e.g. "knowledge_concentration",
+    "fragile_documentation", "upstream_drift").
+  - Add topical labels as appropriate: "continuity", "documentation", "security",
+    "ownership", "upstream-drift", "bus_factor", etc.
+  - Only use "onboarding" as a label when the issue is specifically about onboarding
+    a new team member (concern_type: recent_joiner_exposure or onboarding_isolation).
+    Do NOT apply it to documentation, knowledge-transfer, or other issues.
+  - An empty labels array [] is never acceptable for a create_issue action.
 
 COMMENTING ON ISSUES
   - Do NOT plan add_comment to rephrase or restate what an issue's title already
@@ -124,33 +150,59 @@ ISSUE DESCRIPTION QUALITY RULES (apply to ALL create_issue and edit_issue action
   circular and add no information. State Z directly.
 - End with a concrete, ordered action list (1, 2, 3…) referencing actual data.
 
+ONE ISSUE PER MODULE — MANDATORY
+  If a single module has multiple findings (e.g. fragile_documentation AND
+  undeclared_ownership), combine them into ONE issue, not two separate ones.
+  Use a combined title: "Documentation & Ownership: `module` module".
+  Merge all recommended actions into a single ordered list in the description.
+  Creating two issues for the same module is never correct.
+
+KNOWLEDGE TRANSFER ISSUES HAVE HIGHEST PRIORITY
+  knowledge_concentration / multi_module_overload / sole_contributor findings
+  for a NAMED PERSON must always produce a Knowledge Transfer issue. They are
+  never optional and must not be substituted with or crowded out by documentation
+  or ownership issues. If the planner would otherwise exceed a limit on actions,
+  drop documentation gap issues first — keep Knowledge Transfer issues.
+
 PLANNING GUIDANCE BY CONCERN TYPE:
 
 knowledge_concentration / multi_module_overload / sole_contributor / fading_contributor:
-  Create an issue titled "Knowledge Transfer: [subject]". The description must:
+  ALWAYS create an issue titled "Knowledge Transfer: [Person] for `module` module".
+  The description must:
   - Name the specific modules/files at risk and why (e.g., "owns 87% of commits
     to src/auth/ and src/pipeline/ with no other reviewer in the last 6 months").
   - Name 1-2 specific candidate engineers from the graph who could be cross-trained.
   - List concrete onboarding steps: which modules to shadow, which MRs to review,
     which documentation to write.
-  Suggest candidate assignees from the graph where possible.
+  Assign to the sole expert (they are the person who must initiate the transfer).
 
 fragile_documentation:
-  Consider creating an issue to write or update the README/architecture doc
-  for the affected module. Reference the investigator's documentation_gaps if
-  present in the evidence.
+  Create an issue to write or update the README/architecture doc for the affected
+  module ONLY if documentation_state is "sparse" or "missing". If the investigator
+  rated it "adequate" or better, do NOT file a documentation issue.
+  Combine with any undeclared_ownership finding for the same module (see above).
+  Reference the investigator's documentation_gaps if present in the evidence.
 
 upstream_dominance / upstream_drift:
-  Consider an issue describing the dark-knowledge area or the missing upstream
-  context. For drift, mention the high_priority_commits the drift investigator
-  flagged if any.
+  upstream_drift: Create an issue whose title MUST begin with "Upstream Drift: "
+    followed by specific details (e.g. "Upstream Drift: 26 commits behind
+    `gitlab-org/gitlab-pages:master`"). The word "Drift" in the title is required
+    for deduplication — never use "Sync", "Lag", or other synonyms.
+    Label as "upstream_drift" (underscore, not hyphen).
+  upstream_dominance: Create an issue whose title MUST begin with "Upstream
+    Dominance: " followed by the subject or module name.
+    Label as "upstream_dominance".
+
+  For both: mention the high_priority_commits the drift investigator flagged.
 
 stalled_work:
   Consider commenting on the issue/MR to nudge triage, or reassigning to an
   active member.
 
 undeclared_ownership / nominal_ownership:
-  Create an issue proposing CODEOWNERS edits. The description must:
+  If combined with a fragile_documentation finding for the same module, merge into
+  one issue (see ONE ISSUE PER MODULE above). If standalone, create an issue
+  proposing CODEOWNERS edits. The description must:
   - Name every specific path that needs an owner (e.g. `internal/`, `scripts/`).
   - Name the specific person to assign as owner - use the top internal committer
     for each path from the knowledge graph. Do not say "starting with X" or
@@ -164,16 +216,36 @@ recent_joiner_exposure / onboarding_isolation:
   Call generate_onboarding_pack with the new member's username. This creates a
   structured onboarding guide as a GitLab issue: team roster, module expert map,
   and a starter checklist. Do this once per new joiner detected in the findings.
+  IMPORTANT: Only call generate_onboarding_pack when the finding's subject contains
+  a specific, named username (e.g. "members/marco.torres"). If the username cannot
+  be extracted from the subject, do NOT call this tool — skip the action entirely.
 
 fading_contributor / offboarding_risk:
   Call generate_offboarding_artifact with the member's username. This creates a
   handoff issue documenting their at-risk modules, knowledge gaps, and transfer
   candidates. Do this when a member investigator flagged recently_inactive or
   sole_contributor with low transferability.
+  IMPORTANT: Only call generate_offboarding_artifact when the finding's subject
+  contains a specific, named username. If no username is identifiable, skip.
 
 For graph_updates, include contributors whose only signal is MR approvals
 (expertise_score: 0.6) - they are implicit knowledge holders. Set external=true
 for developer entries that match upstream authors in the investigations.
+
+ASSIGN ISSUES TO THE RELEVANT EXPERT
+  - When a finding identifies a clear responsible person (module owner, sole
+    expert, the subject member themselves), set assignee_username in the
+    create_issue params to their GitLab username.
+  - For knowledge_concentration findings: assign to the sole expert. Look up their
+    username in knowledge_graph.developers — use the "username" field (e.g.
+    "alex.chen", "priya.sharma"), NOT their display name. This is the value to put
+    in assignee_username.
+  - For undeclared_ownership / nominal_ownership: assign to the top internal
+    committer for that module path if one is identifiable from the graph.
+  - For admin_access / sole internal admin findings: assign to the admin (JavRedstone
+    → username "JavRedstone").
+  - For recent_joiner / onboarding findings: assign to the new joiner.
+  - If no specific username is identifiable from the graph, omit the field.
 
 OUTPUT: Respond with ONLY a valid JSON object. No explanation, no markdown.
 Schema:
@@ -184,7 +256,8 @@ Schema:
       "params": {
         "title": "...",
         "description": "...",
-        "labels": []
+        "labels": [],
+        "assignee_username": "optional - GitLab username of the responsible person"
       }
     },
     {
@@ -265,10 +338,17 @@ def _run_through_adk(prompt: str, stage_id: str = "plan") -> str:
     return "\n".join(chunks).strip()
 
 
-def plan(interpretation: dict, repo_snapshot: dict, graph_snapshot: dict) -> dict:
+def plan(
+    interpretation: dict,
+    repo_snapshot: dict,
+    graph_snapshot: dict,
+    prior_interventions: dict | None = None,
+) -> dict:
     """Build a remediation plan from the analyst's findings.
 
     interpretation is the analyst output: {"synthesis": "...", "findings": [...]}.
+    prior_interventions carries context from earlier passes so the planner does
+    not re-propose work that is already in flight or completed.
     """
     from config.settings import settings
     context = {
@@ -283,8 +363,26 @@ def plan(interpretation: dict, repo_snapshot: dict, graph_snapshot: dict) -> dic
         if settings.demo_mode and graph_snapshot.get("demo_data_present")
         else ""
     )
+    pass_note = ""
+    if prior_interventions:
+        iteration     = prior_interventions.get("iteration", "?")
+        max_iter      = prior_interventions.get("max_iterations", "?")
+        done_subjects = prior_interventions.get("addressed_subjects", [])
+        done_iids     = prior_interventions.get("addressed_issue_iids", [])
+        n_remaining   = len(interpretation.get("findings", []))
+        pass_note = (
+            f"\n\nSTABILIZATION PASS {iteration}/{max_iter}: "
+            f"The findings list has already been filtered — it contains ONLY the "
+            f"{n_remaining} finding(s) not yet addressed. "
+            f"Do NOT plan actions for any subject outside this filtered list. "
+            f"Do NOT add_comment or edit_issue for issues unrelated to these {n_remaining} findings. "
+            f"Subjects already handled this run (skip entirely): {done_subjects}. "
+            f"Issue IIDs already acted on this run (skip create/comment/edit): {done_iids}. "
+            f"If all findings in this list already have matching open issues, "
+            f"return {{\"actions\": [], \"graph_updates\": []}}."
+        )
     prompt = (
-        f"Context:\n{json.dumps(context, indent=2, default=str)}{demo_note}\n\n"
+        f"Context:\n{json.dumps(context, indent=2, default=str)}{demo_note}{pass_note}\n\n"
         "Return ONLY a JSON object matching the schema in your instructions."
     )
 
@@ -305,5 +403,10 @@ def plan(interpretation: dict, repo_snapshot: dict, graph_snapshot: dict) -> dic
     return parsed
 
 
-async def plan_async(interpretation: dict, repo_snapshot: dict, graph_snapshot: dict) -> dict:
-    return await asyncio.to_thread(plan, interpretation, repo_snapshot, graph_snapshot)
+async def plan_async(
+    interpretation: dict,
+    repo_snapshot: dict,
+    graph_snapshot: dict,
+    prior_interventions: dict | None = None,
+) -> dict:
+    return await asyncio.to_thread(plan, interpretation, repo_snapshot, graph_snapshot, prior_interventions)

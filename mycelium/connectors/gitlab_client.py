@@ -767,13 +767,23 @@ class GitLabClient:
             is_bot_authored = author_username.lower() == bot
             has_mycelium_label = "mycelium" in labels
             if is_bot_authored or has_mycelium_label:
+                assignee_obj = getattr(i, "assignee", None) or {}
+                assignee_name = (
+                    assignee_obj.get("name") or assignee_obj.get("username")
+                    if isinstance(assignee_obj, dict)
+                    else getattr(assignee_obj, "name", None) or getattr(assignee_obj, "username", None)
+                ) or None
+                description: str = getattr(i, "description", "") or ""
                 result.append({
                     "iid": i.iid,
                     "title": i.title,
                     "created_at": i.created_at,
+                    "updated_at": getattr(i, "updated_at", None),
                     "labels": labels,
                     "web_url": getattr(i, "web_url", None),
                     "bot_authored": is_bot_authored,
+                    "assignee": assignee_name,
+                    "description_preview": description[:200] if description else None,
                 })
         return result
 

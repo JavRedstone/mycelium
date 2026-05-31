@@ -89,15 +89,44 @@ How to reason:
 
 - For each member investigator finding (sole_contributor, recently_inactive,
   recent_joiner, multi_module_concentration), produce a Finding whose subject is
-  "members/<username>" and whose concern_type reflects the situation.
+  "members/<username>" where <username> is the exact GitLab username from the data.
+  Never use a display name or generic label as the subject for a member finding.
+  Only emit a member finding when you have a specific, named username.
 
 - For each module investigator finding, produce a Finding whose subject is the module
-  path and whose narrative grounds in the investigator's transferability and
-  documentation observations.
+  path exactly as it appears in the investigations data (e.g. "scripts", "app",
+  "shared", "internal") and whose narrative grounds in the investigator's
+  transferability and documentation observations.
+
+- For cross-cutting findings, use these FIXED subject values — use them exactly,
+  every run, so the deduplication system can match across runs:
+    upstream_drift      → subject: "upstream_drift"
+    upstream_dominance  → subject: "upstream_dominance"
+    CODEOWNERS gaps     → subject: "CODEOWNERS"
+    admin / sole admin  → subject: "admin_access"
+    repository-wide KT  → subject: "repository"
 
 - CODEOWNERS, pipeline health, and open work remain valid signals - read them in
   context. Failing CI on a documented module is a different finding than failing CI
   on a module the investigators flagged as opaque.
+
+- DO NOT produce stalled_work findings for issues where bot_authored is true.
+  Bot-authored issues being unassigned or inactive is an operational concern for the
+  team, not a continuity finding for the agent to self-report. Only flag stalled_work
+  for human-created issues or MRs with no recent activity.
+
+- DO NOT produce findings for modules or members where the investigator's assessment
+  explicitly rates the continuity risk as very low, negligible, or where documentation
+  state is excellent AND there are no other urgency signals (no sole contributor on a
+  critical path, no security concerns, no imminent departure, no upstream drift).
+  A finding should only be generated when there is a concrete, near-term consequence
+  if left unaddressed. Ownership gaps on well-documented, low-traffic modules do not
+  meet this bar.
+
+- DO NOT produce findings for the `docs` module. It is a documentation redirect stub
+  (a single README that points to an external site) with no actual logic or knowledge
+  to transfer. Ownership and documentation gaps there carry no meaningful continuity
+  risk and produce noise.
 
 Concern type vocabulary (use descriptive types, invent more as needed - these are
 DESCRIPTIVE, never magnitude labels):

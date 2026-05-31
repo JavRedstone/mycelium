@@ -62,10 +62,24 @@ def _subject_matches_title(subject: str, title_lower: str) -> bool:
             if base_norm != base and base_norm in title_lower:
                 return True
 
-    # 4. All significant words (>4 chars) of subject appear in title
+    # 4. All significant words (>4 chars) of subject appear in title.
+    # Domain aliases: treat semantically-equivalent words as the same token so
+    # titles like "Upstream Sync" match subject "upstream_drift".
+    _ALIASES: dict[str, list[str]] = {
+        "drift":      ["sync", "synchronize", "synchronization", "lag", "behind"],
+        "dominance":  ["dependency", "external", "dominance"],
+    }
     sig_words = [w for w in re.split(r"[\s/._\-]+", subject) if len(w) > 4]
-    if sig_words and all(w in title_lower for w in sig_words):
-        return True
+    if sig_words:
+        def _word_in_title(w: str) -> bool:
+            if w in title_lower:
+                return True
+            for alias in _ALIASES.get(w, []):
+                if alias in title_lower:
+                    return True
+            return False
+        if all(_word_in_title(w) for w in sig_words):
+            return True
 
     return False
 
@@ -254,6 +268,10 @@ class PipelineRunner:
             passes_run        = 1
             dar_failed        = False
 
+            # Stagnation tracking: stop if unaddressed count doesn't decrease
+            last_unaddressed      = float("inf")
+            consecutive_no_progress = 0
+
             for pass_num in range(1, MAX_DAR_PASSES + 1):
                 passes_run = pass_num
                 decide_id  = f"decide_{pass_num}"
@@ -362,6 +380,20 @@ class PipelineRunner:
                 if unaddressed == 0:
                     logger.info("[pipeline] All findings addressed after %d pass(es)", pass_num)
                     break
+                # Convergence: stagnation — unaddressed count didn't improve.
+                # Two consecutive non-improving passes means the remaining findings
+                # either can't be matched or have no actionable remedy available.
+                if unaddressed >= last_unaddressed:
+                    consecutive_no_progress += 1
+                    if consecutive_no_progress >= 2:
+                        logger.info(
+                            "[pipeline] Stagnated at %d unaddressed for %d passes — stopping",
+                            unaddressed, consecutive_no_progress,
+                        )
+                        break
+                else:
+                    consecutive_no_progress = 0
+                last_unaddressed = unaddressed
                 # Convergence: nothing was executed at all → further passes won't help.
                 # Only check on pass 2+ (pass 1 may legitimately execute nothing if the
                 # plan is empty, e.g. all actions were deduplicated).
@@ -881,7 +913,8 @@ class PipelineRunner:
             interpretation = self._interpretation
 
         self._plan = await asyncio.to_thread(
-            planner_agent.plan, interpretation, self._repo, self._graph_data
+            planner_agent.plan, interpretation, self._repo, self._graph_data,
+            prior_interventions,
         )
 
         # Secondary dedup: title-substring check catches anything the subject

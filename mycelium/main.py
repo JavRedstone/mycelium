@@ -581,6 +581,17 @@ async def pipeline_stages():
     return {"stages": [{"id": s["id"], "label": s["label"]} for s in STAGE_DEFS]}
 
 
+def _is_current_format(run: dict) -> bool:
+    """Return True only for runs using the current DAR-loop pipeline format.
+
+    New-format runs always contain at least one stage whose id matches
+    decide_N (e.g. decide_1).  Old runs used stage ids like observe_repo,
+    interpret, plan with no numeric suffix.
+    """
+    import re
+    return any(re.match(r"^decide_\d+$", s.get("id", "")) for s in run.get("stages", []))
+
+
 @app.get("/pipeline/history")
 async def pipeline_history(limit: int = 50):
     try:
@@ -594,7 +605,7 @@ async def pipeline_history(limit: int = 50):
                 cur = pipeline.current_run.to_dict()
                 if not any(r.get("run_id") == cur["run_id"] for r in runs):
                     runs = [cur] + list(runs)
-            return {"runs": runs}
+            return {"runs": [r for r in runs if _is_current_format(r)]}
     except Exception as exc:
         log.warning("MongoDB pipeline history unavailable (%s) - using in-memory", exc)
     runs_mem = [r.to_dict() for r in pipeline.run_history]
@@ -602,7 +613,7 @@ async def pipeline_history(limit: int = 50):
         cur = pipeline.current_run.to_dict()
         if not any(r.get("run_id") == cur["run_id"] for r in runs_mem):
             runs_mem = [cur] + runs_mem
-    return {"runs": runs_mem}
+    return {"runs": [r for r in runs_mem if _is_current_format(r)]}
 
 
 @app.get("/pipeline/current")

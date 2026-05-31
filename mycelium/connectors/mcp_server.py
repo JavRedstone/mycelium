@@ -420,6 +420,11 @@ async def generate_onboarding_pack(new_member_username: str) -> dict:
     Returns:
         {"iid": <issue iid>, "id": <issue id>, "web_url": <url>}
     """
+    if not new_member_username or not new_member_username.strip():
+        return {"error": "new_member_username is required — cannot generate onboarding pack without a specific username"}
+
+    new_member_username = new_member_username.strip().lstrip("@")
+
     db = _db()
     modules = await db["modules"].find({}, {"_id": 0}).to_list(None)
     contributions = await db["contributions"].find({}, {"_id": 0}).to_list(None)
@@ -500,6 +505,11 @@ async def generate_offboarding_artifact(departing_member_username: str) -> dict:
     Returns:
         {"iid": <issue iid>, "id": <issue id>, "web_url": <url>}
     """
+    if not departing_member_username or not departing_member_username.strip():
+        return {"error": "departing_member_username is required — cannot generate offboarding artifact without a specific username"}
+
+    departing_member_username = departing_member_username.strip().lstrip("@")
+
     db = _db()
     contributions = await db["contributions"].find(
         {"developer_username": departing_member_username, "external": False},
