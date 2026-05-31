@@ -15,6 +15,7 @@ import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 
 import AccountTreeOutlinedIcon from "@mui/icons-material/AccountTreeOutlined";
+import AssignmentOutlinedIcon from "@mui/icons-material/AssignmentOutlined";
 import BarChartOutlinedIcon from "@mui/icons-material/BarChartOutlined";
 import BiotechOutlinedIcon from "@mui/icons-material/BiotechOutlined";
 import BoltOutlinedIcon from "@mui/icons-material/BoltOutlined";
@@ -64,6 +65,7 @@ const NAV_GROUPS: { section: string; items: NavItem[] }[] = [
       { label: "Repository",      href: "/repo",    icon: <FolderOutlinedIcon fontSize="small" /> },
       { label: "Repo History",    href: "/history", icon: <HistoryOutlinedIcon fontSize="small" /> },
       { label: "Knowledge Graph", href: "/graph",   icon: <AccountTreeOutlinedIcon fontSize="small" /> },
+      { label: "Issues",          href: "/issues",  icon: <AssignmentOutlinedIcon fontSize="small" /> },
     ],
   },
 ];

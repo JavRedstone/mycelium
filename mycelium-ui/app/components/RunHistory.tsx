@@ -45,6 +45,12 @@ const STAGE_ICON_EL: Record<string, React.ReactElement> = {
 // Fallback icon for any stage ID not in the map above
 const STAGE_ICON_FALLBACK = <PlayArrowOutlinedIcon sx={{ fontSize: 12 }} />;
 
+/** Return true only for runs using the current DAR-loop pipeline format.
+ *  New-format runs always have at least one stage whose id is decide_N. */
+function isCurrentFormat(run: PipelineRun): boolean {
+  return run.stages.some((s) => /^decide_\d+$/.test(s.id));
+}
+
 /** Derive ordered stage list directly from run data.
  *  Uses the run with the most stages as the canonical order, then appends any
  *  extra stage IDs seen in other runs.  Labels come from the server — no
@@ -168,7 +174,7 @@ export default function RunHistory() {
       const res = await fetch(`${apiUrl}/pipeline/history`);
       if (res.ok) {
         const data = await res.json();
-        setRuns(data.runs ?? []);
+        setRuns((data.runs ?? []).filter(isCurrentFormat));
       }
     } catch {}
   }
@@ -190,6 +196,7 @@ export default function RunHistory() {
     es.onmessage = (e) => {
       try {
         const run = JSON.parse(e.data) as PipelineRun;
+        if (!isCurrentFormat(run)) return;
         // Apply live SSE data immediately so the grid updates during a run.
         setRuns((prev) => {
           const idx = prev.findIndex((r) => r.run_id === run.run_id);
