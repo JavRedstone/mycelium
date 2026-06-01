@@ -811,6 +811,10 @@ class PipelineRunner:
             "member_investigations": len(member_results),
             "module_investigations": len(module_results),
             "drift_investigated": drift_result is not None and drift_result.get("investigated", False),
+            # Full investigation data — stored in stage.output so the UI can display it
+            "members": member_results,
+            "modules": module_results,
+            "drift": drift_result,
         }
 
     async def _run_interpretation(self) -> dict:
@@ -1146,17 +1150,23 @@ class PipelineRunner:
         # Store annotated findings so PERSIST can write causal metadata
         self._interpretation["annotated_findings"] = annotated
 
+        # Deduplicate IID lists: combined issues (e.g. "Documentation & Ownership")
+        # match multiple findings but represent a single GitLab issue — each IID
+        # should appear only once in the confirmed list and count.
+        unique_new_iids       = list(dict.fromkeys(newly_created_iids))
+        unique_pre_exist_iids = list(dict.fromkeys(pre_existing_iids))
+
         self._reflect_result = {
-            "findings_total": len(findings),
-            "findings_actioned": len(newly_created_iids),
-            "findings_pre_existing": len(pre_existing_iids),
-            "findings_unaddressed": len(unaddressed_subjects),
-            "newly_created_iids": newly_created_iids,
-            "unaddressed_subjects": unaddressed_subjects[:10],  # cap for output size
+            "findings_total":        len(findings),
+            "findings_actioned":     len(unique_new_iids),
+            "findings_pre_existing": len(unique_pre_exist_iids),
+            "findings_unaddressed":  len(unaddressed_subjects),
+            "newly_created_iids":    unique_new_iids,
+            "unaddressed_subjects":  unaddressed_subjects[:10],
         }
         logger.info(
             "[reflect] %d actioned, %d pre-existing, %d unaddressed (of %d findings)",
-            len(newly_created_iids), len(pre_existing_iids),
+            len(unique_new_iids), len(unique_pre_exist_iids),
             len(unaddressed_subjects), len(findings),
         )
         return self._reflect_result

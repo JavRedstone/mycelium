@@ -38,7 +38,55 @@ GitLab action kinds available: create_issue, assign_issue, add_comment, edit_iss
 Knowledge graph collections: developers, modules, tasks, contributions
 
 Only plan actions where there is clear evidence from the data. Do not invent data.
-Do not create more than 3-4 new issues per run to avoid noise.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MANDATORY TITLE FORMATS — use these exactly, every run
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Issue titles MUST follow these formats. The prefix is fixed — do not paraphrase,
+reword, or vary it between runs. Consistent titles are required for deduplication.
+
+  knowledge_concentration / sole_contributor:
+    "Knowledge Transfer: [Full Name] for `[module]` module"
+    e.g. "Knowledge Transfer: Alex Chen for `app` module"
+
+  fragile_documentation only:
+    "Documentation: `[module]` module"
+    e.g. "Documentation: `shared` module"
+
+  undeclared_ownership / nominal_ownership only:
+    "Ownership: `[module]` module"
+    e.g. "Ownership: `metrics` module"
+
+  fragile_documentation + undeclared_ownership combined (same module):
+    "Documentation & Ownership: `[module]` module"
+    e.g. "Documentation & Ownership: `metrics` module"
+
+  knowledge_concentration + fragile_documentation combined (same person/module):
+    "Knowledge Transfer & Documentation: [Full Name] for `[module]` module"
+    e.g. "Knowledge Transfer & Documentation: Priya Sharma for `scripts` module"
+
+  upstream_drift:
+    "Upstream Drift: [N] commits behind `[upstream-repo]`"
+    e.g. "Upstream Drift: 26 commits behind `gitlab-org/gitlab-pages`"
+
+  upstream_dominance:
+    "Upstream Dominance: `[module or repository]`"
+    e.g. "Upstream Dominance: `repository`"
+
+  nominal_ownership / undeclared_ownership for CODEOWNERS file itself:
+    "CODEOWNERS: Update ownership for internal modules"
+    (this title is fixed — use it verbatim every run)
+
+  admin_access / sole_contributor for admin role:
+    "Admin Access: [Username] is sole administrator"
+    e.g. "Admin Access: JavRedstone is sole administrator"
+
+  recent_joiner_exposure / onboarding_isolation:
+    Use generate_onboarding_pack — the tool sets the title automatically.
+
+  offboarding_risk / fading_contributor:
+    Use generate_offboarding_artifact — the tool sets the title automatically.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 IDEMPOTENCY - read this before planning anything
@@ -75,11 +123,11 @@ TITLE MUST CONTAIN THE SUBJECT IDENTIFIER
   - This rule is absolute. Titles without the subject identifier will cause duplicates.
 
 LABELS ARE MANDATORY
-  - Every create_issue action MUST include at least one label in the labels array.
+  - Every create_issue action MUST include "continuity" as the first label.
   - Always include the concern_type as a label (e.g. "knowledge_concentration",
     "fragile_documentation", "upstream_drift").
-  - Add topical labels as appropriate: "continuity", "documentation", "security",
-    "ownership", "upstream-drift", "bus_factor", etc.
+  - Add topical labels as appropriate: "documentation", "security", "ownership",
+    "bus_factor", "admin_access", etc.
   - Only use "onboarding" as a label when the issue is specifically about onboarding
     a new team member (concern_type: recent_joiner_exposure or onboarding_isolation).
     Do NOT apply it to documentation, knowledge-transfer, or other issues.
@@ -151,9 +199,14 @@ ISSUE DESCRIPTION QUALITY RULES (apply to ALL create_issue and edit_issue action
 - End with a concrete, ordered action list (1, 2, 3…) referencing actual data.
 
 ONE ISSUE PER MODULE — MANDATORY
-  If a single module has multiple findings (e.g. fragile_documentation AND
-  undeclared_ownership), combine them into ONE issue, not two separate ones.
-  Use a combined title: "Documentation & Ownership: `module` module".
+  If a single module has multiple findings, combine them into ONE issue.
+  Title rules for combined findings:
+    fragile_documentation + undeclared_ownership  → "Documentation & Ownership: `module` module"
+    knowledge_concentration + fragile_documentation → "Knowledge Transfer & Documentation: [Name] for `module` module"
+    upstream_dominance + undeclared_ownership      → "Upstream Dominance: `module`"
+      (the upstream_dominance title absorbs the ownership finding — do NOT create
+       a separate "Ownership: `repository` module" issue when upstream_dominance
+       already exists for the same subject)
   Merge all recommended actions into a single ordered list in the description.
   Creating two issues for the same module is never correct.
 
@@ -166,48 +219,43 @@ KNOWLEDGE TRANSFER ISSUES HAVE HIGHEST PRIORITY
 
 PLANNING GUIDANCE BY CONCERN TYPE:
 
-knowledge_concentration / multi_module_overload / sole_contributor / fading_contributor:
-  ALWAYS create an issue titled "Knowledge Transfer: [Person] for `module` module".
-  The description must:
-  - Name the specific modules/files at risk and why (e.g., "owns 87% of commits
-    to src/auth/ and src/pipeline/ with no other reviewer in the last 6 months").
-  - Name 1-2 specific candidate engineers from the graph who could be cross-trained.
-  - List concrete onboarding steps: which modules to shadow, which MRs to review,
-    which documentation to write.
-  Assign to the sole expert (they are the person who must initiate the transfer).
+knowledge_concentration / multi_module_overload / sole_contributor:
+  Title: see MANDATORY TITLE FORMATS above.
+  Description must name the specific modules at risk, explain why (bus factor,
+  commit concentration), name 1-2 candidate engineers for cross-training, and
+  list concrete onboarding steps (which modules to shadow, which MRs to review,
+  which documentation to write).
+  ONLY file if documentation_state is "sparse" or "missing" — if "adequate" or
+  better, use the plain Knowledge Transfer title (not the combined variant).
+  Assign to the sole expert (they must initiate the transfer).
 
 fragile_documentation:
-  Create an issue to write or update the README/architecture doc for the affected
-  module ONLY if documentation_state is "sparse" or "missing". If the investigator
-  rated it "adequate" or better, do NOT file a documentation issue.
-  Combine with any undeclared_ownership finding for the same module (see above).
-  Reference the investigator's documentation_gaps if present in the evidence.
+  Title: see MANDATORY TITLE FORMATS above.
+  Only file if documentation_state is "sparse" or "missing". If the investigator
+  rated it "adequate" or better, do NOT file.
+  Reference the investigator's documentation_gaps in the description.
+  Combine with undeclared_ownership for the same module (see ONE ISSUE PER MODULE).
 
-upstream_dominance / upstream_drift:
-  upstream_drift: Create an issue whose title MUST begin with "Upstream Drift: "
-    followed by specific details (e.g. "Upstream Drift: 26 commits behind
-    `gitlab-org/gitlab-pages:master`"). The word "Drift" in the title is required
-    for deduplication — never use "Sync", "Lag", or other synonyms.
-    Label as "upstream_drift" (underscore, not hyphen).
-  upstream_dominance: Create an issue whose title MUST begin with "Upstream
-    Dominance: " followed by the subject or module name.
-    Label as "upstream_dominance".
+upstream_drift:
+  Title: see MANDATORY TITLE FORMATS above. Label as "upstream_drift" (underscore).
+  Mention the high_priority_commits the drift investigator flagged.
 
-  For both: mention the high_priority_commits the drift investigator flagged.
+upstream_dominance:
+  Title: see MANDATORY TITLE FORMATS above. Label as "upstream_dominance".
 
 stalled_work:
   Consider commenting on the issue/MR to nudge triage, or reassigning to an
   active member.
 
 undeclared_ownership / nominal_ownership:
-  If combined with a fragile_documentation finding for the same module, merge into
-  one issue (see ONE ISSUE PER MODULE above). If standalone, create an issue
-  proposing CODEOWNERS edits. The description must:
-  - Name every specific path that needs an owner (e.g. `internal/`, `scripts/`).
-  - Name the specific person to assign as owner - use the top internal committer
-    for each path from the knowledge graph. Do not say "starting with X" or
-    "propose candidates" - commit to a specific owner per path.
-  - Include a ready-to-copy CODEOWNERS snippet the team can apply directly.
+  Title: see MANDATORY TITLE FORMATS above.
+  If the CODEOWNERS file itself is the problem (broad wildcard, no granular paths),
+  use the fixed CODEOWNERS title. Description must name every specific path that
+  needs an owner and include a ready-to-copy CODEOWNERS snippet.
+  Combine with fragile_documentation for the same module (see ONE ISSUE PER MODULE).
+
+admin_access / sole_admin:
+  Title: see MANDATORY TITLE FORMATS above. Assign to the sole admin.
 
 ci_instability:
   Consider an issue tagging the most active contributor for the affected area.

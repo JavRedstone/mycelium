@@ -333,7 +333,7 @@ export default function Investigations() {
         const body = await res.json();
         const run: Run | null = body.run;
         if (run) {
-          const stage = run.stages.find((s) => s.id === "investigate");
+          const stage = run.stages.find((s) => s.id === "analyze");
           if (stage?.output) {
             setData(stage.output);
             setLoading(false);
@@ -346,7 +346,7 @@ export default function Investigations() {
         const body = await res.json();
         const runs: Run[] = body.runs || [];
         for (let i = runs.length - 1; i >= 0; i--) {
-          const stage = runs[i].stages.find((s) => s.id === "investigate");
+          const stage = runs[i].stages.find((s) => s.id === "analyze");
           if (stage?.output) {
             setData(stage.output);
             setLoading(false);

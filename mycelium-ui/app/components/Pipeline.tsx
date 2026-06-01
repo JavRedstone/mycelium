@@ -765,14 +765,11 @@ export default function Pipeline() {
           }
         }
         const running = data.stages.find((s) => s.status === "running");
+        const lastStage = data.stages[data.stages.length - 1];
         if (running) {
           setSelectedStage(running.id);
-        } else {
-          setSelectedStage((prev) => {
-            if (prev) return prev;
-            const done = [...data.stages].reverse().find((s) => s.status === "success");
-            return done?.id ?? null;
-          });
+        } else if (lastStage?.status === "success") {
+          setSelectedStage(lastStage.id);
         }
       } catch {}
     };

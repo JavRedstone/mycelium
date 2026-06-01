@@ -125,6 +125,8 @@ Copy `.env.example` to `.env` (or create one) and fill in:
 | `GITLAB_TOKEN` | yes | Service account token (`api` scope) - see **GitLab Service Account** below. |
 | `GITLAB_PROJECT_ID` | yes | Numeric project ID (Settings → General → Project ID). |
 | `GITLAB_BOT_USERNAME` | no | Service account username (default `mycelium-bot`). Change if you chose a different username. |
+| `GITLAB_WEBHOOK_SIGNING_TOKEN` | no | Signing token set in GitLab → Settings → Webhooks. If set, every incoming webhook request is verified via HMAC-SHA256. Leave empty to skip verification (local dev only). |
+| `CORS_ORIGINS` | no | Comma-separated list of allowed CORS origins. Set to `*` in production to allow Vercel and other frontends. Default: `http://localhost:3000,http://127.0.0.1:3000`. |
 | `AGENT_LOOP_INTERVAL_SECONDS` | no | Seconds between autonomous runs (default `300`). |
 | `DEMO_MODE` | no | Set to `true` to include demo-seeded data in agent snapshots and activate the `/demo/seed` endpoint. Default `false` - keep `false` in production. |
 
@@ -294,6 +296,12 @@ Grouped by what they power in the UI. All defined in [`main.py`](main.py).
 | `POST` | `/onboard/{username}` | Generate an onboarding pack for a developer and post it to GitLab. |
 | `POST` | `/offboard/{username}` | Generate an offboarding/handoff artifact for a leaving developer. |
 
+**GitLab webhooks**
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/webhooks/gitlab` | Receives GitLab webhook events and triggers the pipeline. Verifies the HMAC-SHA256 `webhook-signature` header when `GITLAB_WEBHOOK_SIGNING_TOKEN` is set. |
+
 **Demo data (gated by `DEMO_MODE=true`)**
 
 | Method | Path | Description |
@@ -301,6 +309,67 @@ Grouped by what they power in the UI. All defined in [`main.py`](main.py).
 | `GET` | `/graph/demo` | `{"has_demo": bool, "demo_mode": bool}` - both flags drive UI button visibility. |
 | `POST` | `/demo/seed/{scenario}` | Seed `team` / `new_joiner` / `fading` / `sole_owner` / `clear`. Returns `403` if demo mode is disabled. |
 | `DELETE` | `/graph/demo` | Delete every `demo: true` document across collections. Returns `403` if demo mode is disabled. |
+
+---
+
+## GitLab Webhooks
+
+Mycelium can react to repository events in real time rather than waiting for the
+scheduled loop. When a webhook fires, the pipeline runs immediately.
+
+### Setup
+
+**1. Generate a signing token**
+
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+Add it to `mycelium/.env`:
+
+```
+GITLAB_WEBHOOK_SIGNING_TOKEN=<your_generated_token>
+```
+
+**2. Configure the webhook in GitLab**
+
+Go to your GitLab project → **Settings → Webhooks → Add new webhook**:
+
+| Field | Value |
+|---|---|
+| **URL** | `https://<your-cloud-run-url>/webhooks/gitlab` |
+| **Signing token** | The token from step 1 |
+| **Secret token** | Leave blank (signing token is more secure) |
+| **SSL verification** | ✅ Enabled |
+
+Enable these trigger checkboxes:
+
+- ✅ **Push events** — new commits
+- ✅ **Comments** — notes on issues / MRs
+- ✅ **Work item events** — issue created, updated, closed
+- ✅ **Merge request events** — MR opened, merged, closed
+- ✅ **Pipeline events** — CI status changes
+
+Click **Add webhook**, then **Test** to verify the endpoint responds with `{"status":"triggered"}` or `{"status":"ignored"}`.
+
+**3. Redeploy the backend**
+
+```bash
+python deploy.py backend
+```
+
+### How it works
+
+GitLab sends a `POST` to `/webhooks/gitlab` with an HMAC-SHA256 signature in
+the `webhook-signature` header. The backend:
+
+1. Verifies the signature against `GITLAB_WEBHOOK_SIGNING_TOKEN`
+2. Checks the `X-Gitlab-Event` header against the list of trigger events
+3. If the pipeline is idle → starts a run immediately
+4. If the pipeline is already running → logs the event and returns `{"status":"queued"}`
+   (the scheduled loop will pick it up on its next cycle)
+
+Events that trigger a run: `push`, `merge_request`, `issue` / `work_item`, `note` (comments), `member`, `pipeline`.
 
 ---
 

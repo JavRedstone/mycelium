@@ -1,11 +1,14 @@
 ﻿import asyncio
+import base64
+import hashlib
+import hmac
 import json
 import logging
 import threading
 from collections import deque
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header, Request
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
@@ -56,7 +59,11 @@ logging.getLogger("agent").setLevel(logging.DEBUG)
 # can't switch to parameters_json_schema ourselves. Silence INFO from the
 # google namespace so we still see WARNINGs and ERRORs.
 logging.getLogger("google").setLevel(logging.WARNING)
-logging.getLogger().addHandler(_UILogHandler())
+# Guard against duplicate handlers on uvicorn --reload: logging state persists
+# across module reloads, so without this check each reload adds another handler.
+_root_logger = logging.getLogger()
+if not any(isinstance(h, _UILogHandler) for h in _root_logger.handlers):
+    _root_logger.addHandler(_UILogHandler())
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -112,11 +119,12 @@ async def lifespan(_app: FastAPI):  # pyright: ignore[reportUnusedParameter]
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
-app = FastAPI(title="Mycelium - Continuity Engine", lifespan=lifespan)
+app = FastAPI(title="Mycelium - Continuity Engine", lifespan=lifespan, redirect_slashes=False)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=settings.cors_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app" if "*" not in settings.cors_origins else None,
     allow_methods=["GET", "POST", "DELETE", "PUT", "PATCH", "OPTIONS"],
     allow_headers=["*"],
 )
@@ -735,3 +743,95 @@ async def stream_logs():
                 yield {"comment": "keepalive"}
 
     return EventSourceResponse(generator())
+
+
+# ---------------------------------------------------------------------------
+# GitLab webhook receiver
+# ---------------------------------------------------------------------------
+
+# Events that warrant an immediate pipeline run (something changed that
+# Mycelium should analyse and potentially act on).
+# GitLab sends X-Gitlab-Event like "Push Hook", "Merge Request Hook", etc.
+# We strip " hook" and normalise spaces→underscores to get a clean event type.
+_TRIGGER_EVENTS = {
+    "push",
+    "merge_request",
+    "issue",
+    "work_item",      # GitLab renamed "issue" to "work item" in newer versions
+    "note",           # comments on issues / MRs
+    "member",
+    "pipeline",
+}
+
+
+def _verify_gitlab_signature(
+    signing_token: str,
+    webhook_id: str,
+    webhook_timestamp: str,
+    body: bytes,
+    received_signatures: str,
+) -> bool:
+    """Verify a GitLab Standard Webhooks signature.
+
+    GitLab follows the Standard Webhooks spec:
+      - Strip 'whsec_' prefix, base64-decode the remainder to get the raw key.
+      - Compute HMAC-SHA256 over '{webhook_id}.{webhook_timestamp}.{body}'.
+      - Base64-encode the digest and prefix with 'v1,'.
+      - Compare against every space-separated entry in the received signatures.
+    """
+    raw_key = base64.b64decode(signing_token.removeprefix("whsec_"))
+    message = f"{webhook_id}.{webhook_timestamp}.{body.decode('utf-8')}".encode("utf-8")
+    digest  = hmac.new(raw_key, message, hashlib.sha256).digest()
+    expected = "v1," + base64.b64encode(digest).decode("utf-8")
+    return any(
+        hmac.compare_digest(expected, sig)
+        for sig in received_signatures.split(" ")
+    )
+
+
+@app.post("/webhooks/gitlab")
+@app.post("/webhooks/gitlab/")
+async def gitlab_webhook(
+    request: Request,
+    x_gitlab_event:    str | None = Header(default=None),
+    webhook_id:        str | None = Header(default=None),
+    webhook_timestamp: str | None = Header(default=None),
+    webhook_signature: str | None = Header(default=None),
+):
+    """Receive GitLab webhook events and trigger the pipeline when relevant.
+
+    Configure in GitLab: Settings → Webhooks
+      URL:           <this endpoint>
+      Signing token: set the same whsec_... value in GITLAB_WEBHOOK_SIGNING_TOKEN env var
+    """
+    body = await request.body()
+
+    if settings.gitlab_webhook_signing_token:
+        if not webhook_signature:
+            raise HTTPException(status_code=401, detail="Missing webhook-signature header")
+        if not webhook_id or not webhook_timestamp:
+            raise HTTPException(status_code=401, detail="Missing webhook-id or webhook-timestamp header")
+        if not _verify_gitlab_signature(
+            settings.gitlab_webhook_signing_token,
+            webhook_id,
+            webhook_timestamp,
+            body,
+            webhook_signature,
+        ):
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    event_type = (x_gitlab_event or "").lower().replace(" hook", "").replace(" ", "_").strip()
+    payload = json.loads(body) if body else {}
+
+    log.info("[webhook] GitLab event received: %s", x_gitlab_event)
+
+    if event_type not in _TRIGGER_EVENTS:
+        return {"status": "ignored", "event": event_type}
+
+    if pipeline.is_running:
+        log.info("[webhook] Pipeline already running — queuing event %s", event_type)
+        return {"status": "queued", "event": event_type}
+
+    asyncio.create_task(pipeline.run())
+    log.info("[webhook] Pipeline triggered by GitLab event: %s", x_gitlab_event)
+    return {"status": "triggered", "event": event_type}

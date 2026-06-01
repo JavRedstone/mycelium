@@ -104,7 +104,7 @@ export default function AgentLog({ height = 320 }: { height?: number }) {
             </Typography>
           ) : (
             entries.map((entry, idx) => {
-              const isRunStart = entry.msg.includes("[pipeline] Observe Repo started");
+              const isRunStart = entry.msg.includes("[pipeline] Observe") && entry.msg.includes("started");
               const isFirstEntry = idx === 0;
               return (
                 <Box key={entry._clientKey}>

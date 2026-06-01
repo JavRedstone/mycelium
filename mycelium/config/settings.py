@@ -34,6 +34,20 @@ class Settings:
     demo_mode: bool = os.getenv("DEMO_MODE", "false").lower() in ("1", "true", "yes")
     gitlab_bot_username: str = os.getenv("GITLAB_BOT_USERNAME", "mycelium-bot")
 
+    # GitLab webhook signing token — must match the "Signing token" set in
+    # GitLab → Settings → Webhooks. Stored with the whsec_ prefix exactly as
+    # GitLab generates it. Leave empty to skip verification (local dev only).
+    gitlab_webhook_signing_token: str = os.getenv("GITLAB_WEBHOOK_SIGNING_TOKEN", "")
+
+    # CORS — comma-separated list of allowed origins.
+    # Set to "*" in production (Cloud Run) to allow Vercel and other frontends.
+    # Defaults to localhost for local dev.
+    cors_origins: list[str] = [
+        o.strip()
+        for o in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
+        if o.strip()
+    ]
+
 
 settings = Settings()
 
