@@ -22,7 +22,6 @@ import BoltOutlinedIcon from "@mui/icons-material/BoltOutlined";
 import ChatOutlinedIcon from "@mui/icons-material/ChatOutlined";
 import FolderOutlinedIcon from "@mui/icons-material/FolderOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
-import HubOutlinedIcon from "@mui/icons-material/HubOutlined";
 import PlayArrowOutlinedIcon from "@mui/icons-material/PlayArrowOutlined";
 import ScienceOutlinedIcon from "@mui/icons-material/ScienceOutlined";
 import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
@@ -338,7 +337,8 @@ export default function Sidebar() {
     >
       {/* Branding */}
       <Box sx={{ px: 2.5, py: 2, display: "flex", alignItems: "center", gap: 1.5 }}>
-        <HubOutlinedIcon sx={{ color: "primary.main", fontSize: 22, flexShrink: 0 }} />
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/mycelium.svg" alt="Mycelium logo" style={{ width: 48, height: 48, flexShrink: 0 }} />
         <Box>
           <Typography variant="subtitle2" color="text.primary" sx={{ fontWeight: 700, letterSpacing: -0.3, lineHeight: 1.2 }}>
             Mycelium
