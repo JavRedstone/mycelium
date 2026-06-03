@@ -1,9 +1,9 @@
-﻿# Continuity Engine (Mycelium)
+﻿# Mycelium
 GitLab Track
 
 ## What this is
 
-Continuity Engine is an autonomous agent system that prevents engineering knowledge loss as teams and codebases evolve.
+Mycelium is a an autonomous agent system that prevents engineering knowledge loss as teams and codebases evolve.
 
 It continuously models:
 - who understands what in a codebase (inferred, not declared)
@@ -14,7 +14,7 @@ Then it acts directly inside GitLab to stabilize it.
 
 Core loop:
 
-**Observe → Infer → Decide → Act → Learn**
+**Observe → Model → Analyze → Decide → Act → Reflect → Persist → Summary**
 
 ---
 
@@ -36,7 +36,7 @@ In reality it is:
 - shifting
 - unevenly distributed
 
-Continuity Engine treats engineering knowledge as a **dynamic system property**, not documentation.
+Mycelium treats engineering knowledge as a **dynamic system property**, not documentation.
 
 ---
 
@@ -278,17 +278,26 @@ This is where reasoning becomes system change.
 
 ---
 
-## System loop
+## Pipeline stages
 
-1. Pull repository + activity state
-2. Update graph memory
-3. Infer ownership and expertise structure
-4. Spawn investigative subagents
-5. Reason over findings
-6. Select interventions
-7. Execute actions inside GitLab
-8. Observe resulting state changes
-9. Repeat continuously
+Each run executes 8 stages. Stages 4–6 (Decide → Act → Reflect) repeat as a
+stabilization loop until all findings are addressed or further passes stop making
+progress.
+
+| Stage | What happens |
+|---|---|
+| **Observe** | Parallel state capture: GitLab snapshot + MongoDB graph state + baseline issue/MR list |
+| **Model** | Walk top-level directories; build per-module contributor map; infer ownership |
+| **Analyze** | Spawn concurrent investigator subagents (member, module, drift); synthesize findings |
+| **Decide** | Planner selects a bounded, deduplicated intervention set; pre-filters already-covered subjects |
+| **Act** | Act agent executes GitLab mutations via Mycelium MCP (issues, MR annotations, artifacts) |
+| **Reflect** | Re-fetch GitLab state; diff against Observe baseline; annotate findings with causal metadata |
+| **Persist** | Write annotated findings, updated graph, bus-factor measurements, and action log to MongoDB |
+| **Summary** | Compile cycle outcome: structural changes, verified interventions, key metrics |
+
+The DAR loop (Decide → Act → Reflect) runs up to 5 passes by default, stopping
+early when all findings are addressed or when consecutive passes stop making progress.
+Configurable at runtime via `PATCH /config`.
 
 ---
 
@@ -389,10 +398,12 @@ No aggregate continuity score exists.
 
 ## Architecture
 
-- Reasoning: Gemini
-- Memory: MongoDB knowledge graph
-- Execution: GitLab MCP
-- Orchestration: Google Cloud Agent Runtime
+- Reasoning: Gemini (via Vertex AI / ADK)
+- Memory: MongoDB knowledge graph (Motor async driver)
+- Execution: GitLab MCP (Mycelium MCP + official GitLab MCP + official MongoDB MCP)
+- Orchestration: Vertex AI Agent Engine (AdkApp runtime)
+- API: FastAPI with SSE streaming (pipeline events + activity feed + log stream)
+- Trigger: GitLab webhooks (push, MR, issue, member, pipeline events → auto-run)
 
 ---
 
@@ -518,26 +529,24 @@ It is:
 
 ## Demo narrative
 
-1. Initial state:
-   - fragmented ownership
-   - stale documentation
-   - implicit subsystem knowledge
+1. **Initial state** — seed the graph (`POST /demo/seed/team`): fragmented ownership,
+   stale documentation, one inactive sole maintainer, one new joiner with no context.
 
-2. Onboarding:
-   - system synthesizes context pack
-   - assigns meaningful starter work
+2. **Trigger** — `POST /pipeline/run` or click "Run Pipeline" in the UI.
 
-3. Investigation:
-   - agent identifies fragile ownership structures
+3. **Observe → Model** — GitLab snapshot + contributor map built.
 
-4. Offboarding:
-   - implicit knowledge extracted into handoff artifacts
-   - ownership redistributed
+4. **Analyze** — member, module, and drift investigator subagents spawn concurrently;
+   analyst synthesizes qualitative findings.
 
-5. Stabilized state:
-   - improved knowledge distribution
-   - preserved continuity
-   - reduced dependency on single individuals
+5. **Decide → Act → Reflect** — planner selects interventions; act agent writes into
+   GitLab (issues, onboarding packs, handoff artifacts); reflect confirms what materialized.
+   Loop repeats until all findings are addressed.
+
+6. **Persist → Summary** — graph updated; action log written; cycle outcome reported.
+
+7. **Result** — GitLab issues surface the fragile ownership; onboarding pack generated
+   for the new engineer; stale superseded issues closed automatically.
 
 For a full video demo script with seed commands, split-screen recording setup,
 voiceover guide, and "before/after" slide content, see [`DEMO.md`](DEMO.md).

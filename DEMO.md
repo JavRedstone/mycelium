@@ -29,11 +29,11 @@ Statement:
 Split screen: UI + terminal
 
 ```bash
-python -m scripts.seed_scenarios team
+curl -X POST http://localhost:8000/demo/seed/team
 curl -X POST http://localhost:8000/pipeline/run
-````
+```
 
-Or click “Run Pipeline”.
+Or click “Seed Team” then “Run Pipeline” in the UI.
 
 No narration during execution start.
 
@@ -43,35 +43,40 @@ No narration during execution start.
 
 Screen: Activity Feed (left), GitLab Issues (right)
 
-Pipeline stages:
+Pipeline stages (in order):
 
-* observe_repo
-* map_modules
-* investigate
-* analyze
-* plan
-* act
+* **observe** — parallel GitLab + MongoDB state capture
+* **model** — per-module contributor map built
+* **analyze** — investigator subagents spawn concurrently (member, module, drift); analyst synthesizes
+* **decide** — planner selects and deduplicates interventions
+* **act** — act agent writes into GitLab via MCP
+* **reflect** — reconcile actual GitLab state against what was planned
+* **persist** — graph + findings + action log saved to MongoDB
+* **summary** — cycle outcome compiled
+
+The decide → act → reflect loop repeats (up to 5 passes) until all findings are addressed.
 
 Minimal narration only at transitions:
 
-**During observe / map**
+**During observe / model**
 
 > “Reading repository state.”
 
-**During investigate**
-
-> “Inspecting code modules and contribution history.”
-
 **During analyze**
-(no commentary)
 
-**During plan**
+> “Investigating code modules, contributor patterns, and upstream drift.”
 
-> “Deciding whether action is needed.”
+**During decide**
+
+> “Selecting interventions.”
 
 **During act**
 
 > “Writing into GitLab.”
+
+**During reflect / persist / summary**
+
+(no commentary — let the UI show the green stages)
 
 ---
 
