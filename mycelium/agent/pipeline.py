@@ -29,6 +29,30 @@ def _parse_iso_dt(s: str | None) -> datetime | None:
         return None
 
 
+# Canonical title prefixes produced by the planner (lowercase).
+# Any bot issue whose title does NOT start with one of these is considered
+# non-canonical (e.g. old-format or seeded demo issues) and will NOT count
+# as "covering" a finding during deduplication, allowing the planner to
+# create a properly-formatted replacement which will then supersede it.
+_CANONICAL_PREFIXES = (
+    "knowledge transfer",
+    "documentation",
+    "ownership",
+    "upstream drift",
+    "upstream dominance",
+    "codeowners",
+    "admin access",
+    "onboarding pack",
+    "offboarding",
+)
+
+
+def _is_canonical_title(title: str) -> bool:
+    """Return True if the issue title was produced by the planner (canonical format)."""
+    t = title.lower().strip()
+    return any(t.startswith(p) for p in _CANONICAL_PREFIXES)
+
+
 def _subject_matches_title(subject: str, title_lower: str) -> bool:
     """Return True if a finding subject is represented in an issue title.
 
@@ -866,7 +890,12 @@ class PipelineRunner:
             if not subject:
                 continue
             for iss in issues:
-                if _subject_matches_title(subject, iss.get("title", "").lower()):
+                title = iss.get("title", "")
+                # Only canonical-format issues count as covering a finding.
+                # Non-canonical issues (wrong prefix, seeded stale issues) are
+                # ignored here so the planner can create a proper replacement,
+                # which will then supersede and close the non-canonical one.
+                if _is_canonical_title(title) and _subject_matches_title(subject, title.lower()):
                     covered.add(subject)
                     break
         return covered

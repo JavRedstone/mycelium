@@ -55,6 +55,12 @@ export default function AgentLog({ height = 320 }: { height?: number }) {
         const entry = JSON.parse(e.data) as LogEntry;
         const _clientKey = keyRef.current++;
         setEntries((prev) => [...prev.slice(-499), { ...entry, _clientKey }]);
+        // Keep the log pinned to the bottom as new entries arrive
+        requestAnimationFrame(() => {
+          if (containerRef.current) {
+            containerRef.current.scrollTop = containerRef.current.scrollHeight;
+          }
+        });
       } catch {}
     };
     return () => es.close();
@@ -69,14 +75,9 @@ export default function AgentLog({ height = 320 }: { height?: number }) {
   return (
     <Stack spacing={2}>
       <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "center" }}>
-        <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-          <Typography variant="subtitle2" color="text.secondary">
-            Agent Log
-          </Typography>
-          <Typography variant="caption" color="text.disabled">
-            {entries.length} entries
-          </Typography>
-        </Stack>
+        <Typography variant="subtitle2" color="text.secondary">
+          Agent Log
+        </Typography>
         <Tooltip title="Scroll to latest" placement="left" arrow>
           <IconButton size="small" onClick={scrollToBottom} sx={{ p: 0.5, color: "primary.main" }}>
             <KeyboardArrowDownIcon sx={{ fontSize: 16 }} />

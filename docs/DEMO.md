@@ -112,6 +112,21 @@ Brief scroll through: team map, module ownership, starter tasks.
 
 ---
 
+---
+
+## Appendix — Stale issue seeding
+
+The Config page has a **Seed stale issues** button (Demo Mode section) that creates two deliberately outdated GitLab issues:
+
+| Title | Why it is stale |
+|---|---|
+| `Knowledge concentration: priya.sharma owns scripts/ exclusively` | Wrong title format — the pipeline uses the canonical prefix `Knowledge Transfer:` (or `Knowledge Transfer & Documentation:`). Any issue that doesn't start with a recognised canonical prefix is treated as non-canonical and will be superseded by a properly-titled replacement on the next run. |
+| `Recent joiner exposure: marco.torres has no onboarding pair` | Wrong title format — the pipeline uses `generate_onboarding_pack` which produces a structured issue titled `Onboarding Pack: marco.torres`. The non-canonical "Recent joiner exposure:" prefix marks it as a legacy issue. |
+
+When the pipeline runs after seeding, it detects that neither title matches a canonical format, ignores them during deduplication, creates proper replacements, and then closes the originals with a "superseded by #NNN" comment — demonstrating the stale-issue cleanup flow end-to-end.
+
+---
+
 ## 7. Closing (10s)
 
 > "The system converts repository activity into continuous operational awareness — and writes actions directly into GitLab."
