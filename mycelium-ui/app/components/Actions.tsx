@@ -72,11 +72,17 @@ function formatRunId(runId: string): string {
 }
 
 function formatTs(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleString(undefined, {
-    month: "short", day: "numeric",
-    hour: "2-digit", minute: "2-digit",
-  });
+  // Force UTC parsing — backend stores in UTC but may omit the Z suffix,
+  // which causes browsers to misinterpret the string as local time.
+  const utc = iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z";
+  const ts = Math.floor(new Date(utc).getTime() / 1000);
+  if (isNaN(ts)) return iso;
+  const diff = Math.floor(Date.now() / 1000 - ts);
+  if (diff < 5)   return "just now";
+  if (diff < 60)  return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
 }
 
 // ---------------------------------------------------------------------------

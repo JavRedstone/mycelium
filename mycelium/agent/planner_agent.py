@@ -144,11 +144,14 @@ COMMENTING ON ISSUES
       3. You can name the specific new fact in the comment body.
   - If you cannot point to a specific new fact, omit the add_comment action.
 
-EMPTY PLANS ARE CORRECT
-  - After the initial issues are filed, most runs should produce
-    {"actions": [], "graph_updates": []}. That is the right and expected outcome.
-  - Do not force actions to justify a pipeline run. Silence is correct when
-    nothing has materially changed since the last run.
+EMPTY PLANS ARE CORRECT — but only when findings list is empty
+  - If interpretation.findings is empty, return {"actions": [], "graph_updates": []}.
+  - If interpretation.findings is non-empty, every finding in the list has already
+    been checked by the pipeline and is guaranteed to have NO matching open issue.
+    Do NOT re-check repository.open_issues for duplicates — that check is done in
+    code before this call. Every non-empty findings list requires at least one action
+    unless the action type is genuinely inapplicable (e.g. no named username for
+    generate_onboarding_pack). Do not return an empty plan for a non-empty findings list.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ISSUE CORRECTION DECISION TREE
@@ -391,6 +394,7 @@ def plan(
     repo_snapshot: dict,
     graph_snapshot: dict,
     prior_interventions: dict | None = None,
+    max_issues: int = 0,
 ) -> dict:
     """Build a remediation plan from the analyst's findings.
 
@@ -411,6 +415,21 @@ def plan(
         if settings.demo_mode and graph_snapshot.get("demo_data_present")
         else ""
     )
+    n_findings = len((interpretation or {}).get("findings", []))
+    limit_note = (
+        f" Produce at most {max_issues} create_issue action(s) this pass — "
+        f"prioritise knowledge_concentration and upstream_drift findings first, "
+        f"drop lower-priority findings if you exceed the cap."
+    ) if max_issues > 0 else ""
+    prefilter_note = (
+        f"\n\nPRE-FILTER APPLIED: The {n_findings} finding(s) in interpretation.findings "
+        f"have already been checked against all open GitLab issues in code. Each one is "
+        f"confirmed to have NO matching open issue. Do NOT re-check repository.open_issues "
+        f"for duplicates — that work is done. You MUST plan an action for every finding "
+        f"unless the action type is genuinely inapplicable (e.g. no named username for "
+        f"generate_onboarding_pack).{limit_note} Returning an empty plan for a non-empty findings list "
+        f"is incorrect."
+    ) if n_findings > 0 else "\n\nFindings list is empty — return {{\"actions\": [], \"graph_updates\": []}}."
     pass_note = ""
     if prior_interventions:
         iteration     = prior_interventions.get("iteration", "?")
@@ -430,7 +449,7 @@ def plan(
             f"return {{\"actions\": [], \"graph_updates\": []}}."
         )
     prompt = (
-        f"Context:\n{json.dumps(context, indent=2, default=str)}{demo_note}{pass_note}\n\n"
+        f"Context:\n{json.dumps(context, indent=2, default=str)}{demo_note}{prefilter_note}{pass_note}\n\n"
         "Return ONLY a JSON object matching the schema in your instructions."
     )
 
@@ -456,5 +475,6 @@ async def plan_async(
     repo_snapshot: dict,
     graph_snapshot: dict,
     prior_interventions: dict | None = None,
+    max_issues: int = 0,
 ) -> dict:
-    return await asyncio.to_thread(plan, interpretation, repo_snapshot, graph_snapshot, prior_interventions)
+    return await asyncio.to_thread(plan, interpretation, repo_snapshot, graph_snapshot, prior_interventions, max_issues)

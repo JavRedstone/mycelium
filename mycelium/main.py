@@ -83,6 +83,7 @@ RUNTIME_DEFAULTS: dict = {
     "loop_interval_seconds": 600,
     "analyst_max_investigators": 10,
     "act_max_stabilization_passes": 5,
+    "act_max_issues_per_pass": 5,
 }
 
 
@@ -156,6 +157,7 @@ class _RuntimeConfigPatch(BaseModel):
     loop_interval_seconds: int | None = None
     analyst_max_investigators: int | None = None
     act_max_stabilization_passes: int | None = None
+    act_max_issues_per_pass: int | None = None
 
 
 @app.patch("/config")
@@ -170,6 +172,8 @@ async def patch_config(body: _RuntimeConfigPatch):
         patch["analyst_max_investigators"] = max(1, min(20, body.analyst_max_investigators))
     if body.act_max_stabilization_passes is not None:
         patch["act_max_stabilization_passes"] = max(1, min(10, body.act_max_stabilization_passes))
+    if body.act_max_issues_per_pass is not None:
+        patch["act_max_issues_per_pass"] = max(1, min(20, body.act_max_issues_per_pass))
     if patch:
         await graph.set_runtime_config(patch)
     return await _get_runtime_cfg()
@@ -827,6 +831,17 @@ async def gitlab_webhook(
 
     if event_type not in _TRIGGER_EVENTS:
         return {"status": "ignored", "event": event_type}
+
+    # Ignore events triggered by the bot itself — otherwise every issue the
+    # bot creates fires a webhook that re-triggers the pipeline.
+    actor = (
+        payload.get("user", {}).get("username")
+        or payload.get("user_username")
+        or ""
+    )
+    if actor and actor.lower() == settings.gitlab_bot_username.lower():
+        log.info("[webhook] Ignoring %s event from bot account '%s'", event_type, actor)
+        return {"status": "ignored", "reason": "bot_actor", "event": event_type}
 
     if pipeline.is_running:
         log.info("[webhook] Pipeline already running — queuing event %s", event_type)

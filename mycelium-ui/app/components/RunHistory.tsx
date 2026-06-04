@@ -45,6 +45,12 @@ const STAGE_ICON_EL: Record<string, React.ReactElement> = {
 // Fallback icon for any stage ID not in the map above
 const STAGE_ICON_FALLBACK = <PlayArrowOutlinedIcon sx={{ fontSize: 12 }} />;
 
+/** Returns the DAR loop iteration number for decide_N / act_N / reflect_N, otherwise null. */
+function darLoopNum(stageId: string): number | null {
+  const m = stageId.match(/^(decide|act|reflect)_(\d+)$/);
+  return m ? parseInt(m[2], 10) : null;
+}
+
 /** Return true only for runs using the current DAR-loop pipeline format.
  *  New-format runs always have at least one stage whose id is decide_N. */
 function isCurrentFormat(run: PipelineRun): boolean {
@@ -125,7 +131,7 @@ function runDurationMs(run: PipelineRun): number | null {
   return total > 0 ? total : null;
 }
 
-function GridCell({ status, duration_ms, error }: { status: StageStatus; duration_ms: number | null; error: string | null }) {
+function GridCell({ status, duration_ms, error, label }: { status: StageStatus; duration_ms: number | null; error: string | null; label?: string }) {
   const tooltipContent = status === "outdated" ? (
     <Stack spacing={0.25}>
       <Typography variant="caption" sx={{ fontWeight: 600, color: "text.disabled" }}>n/a</Typography>
@@ -149,15 +155,30 @@ function GridCell({ status, duration_ms, error }: { status: StageStatus; duratio
           bgcolor: CELL_BG[status] ?? "rgba(255,255,255,0.05)",
           flexShrink: 0,
           cursor: "default",
-          // Outdated cells get a subtle dashed border instead of a fill,
-          // making them visually distinct from both "skipped" and empty.
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
           ...(status === "outdated" && {
             bgcolor: "transparent",
             border: "1px dashed rgba(148,163,184,0.2)",
           }),
           "&:hover": { opacity: 0.75 },
         }}
-      />
+      >
+        {label && (
+          <Typography sx={{
+            fontSize: "0.5rem",
+            fontWeight: 700,
+            lineHeight: 1,
+            userSelect: "none",
+            color: (status === "pending" || status === "skipped" || status === "outdated")
+              ? "rgba(255,255,255,0.3)"
+              : "rgba(255,255,255,0.9)",
+          }}>
+            {label}
+          </Typography>
+        )}
+      </Box>
     </Tooltip>
   );
 }
@@ -246,9 +267,22 @@ export default function RunHistory() {
       : 0;
 
   const rateColor = successRate >= 80 ? "success.main" : successRate >= 50 ? "warning.main" : "error.main";
-  // Canonical stage list from the backend is authoritative.
-  // Falls back to deriving from run data while the API response is in flight.
-  const stagesPresent = canonicalStages ?? deriveStages(sorted);
+  // Canonical stage list is the authoritative row set. DAR stages (decide_N,
+  // act_N, reflect_N) are collapsed into single rows: the cell shows the status
+  // of the LAST pass that ran and the pass count as its label, so the number
+  // updates live as the pipeline iterates without duplicating rows.
+  const stagesPresent = (() => {
+    const all = canonicalStages ?? deriveStages(sorted);
+    // Deduplicate: keep only the first occurrence of each DAR base name
+    const darSeen = new Set<string>();
+    return all.filter((s) => {
+      const base = s.id.replace(/_\d+$/, "");
+      if (!["decide", "act", "reflect"].includes(base)) return true;
+      if (darSeen.has(base)) return false;
+      darSeen.add(base);
+      return true;
+    });
+  })();
 
   // Track date boundaries for grouping labels
   const dateLabels: Record<number, string> = {};
@@ -384,17 +418,42 @@ export default function RunHistory() {
 
                 {/* Grid cells */}
                 {sorted.map((run) => {
-                  const stage = run.stages.find((s) => s.id === stageId);
-                  // Stage exists in canonical pipeline but wasn't present in this
-                  // (older) run → mark as "outdated" (predates this stage) rather
-                  // than "skipped" (which the pipeline chose at runtime).
-                  const effective = stage ?? (canonicalStages
-                    ? { status: "outdated" as StageStatus, duration_ms: null, error: null }
-                    : null);
+                  // For DAR stages, aggregate all passes and use the last one's status.
+                  // The label shows the pass count so it updates as the loop iterates.
+                  const base = stageId.replace(/_\d+$/, "");
+                  const isDar = ["decide", "act", "reflect"].includes(base);
+
+                  let effective: { status: string; duration_ms: number | null; error: string | null } | null = null;
+                  let cellLabel: string | undefined;
+
+                  if (isDar) {
+                    const passes = run.stages
+                      .filter((s) => new RegExp(`^${base}_\\d+$`).test(s.id))
+                      .sort((a, b) => (darLoopNum(a.id) ?? 0) - (darLoopNum(b.id) ?? 0));
+                    if (passes.length > 0) {
+                      effective = passes[passes.length - 1];
+                      cellLabel = String(passes.length);
+                    } else {
+                      effective = canonicalStages
+                        ? { status: "outdated" as StageStatus, duration_ms: null, error: null }
+                        : null;
+                    }
+                  } else {
+                    const stage = run.stages.find((s) => s.id === stageId);
+                    effective = stage ?? (canonicalStages
+                      ? { status: "outdated" as StageStatus, duration_ms: null, error: null }
+                      : null);
+                  }
+
                   return (
                     <Box key={run.run_id} sx={{ width: COL_W, flexShrink: 0, display: "flex", justifyContent: "center" }}>
                       {effective ? (
-                        <GridCell status={effective.status as StageStatus} duration_ms={effective.duration_ms} error={effective.error} />
+                        <GridCell
+                          status={effective.status as StageStatus}
+                          duration_ms={effective.duration_ms}
+                          error={(effective as { error?: string | null }).error ?? null}
+                          label={cellLabel}
+                        />
                       ) : (
                         <Box sx={{ width: COL_W - 8, height: 18, borderRadius: 0.5, bgcolor: "rgba(255,255,255,0.02)" }} />
                       )}

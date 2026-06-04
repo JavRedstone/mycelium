@@ -241,6 +241,7 @@ class PipelineRunner:
             # so the old rampant-agent risk is gone.  Raise via MongoDB settings
             # {"_id":"runtime","act_max_stabilization_passes":N} to increase.
             MAX_DAR_PASSES = max(1, min(10, int(cfg.get("act_max_stabilization_passes", 5))))
+            self._max_issues_per_pass = max(1, min(20, int(cfg.get("act_max_issues_per_pass", 5))))
 
             # Snapshot bot issues before the first pass (used for stale-close after loop)
             pre_loop_issues: list[dict] = []
@@ -918,7 +919,7 @@ class PipelineRunner:
 
         self._plan = await asyncio.to_thread(
             planner_agent.plan, interpretation, self._repo, self._graph_data,
-            prior_interventions,
+            prior_interventions, getattr(self, "_max_issues_per_pass", 0),
         )
 
         # Secondary dedup: title-substring check catches anything the subject
@@ -945,6 +946,16 @@ class PipelineRunner:
                 filtered.append(action)
             if deduped:
                 self._plan["actions"] = filtered
+
+        # Hard cap: trim to max_issues_per_pass after all deduplication is done.
+        max_per_pass = getattr(self, "_max_issues_per_pass", 0)
+        if max_per_pass > 0:
+            actions_all = self._plan.get("actions", [])
+            if len(actions_all) > max_per_pass:
+                trimmed = len(actions_all) - max_per_pass
+                self._plan["actions"] = actions_all[:max_per_pass]
+                logger.info("[decide] Pass %d: capped to %d actions (%d trimmed by max_issues_per_pass)",
+                            pass_num, max_per_pass, trimmed)
 
         for action in self._plan.get("actions", []):
             params = action.get("params") or {}
@@ -1156,10 +1167,16 @@ class PipelineRunner:
         unique_new_iids       = list(dict.fromkeys(newly_created_iids))
         unique_pre_exist_iids = list(dict.fromkeys(pre_existing_iids))
 
+        # Count findings (not unique IIDs) so the numbers always sum to findings_total.
+        # A combined issue (e.g. "Documentation & Ownership") covers multiple findings
+        # but has a single IID; counting unique IIDs would undercount.
+        n_actioned    = sum(1 for a in annotated if a.get("actioned_at") is not None)
+        n_pre_existing = sum(1 for a in annotated if a.get("pre_existing"))
+
         self._reflect_result = {
             "findings_total":        len(findings),
-            "findings_actioned":     len(unique_new_iids),
-            "findings_pre_existing": len(unique_pre_exist_iids),
+            "findings_actioned":     n_actioned,
+            "findings_pre_existing": n_pre_existing,
             "findings_unaddressed":  len(unaddressed_subjects),
             "newly_created_iids":    unique_new_iids,
             "unaddressed_subjects":  unaddressed_subjects[:10],
