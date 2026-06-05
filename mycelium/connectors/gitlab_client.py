@@ -846,53 +846,35 @@ class GitLabClient:
         self.close_issue(issue_iid=issue_iid)
 
     def seed_stale_demo_issues(self) -> list[dict]:
-        """Create sample 'outdated' bot issues for demo purposes.
+        """Create a sample 'outdated' bot issue for demo purposes.
 
-        These issues are intentionally stale - they describe findings from a
-        hypothetical prior run. The next pipeline run will detect that their
-        subjects are no longer present (or are superseded) and close them
-        automatically, demonstrating the stale-issue cleanup flow.
+        This issue describes findings from a hypothetical prior run. The next
+        pipeline run will detect that its subject is no longer present in the
+        current findings and close it automatically, demonstrating the
+        stale-issue cleanup flow.
 
         Returns a list of created issue dicts (iid, title, web_url).
         """
         stale_templates = [
             {
-                "title": "Knowledge concentration: priya.sharma owns scripts/ exclusively",
+                "title": "Upstream Drift: 14 commits behind `gitlab-org/gitlab-pages`",
                 "description": (
-                    "## Knowledge Concentration — `scripts/`\n\n"
-                    "**Subject:** priya.sharma\n\n"
-                    "priya.sharma is the sole internal author of the `scripts/` directory, "
-                    "accounting for 100% of commits over the past year. No other team member "
-                    "has modified these files. The module contains deployment automation and "
-                    "release tooling that is exercised on every production push.\n\n"
-                    "**Risk:** If priya.sharma is unavailable, no one else can safely modify "
-                    "or debug this module. There is no documented handoff path and no secondary "
-                    "reviewer on any of the recent MRs touching this directory.\n\n"
-                    "**Recommended actions**\n"
-                    "- Identify a second contributor to shadow the next change to `scripts/`\n"
-                    "- Add inline documentation to the least-documented entry points\n"
-                    "- Designate a CODEOWNERS entry so MRs require a second reviewer\n"
+                    "## Upstream Drift — `gitlab-org/gitlab-pages`\n\n"
+                    "**Analysis period:** March 15 – May 12, 2026  \n"
+                    "**Commits behind upstream:** 14\n\n"
+                    "The fork is currently 14 commits behind `gitlab-org/gitlab-pages:master`. "
+                    "The drift investigator flagged two commits as high-priority:\n\n"
+                    "- `3a8f021` — fix: sanitise redirect URL to prevent open-redirect (security)\n"
+                    "- `c17d409` — fix: handle 404 for custom domains under heavy load (reliability)\n\n"
+                    "The remaining 12 commits are documentation updates and minor CI changes "
+                    "that carry lower urgency but should be merged before the gap widens further.\n\n"
+                    "**Actions**\n"
+                    "1. Cherry-pick `3a8f021` and `c17d409` immediately — security and "
+                    "reliability fixes should not wait for a full sync\n"
+                    "2. Open an MR to sync the remaining 12 commits from upstream master\n"
+                    "3. Add a scheduled monthly upstream-sync task to prevent future drift\n"
                 ),
-                "labels": ["mycelium", "continuity-risk"],
-            },
-            {
-                "title": "Recent joiner exposure: marco.torres has no onboarding pair",
-                "description": (
-                    "## Recent Joiner — Knowledge Transfer Gap\n\n"
-                    "**Subject:** marco.torres\n\n"
-                    "marco.torres joined the project within the last 30 days. Commit history "
-                    "shows activity limited to a single branch; no MRs have been approved by "
-                    "a module owner in the areas marco is working in (`api/`, `auth/`). "
-                    "There is no CODEOWNERS entry or designated reviewer pairing in place.\n\n"
-                    "**Risk:** Without a knowledge-transfer pairing, marco may develop "
-                    "incorrect assumptions about module boundaries and review conventions, "
-                    "increasing the likelihood of knowledge silos forming early.\n\n"
-                    "**Recommended actions**\n"
-                    "- Pair marco.torres with the primary owner of `api/` for the next two MRs\n"
-                    "- Generate an onboarding pack covering ownership map and key contacts\n"
-                    "- Schedule a walkthrough of the auth module before the next sprint\n"
-                ),
-                "labels": ["mycelium", "onboarding"],
+                "labels": ["continuity", "upstream_drift", "maintenance", "security"],
             },
         ]
         created = []

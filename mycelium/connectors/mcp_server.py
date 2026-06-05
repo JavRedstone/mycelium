@@ -484,7 +484,7 @@ async def generate_onboarding_pack(new_member_username: str) -> dict:
         return client.create_issue(
             title=f"Onboarding: {new_member_username}",
             description=body,
-            labels=["onboarding", "mycelium"],
+            labels=["continuity", "onboarding", "mycelium"],
         )
 
     return await asyncio.to_thread(_create)
@@ -516,10 +516,21 @@ async def generate_offboarding_artifact(departing_member_username: str) -> dict:
         {"_id": 0},
     ).sort("expertise_score", -1).to_list(None)
 
-    recent_findings = await db["findings"].find(
+    # Fetch recent findings and deduplicate by concern_type — multiple pipeline
+    # runs produce identical findings, keep only the newest per type.
+    _raw_findings = await db["findings"].find(
         {"subject": f"members/{departing_member_username}"},
         {"_id": 0},
-    ).sort("created_at", -1).limit(5).to_list(5)
+    ).sort("created_at", -1).to_list(20)
+    seen_types: set[str] = set()
+    recent_findings: list[dict] = []
+    for _f in _raw_findings:
+        ct = _f.get("concern_type", "")
+        if ct not in seen_types:
+            seen_types.add(ct)
+            recent_findings.append(_f)
+        if len(recent_findings) >= 5:
+            break
 
     lines = [
         f"# Knowledge Handoff: @{departing_member_username}",
@@ -558,7 +569,7 @@ async def generate_offboarding_artifact(departing_member_username: str) -> dict:
         lines += ["## Recent Analyst Findings", ""]
         for f in recent_findings:
             ct = f.get("concern_type", "?")
-            narrative = (f.get("narrative") or "")[:250]
+            narrative = (f.get("narrative") or "")
             lines.append(f"**{ct}**: {narrative}")
             actions = f.get("recommended_actions") or []
             for a in actions:
@@ -585,7 +596,7 @@ async def generate_offboarding_artifact(departing_member_username: str) -> dict:
         return client.create_issue(
             title=f"Knowledge Handoff: {departing_member_username}",
             description=body,
-            labels=["offboarding", "knowledge-transfer", "mycelium"],
+            labels=["continuity", "offboarding", "knowledge-transfer", "mycelium"],
         )
 
     return await asyncio.to_thread(_create)

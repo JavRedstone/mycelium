@@ -876,27 +876,26 @@ class PipelineRunner:
         interp = await self._run_interpretation()
         return {**inv, **interp}
 
-    def _get_covered_subjects(self, issues: list[dict]) -> set[str]:
-        """Return finding subjects already covered by open issues.
+    def _get_covered_issues(self, issues: list[dict]) -> dict[str, dict]:
+        """Return a subject → existing-issue mapping for findings already covered by open issues.
 
-        Uses the same subject→title matching as _reflect() so that deduplication
-        and reflection stay consistent — if reflect will confirm it, decide will
-        not re-plan it.
+        Only canonical-format issues count. Non-canonical issues (wrong prefix,
+        seeded stale issues) are ignored so the planner can create a proper
+        replacement that will supersede and close the non-canonical one.
+
+        Uses the same subject→title matching as _reflect() so deduplication and
+        reflection stay consistent.
         """
         findings = (self._interpretation or {}).get("findings", [])
-        covered: set[str] = set()
+        covered: dict[str, dict] = {}
         for f in findings:
             subject = str(f.get("subject", "")).lower().strip()
             if not subject:
                 continue
             for iss in issues:
                 title = iss.get("title", "")
-                # Only canonical-format issues count as covering a finding.
-                # Non-canonical issues (wrong prefix, seeded stale issues) are
-                # ignored here so the planner can create a proper replacement,
-                # which will then supersede and close the non-canonical one.
                 if _is_canonical_title(title) and _subject_matches_title(subject, title.lower()):
-                    covered.add(subject)
+                    covered[subject] = iss
                     break
         return covered
 
@@ -922,29 +921,51 @@ class PipelineRunner:
             except Exception as exc:
                 logger.warning("[decide] Pass %d: failed to refresh issue list: %s", pass_num, exc)
 
-        # Subject-based pre-filter: remove findings already covered by open issues.
-        # This is done BEFORE calling the planner so it cannot propose duplicate work.
-        covered = self._get_covered_subjects(self._pre_run_gitlab_issues)
+        # Subject-based pre-filter: split findings into uncovered (planner creates
+        # new issues) and covered (planner reviews existing issue for accuracy and
+        # plans edit_issue / add_comment when current evidence has drifted).
+        covered_map = self._get_covered_issues(self._pre_run_gitlab_issues)
 
         # On pass 2+, also mark subjects confirmed actioned by prior reflects.
         if pass_num > 1:
             for f in self._interpretation.get("annotated_findings", []):
                 if f.get("actioned_at") or f.get("pre_existing"):
-                    covered.add(str(f.get("subject", "")).lower().strip())
+                    subj = str(f.get("subject", "")).lower().strip()
+                    if subj and subj not in covered_map:
+                        covered_map[subj] = {}  # sentinel — already handled
 
         all_findings = self._interpretation.get("findings", [])
-        if covered:
-            remaining = [
-                f for f in all_findings
-                if str(f.get("subject", "")).lower().strip() not in covered
-            ]
-            n_filtered = len(all_findings) - len(remaining)
-            if n_filtered:
-                logger.info("[decide] Pass %d: pre-filtered %d/%d already-covered finding(s)",
-                            pass_num, n_filtered, len(all_findings))
-            interpretation = {**self._interpretation, "findings": remaining}
-        else:
-            interpretation = self._interpretation
+        covered = set(covered_map.keys())
+        uncovered = [
+            f for f in all_findings
+            if str(f.get("subject", "")).lower().strip() not in covered
+        ]
+        # Covered findings get the existing issue context attached so the planner
+        # can compare current evidence against the issue and decide whether to
+        # edit or comment.  Strip large fields (description_preview is enough).
+        already_covered = [
+            {
+                **f,
+                "existing_issue": {
+                    k: v for k, v in covered_map.get(
+                        str(f.get("subject", "")).lower().strip(), {}
+                    ).items()
+                    if k in ("iid", "title", "created_at", "description_preview")
+                },
+            }
+            for f in all_findings
+            if str(f.get("subject", "")).lower().strip() in covered
+            and covered_map.get(str(f.get("subject", "")).lower().strip())
+        ]
+        n_filtered = len(all_findings) - len(uncovered)
+        if n_filtered:
+            logger.info("[decide] Pass %d: %d/%d finding(s) already covered — passing to planner for accuracy review",
+                        pass_num, n_filtered, len(all_findings))
+        interpretation = {
+            **self._interpretation,
+            "findings": uncovered,
+            "covered_findings": already_covered,
+        }
 
         self._plan = await asyncio.to_thread(
             planner_agent.plan, interpretation, self._repo, self._graph_data,
@@ -1062,9 +1083,12 @@ class PipelineRunner:
             return 0
 
         # Build the set of subjects the current run still considers relevant.
+        # Include subjects from both uncovered findings AND covered findings (which
+        # were split out for planner accuracy review but are still live concerns).
+        _interp = self._interpretation or {}
         current_subjects: set[str] = {
             str(f.get("subject", "")).lower().strip()
-            for f in (self._interpretation or {}).get("findings", [])
+            for f in [*_interp.get("findings", []), *_interp.get("covered_findings", [])]
             if f.get("subject")
         }
 

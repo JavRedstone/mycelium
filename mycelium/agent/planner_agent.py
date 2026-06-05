@@ -130,7 +130,8 @@ LABELS ARE MANDATORY
     "bus_factor", "admin_access", etc.
   - Only use "onboarding" as a label when the issue is specifically about onboarding
     a new team member (concern_type: recent_joiner_exposure or onboarding_isolation).
-    Do NOT apply it to documentation, knowledge-transfer, or other issues.
+    Do NOT apply it to upstream_dominance, upstream_drift, documentation, knowledge-
+    transfer, admin_access, or any other non-onboarding concern type.
   - An empty labels array [] is never acceptable for a create_issue action.
 
 COMMENTING ON ISSUES
@@ -144,14 +145,38 @@ COMMENTING ON ISSUES
       3. You can name the specific new fact in the comment body.
   - If you cannot point to a specific new fact, omit the add_comment action.
 
-EMPTY PLANS ARE CORRECT — but only when findings list is empty
-  - If interpretation.findings is empty, return {"actions": [], "graph_updates": []}.
-  - If interpretation.findings is non-empty, every finding in the list has already
-    been checked by the pipeline and is guaranteed to have NO matching open issue.
-    Do NOT re-check repository.open_issues for duplicates — that check is done in
-    code before this call. Every non-empty findings list requires at least one action
-    unless the action type is genuinely inapplicable (e.g. no named username for
-    generate_onboarding_pack). Do not return an empty plan for a non-empty findings list.
+REVIEWING ALREADY-COVERED FINDINGS (interpretation.covered_findings)
+  The pipeline also passes `interpretation.covered_findings` — findings that DO
+  already have an open bot-authored issue. Do NOT create a new issue for these.
+  Instead, compare the current finding's narrative and evidence against the
+  existing issue's `description_preview` and decide:
+
+  - If the evidence has materially changed (different commit counts, different
+    modules named, different contributors, concern resolved or worsened):
+      → plan edit_issue(iid, description) with a fully updated description, OR
+      → plan add_comment(iid, body) with only the new concrete fact if the
+        existing description is structurally still correct.
+    Use edit_issue when the body needs significant rewriting. Use add_comment
+    when a single new data point supplements the existing narrative.
+
+  - If the existing issue's description is still accurate relative to the
+    current finding: do nothing — skip this covered finding entirely.
+
+  The `existing_issue` field on each covered finding contains:
+    iid, title, created_at, description_preview (first 200 chars of the body).
+  Use description_preview to judge whether the content has drifted.
+
+EMPTY PLANS ARE CORRECT — but only when both findings lists are empty
+  - If both interpretation.findings and interpretation.covered_findings are
+    empty (or all covered findings are still accurate), return
+    {"actions": [], "graph_updates": []}.
+  - If interpretation.findings is non-empty, every finding in the list has
+    already been checked by the pipeline and is guaranteed to have NO matching
+    open issue. Do NOT re-check repository.open_issues for duplicates — that
+    check is done in code before this call. Every non-empty findings list
+    requires at least one action unless the action type is genuinely
+    inapplicable (e.g. no named username for generate_onboarding_pack). Do not
+    return an empty plan for a non-empty findings list.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ISSUE CORRECTION DECISION TREE
@@ -259,6 +284,16 @@ undeclared_ownership / nominal_ownership:
 
 admin_access / sole_admin:
   Title: see MANDATORY TITLE FORMATS above. Assign to the sole admin.
+  When recommending members to share admin responsibilities:
+  1. Scan interpretation.findings for any finding whose concern_type is
+     "offboarding_risk" or "fading_contributor". Extract the username from
+     each such finding's subject (e.g. "members/priya.sharma" → "priya.sharma").
+  2. Also exclude any member whose subject appears in covered_findings with
+     those same concern types.
+  3. Do NOT name any of those members as candidates for elevated access in the
+     issue description. Only name members who are active and not flagged.
+  Recommending a member for elevated access while flagging them as a continuity
+  risk in the same run is contradictory and must never happen.
 
 ci_instability:
   Consider an issue tagging the most active contributor for the affected area.

@@ -106,6 +106,15 @@ How to reason:
     admin / sole admin  → subject: "admin_access"
     repository-wide KT  → subject: "repository"
 
+MANDATORY FINDINGS — these are never optional:
+- If investigations.drift is present (commits_behind > 0), you MUST produce an
+  upstream_drift finding with subject "upstream_drift". Do not merge it into the
+  upstream_dominance finding. Do not skip it because other findings feel more urgent.
+  The drift count and the investigator's high_priority_commits are concrete facts
+  that belong in a dedicated, trackable issue.
+- If a named member holds sole expertise on a module (bus_factor 1, no secondary
+  contributor), you MUST produce a knowledge_concentration finding for that member.
+
 - CODEOWNERS, pipeline health, and open work remain valid signals - read them in
   context. Failing CI on a documented module is a different finding than failing CI
   on a module the investigators flagged as opaque.

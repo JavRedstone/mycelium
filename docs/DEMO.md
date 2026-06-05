@@ -116,14 +116,24 @@ Brief scroll through: team map, module ownership, starter tasks.
 
 ## Appendix — Stale issue seeding
 
-The Config page has a **Seed stale issues** button (Demo Mode section) that creates two deliberately outdated GitLab issues:
+The Config page has a **Seed stale issues** button (Demo Mode section) that creates one deliberately outdated GitLab issue:
 
 | Title | Why it is stale |
 |---|---|
-| `Knowledge concentration: priya.sharma owns scripts/ exclusively` | Wrong title format — the pipeline uses the canonical prefix `Knowledge Transfer:` (or `Knowledge Transfer & Documentation:`). Any issue that doesn't start with a recognised canonical prefix is treated as non-canonical and will be superseded by a properly-titled replacement on the next run. |
-| `Recent joiner exposure: marco.torres has no onboarding pair` | Wrong title format — the pipeline uses `generate_onboarding_pack` which produces a structured issue titled `Onboarding Pack: marco.torres`. The non-canonical "Recent joiner exposure:" prefix marks it as a legacy issue. |
+| `Upstream Drift: 14 commits behind \`gitlab-org/gitlab-pages\`` | The description was written by a **previous run** that measured 14 commits of drift. The current run measures 26. The planner receives the upstream drift finding alongside this issue's `description_preview` (which shows "14"), compares it against the current snapshot, and corrects the issue in place. |
 
-When the pipeline runs after seeding, it detects that neither title matches a canonical format, ignores them during deduplication, creates proper replacements, and then closes the originals with a "superseded by #NNN" comment — demonstrating the stale-issue cleanup flow end-to-end.
+**What to point to during the demo:**
+
+The issue description makes the outdated data immediately obvious:
+- **Commits behind upstream: 14** — the current run's repo snapshot shows 26
+- **Analysis period: March 15 – May 12, 2026** — visibly from an earlier run
+- The two commit hashes flagged as high-priority (`3a8f021`, `c17d409`) may already have been cherry-picked or merged
+
+**What to say:**
+
+> "This issue was created by a previous Mycelium run. It said 14 commits behind. The repository has kept drifting — now it's 26. Previously, Mycelium would have just ignored this issue because the subject was already covered. Now it passes the current finding alongside the existing issue's description to the planner, which sees the number is wrong and corrects it automatically."
+
+When the pipeline runs after seeding, the planner receives `upstream_drift` as a **covered finding** — meaning it already has an open issue — along with the issue's `description_preview` showing "14 commits". The planner compares that against the current snapshot (26 commits), and plans an `edit_issue` or `add_comment` to bring the issue up to date. This demonstrates Mycelium maintaining accuracy across runs, not just detecting new problems.
 
 ---
 
