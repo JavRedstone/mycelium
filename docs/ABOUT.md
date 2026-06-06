@@ -2,15 +2,15 @@
 
 ## Inspiration
 
-Every engineer who joins a large codebase runs into the same gap: the code exists, but the context does not. Documentation is incomplete, CODEOWNERS is outdated, and critical knowledge often lives only in the heads of a few people who may no longer be active in the repository. What is missing is not more documentation, but a way to continuously reconstruct real understanding from how the system is actually used and modified.
+Every engineer who joins a large codebase runs into the same gap: the code exists, but *the context does not*. Documentation is incomplete, CODEOWNERS is outdated, and critical knowledge often lives only in the heads of a few people who may no longer be active in the repository. What is missing is not more documentation, but a way to continuously reconstruct real understanding from how the system is actually used and modified.
 
-Mycelium was built to treat that gap as a live systems problem inside GitLab rather than a static documentation problem.
+Mycelium was built to treat that gap as a *live systems problem* inside GitLab rather than a static documentation problem.
 
 ## What it does
 
 Mycelium is an autonomous GitLab agent that prevents engineering knowledge loss by continuously modeling ownership, expertise, and structural fragility across a codebase and acting directly inside GitLab to stabilize it.
 
-It infers real ownership from repository activity such as commits, reviews, module interaction, and temporal patterns. It identifies concentrated expertise risk, orphaned subsystems, and hidden fragility created by evolving codebases and forks.
+It infers *real ownership* from repository activity such as commits, reviews, module interaction, and temporal patterns. It identifies concentrated expertise risk, orphaned subsystems, and *hidden fragility* created by evolving codebases and forks.
 
 When it detects issues, it acts inside GitLab:
 
@@ -22,7 +22,7 @@ When it detects issues, it acts inside GitLab:
 Core loop:
 **Observe → Model → Analyze → Decide → Act → Reflect → Persist → Summary**
 
-The system is fully autonomous once configured. It does not require the UI to operate. The UI is a monitoring surface; the agent runs independently of it.
+The system is *fully autonomous* once configured. It does not require the UI to operate. The UI is a monitoring surface; the agent runs independently of it. At the same time, the system is designed so that *you remain in control* at every level: the autonomous loop can be switched on or off at any time, every run can be triggered manually or stopped mid-execution, all configuration is adjustable live, and the full action history is always visible so you can see exactly what the agent did and why.
 
 **Autonomous loop:** The server runs a background task that continuously checks whether the autonomous loop is enabled. When switched on, the system runs the full pipeline, waits a configurable interval (default 10 minutes), then repeats indefinitely without any user action. The loop interval, investigator concurrency, and maximum stabilization passes can all be adjusted at runtime through the configuration API without restarting the server. When the loop is off, the system waits for an explicit trigger.
 
@@ -42,7 +42,7 @@ The CLI connects to the running backend and can be pointed at any deployment, lo
 **Monitoring UI:** Although the agent runs without it, a Next.js dashboard provides full visibility into every layer of the system. Each page is a live view into a different part of the pipeline:
 
 * **Pipeline**: the current run in progress, with each of the 8 stages shown as it executes. Expandable agent traces show every tool call, reasoning step, and subagent spawn in real time.
-* **Analytics**: observational measurements across the knowledge graph. The central chart is the bus factor distribution, which counts how many internal contributors have meaningful ownership of each module. A bus factor of 1 means one person holds all recoverable knowledge for that area and a single departure would leave it unmaintained. The chart is color-coded from red (single-owner concentration) through to green (well-distributed knowledge). Alongside it: findings grouped by concern type, and a developer knowledge load chart showing relative commit concentration across contributors.
+* **Analytics**: observational measurements across the knowledge graph. The central chart is the *bus factor* distribution, which counts how many internal contributors have meaningful ownership of each module. A bus factor of 1 means *one person holds all recoverable knowledge* for that area and a single departure would leave it unmaintained. The chart is color-coded from red (single-owner concentration) through to green (well-distributed knowledge). Alongside it: findings grouped by concern type, and a developer knowledge load chart showing relative commit concentration across contributors.
 * **Knowledge Graph**: an interactive node-link diagram of the full developer-module ownership topology, with inferred expertise weights and fork-aware separation of internal contributors from upstream authors.
 * **Investigations**: the full written output of the investigator subagents, including which files were read, what knowledge is at risk if a contributor becomes unavailable, transferability assessments, and recommended documentation actions for each flagged module or member.
 * **Issues**: a live view of every GitLab issue the agent has created, linked to the findings that generated them.
@@ -57,7 +57,7 @@ Mycelium is built on the Google Cloud Agent Builder ecosystem for the GitLab tra
 The system is structured across three layers:
 
 **Reasoning layer (Vertex AI and Gemini):**
-The act agent runs continuous multi-step reasoning over repository state. It uses investigator subagents that read actual file content from GitLab before producing qualitative assessments of ownership and structural risk. There are no fixed thresholds. Judgments come from interpreting code and context directly.
+The act agent runs *continuous multi-step reasoning* over repository state. It uses investigator subagents that read actual file content from GitLab before producing qualitative assessments of ownership and structural risk. There are *no fixed thresholds*. Judgments come from interpreting code and context directly.
 
 **Execution layer (GitLab MCP and MongoDB MCP):**
 Two official MCP servers are used:
@@ -65,7 +65,7 @@ Two official MCP servers are used:
 * GitLab MCP executes real repository actions such as issues, merge requests, and annotations
 * MongoDB MCP provides persistent graph queries over system memory
 
-To maximize GitLab integration, the system also ships a custom MCP server that wraps the GitLab API directly. This gives the agent a broader and more precisely scoped set of GitLab tools than the official MCP server alone can provide. The two GitLab surfaces are combined: the custom MCP is preferred for write operations because it is pre-scoped to the authorized project and cannot address other repositories, while the official GitLab MCP supplements it for additional surface coverage. Together they give the agent the widest possible reach into GitLab without sacrificing safety boundaries.
+To *maximize GitLab integration*, the system pairs the official GitLab MCP with a custom MCP server that wraps the GitLab API directly. The two work together as a unified tool surface: the official GitLab MCP brings its full breadth of repository operations, while the custom server extends it with tools tailored specifically to Mycelium's continuity workflows. Together they give the agent the *widest possible reach into GitLab* without sacrificing safety boundaries.
 
 **Memory layer (MongoDB):**
 A persistent knowledge graph stores inferred ownership per module, contributor history over time, bus factor signals, qualitative findings, and full action logs. Each pipeline run updates and reuses this evolving state.
@@ -81,7 +81,7 @@ This required careful coordination between detection, action, and feedback phase
 
 ## Accomplishments that we're proud of
 
-Mycelium does not stop at analysis. It performs real actions inside GitLab and verifies their impact by re-fetching repository state and comparing it against prior cycles in the Reflect stage. This closes the loop between reasoning and execution.
+Mycelium does not stop at analysis. It performs *real actions* inside GitLab and verifies their impact by re-fetching repository state and comparing it against prior cycles in the Reflect stage. This *closes the loop* between reasoning and execution.
 
 The investigator architecture is also a key result. Member, module, and drift subagents analyze real file contents before producing assessments, allowing the system to distinguish meaningful structural signals from purely statistical patterns.
 
@@ -89,11 +89,11 @@ The fork-aware design correctly separates internal and upstream contributors, pr
 
 ## What we learned
 
-Engineering knowledge behaves like a dynamic system rather than static documentation. The only reliable signal is continuous interpretation of repository activity over time through a live graph.
+Engineering knowledge behaves like a *dynamic system* rather than static documentation. The only reliable signal is continuous interpretation of repository activity over time through a live graph.
 
-In agent systems like this, correctness depends less on model quality and more on system design. The hardest problems are state consistency, deduplication, and convergence across repeated autonomous cycles.
+In agent systems like this, correctness depends less on *model quality* and more on *system design*. The hardest problems are state consistency, deduplication, and convergence across repeated autonomous cycles.
 
-We also learned that avoiding scalar risk scores fundamentally changes system design. Every decision must be made from structured context rather than thresholds, which increases flexibility but requires more careful reasoning and validation.
+We also learned that avoiding scalar risk scores fundamentally changes system design. Every decision must be made from *structured context* rather than thresholds, which increases flexibility but requires more careful reasoning and validation.
 
 ## What's next for Mycelium
 
