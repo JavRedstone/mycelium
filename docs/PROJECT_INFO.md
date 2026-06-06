@@ -280,9 +280,9 @@ This is where reasoning becomes system change.
 
 ## Pipeline stages
 
-Each run executes 8 stages. Stages 4–6 (Decide → Act → Reflect) repeat as a
-stabilization loop until all findings are addressed or further passes stop making
-progress.
+Each run executes 8 stages. Stages Decide → Act → Reflect repeat as a
+stabilization loop (up to 5 passes) until all findings are addressed or further
+passes stop making progress.
 
 | Stage | What happens |
 |---|---|
@@ -529,27 +529,25 @@ It is:
 
 ## Demo narrative
 
-1. **Initial state** — seed the graph (`POST /demo/seed/team`): fragmented ownership,
+1. **Initial state**: seed the graph (`POST /demo/seed/team`): fragmented ownership,
    stale documentation, one inactive sole maintainer, one new joiner with no context.
 
-2. **Trigger** — `POST /pipeline/run` or click "Run Pipeline" in the UI.
+2. **Trigger**: `POST /pipeline/run` or click "Run Pipeline" in the UI.
 
-3. **Observe → Model** — GitLab snapshot + contributor map built.
+3. **Observe → Model**: GitLab snapshot + contributor map built.
 
-4. **Analyze** — member, module, and drift investigator subagents spawn concurrently;
+4. **Analyze**: member, module, and drift investigator subagents spawn concurrently;
    analyst synthesizes qualitative findings.
 
-5. **Decide → Act → Reflect** — planner selects interventions; act agent writes into
+5. **Decide → Act → Reflect**: planner selects interventions; act agent writes into
    GitLab (issues, onboarding packs, handoff artifacts); reflect confirms what materialized.
    Loop repeats until all findings are addressed.
 
-6. **Persist → Summary** — graph updated; action log written; cycle outcome reported.
+6. **Persist → Summary**: graph updated; action log written; cycle outcome reported.
 
-7. **Result** — GitLab issues surface the fragile ownership; onboarding pack generated
+7. **Result**: GitLab issues surface the fragile ownership; onboarding pack generated
    for the new engineer; stale superseded issues closed automatically.
 
-For a full video demo script with seed commands, split-screen recording setup,
-voiceover guide, and "before/after" slide content, see [`DEMO.md`](../DEMO.md).
 
 ---
 

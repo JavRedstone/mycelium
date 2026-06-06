@@ -344,11 +344,11 @@ Go to your GitLab project → **Settings → Webhooks → Add new webhook**:
 
 Enable these trigger checkboxes:
 
-- ✅ **Push events** — new commits
-- ✅ **Comments** — notes on issues / MRs
-- ✅ **Work item events** — issue created, updated, closed
-- ✅ **Merge request events** — MR opened, merged, closed
-- ✅ **Pipeline events** — CI status changes
+- ✅ **Push events**: new commits
+- ✅ **Comments**: notes on issues / MRs
+- ✅ **Work item events**: issue created, updated, closed
+- ✅ **Merge request events**: MR opened, merged, closed
+- ✅ **Pipeline events**: CI status changes
 
 Click **Add webhook**, then **Test** to verify the endpoint responds with `{"status":"triggered"}` or `{"status":"ignored"}`.
 
