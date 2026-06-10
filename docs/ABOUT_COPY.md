@@ -13,7 +13,7 @@ Mycelium is an autonomous GitLab agent that prevents engineering knowledge loss 
 It infers *real ownership* from repository activity such as commits, reviews, module interaction, and temporal patterns. It identifies concentrated expertise risk, orphaned subsystems, and *hidden fragility* created by evolving codebases and forks.
 
 <p align="center">
-<img src="screenshots/repository.png" alt="Repository overview" /><br/>
+<img src="https://github.com/javredstone/mycelium/raw/main/docs/screenshots/repository.png" alt="Repository overview" /><br/>
 <em>Monitored GitLab repository</em>
 </p>
 
@@ -50,8 +50,8 @@ The CLI connects to the running backend and can be pointed at any deployment, lo
 
 <table>
 <tr>
-<td align="center"><img src="screenshots/agent_activity.png" alt="Agent activity trace" /><br/><em>Live agent trace</em></td>
-<td align="center"><img src="screenshots/logs.png" alt="Agent run logs" /><br/><em>Agent run logs</em></td>
+<td align="center"><img src="https://github.com/javredstone/mycelium/raw/main/docs/screenshots/agent_activity.png" alt="Agent activity trace" /><br/><em>Live agent trace</em></td>
+<td align="center"><img src="https://github.com/javredstone/mycelium/raw/main/docs/screenshots/logs.png" alt="Agent run logs" /><br/><em>Agent run logs</em></td>
 </tr>
 </table>
 
@@ -59,8 +59,8 @@ Each stage can be expanded in the UI to reveal the full reasoning trace for that
 
 <table>
 <tr>
-<td align="center"><img src="screenshots/pipeline_completed_splash.png" alt="Pipeline completion summary" /><br/><em>Run completion summary</em></td>
-<td align="center"><img src="screenshots/pipeline_completed.png" alt="Pipeline completed" /><br/><em>Completed pipeline stages</em></td>
+<td align="center"><img src="https://github.com/javredstone/mycelium/raw/main/docs/screenshots/pipeline_completed_splash.png" alt="Pipeline completion summary" /><br/><em>Run completion summary</em></td>
+<td align="center"><img src="https://github.com/javredstone/mycelium/raw/main/docs/screenshots/pipeline_completed.png" alt="Pipeline completed" /><br/><em>Completed pipeline stages</em></td>
 </tr>
 </table>
 
@@ -68,8 +68,8 @@ Each stage can be expanded in the UI to reveal the full reasoning trace for that
 
 <table>
 <tr>
-<td align="center"><img src="screenshots/analytics_findings_by_concern_type.png" alt="Analytics — findings by concern type" /><br/><em>Findings by concern type</em></td>
-<td align="center"><img src="screenshots/analytics_bus_factor_distribution.png" alt="Analytics — bus factor distribution" /><br/><em>Bus factor distribution</em></td>
+<td align="center"><img src="https://github.com/javredstone/mycelium/raw/main/docs/screenshots/analytics_findings_by_concern_type.png" alt="Analytics — findings by concern type" /><br/><em>Findings by concern type</em></td>
+<td align="center"><img src="https://github.com/javredstone/mycelium/raw/main/docs/screenshots/analytics_bus_factor_distribution.png" alt="Analytics — bus factor distribution" /><br/><em>Bus factor distribution</em></td>
 </tr>
 </table>
 
@@ -77,15 +77,15 @@ Each stage can be expanded in the UI to reveal the full reasoning trace for that
 
 <table>
 <tr>
-<td align="center"><img src="screenshots/knowledge_graph_bus_factor_breakdown.png" alt="Knowledge graph bus factor breakdown" /><br/><em>Bus factor breakdown</em></td>
-<td align="center"><img src="screenshots/knowledge_graph_structural_overview.png" alt="Knowledge graph structural overview" /><br/><em>Ownership topology</em></td>
+<td align="center"><img src="https://github.com/javredstone/mycelium/raw/main/docs/screenshots/knowledge_graph_bus_factor_breakdown.png" alt="Knowledge graph bus factor breakdown" /><br/><em>Bus factor breakdown</em></td>
+<td align="center"><img src="https://github.com/javredstone/mycelium/raw/main/docs/screenshots/knowledge_graph_structural_overview.png" alt="Knowledge graph structural overview" /><br/><em>Ownership topology</em></td>
 </tr>
 </table>
 
 * **Investigations**: the full written output of the investigator subagents, including which files were read, what knowledge is at risk if a contributor becomes unavailable, transferability assessments, and recommended documentation actions for each flagged module or member.
 
 <p align="center">
-<img src="screenshots/investigations.png" alt="Investigations" /><br/>
+<img src="https://github.com/javredstone/mycelium/raw/main/docs/screenshots/investigations.png" alt="Investigations" /><br/>
 <em>Investigator output</em>
 </p>
 
@@ -93,7 +93,7 @@ Each stage can be expanded in the UI to reveal the full reasoning trace for that
 * **Actions**: a log of every GitLab operation the agent executed, grouped by pipeline run, with tool-level detail and success or failure status.
 
 <p align="center">
-<img src="screenshots/actions.png" alt="Actions log" /><br/>
+<img src="https://github.com/javredstone/mycelium/raw/main/docs/screenshots/actions.png" alt="Actions log" /><br/>
 <em>Actions log</em>
 </p>
 
@@ -101,15 +101,15 @@ Each stage can be expanded in the UI to reveal the full reasoning trace for that
 
 <table>
 <tr>
-<td align="center"><img src="screenshots/run_history.png" alt="Run history" /><br/><em>Run history</em></td>
-<td align="center"><img src="screenshots/repository_history.png" alt="Repository history" /><br/><em>Repository activity history</em></td>
+<td align="center"><img src="https://github.com/javredstone/mycelium/raw/main/docs/screenshots/run_history.png" alt="Run history" /><br/><em>Run history</em></td>
+<td align="center"><img src="https://github.com/javredstone/mycelium/raw/main/docs/screenshots/repository_history.png" alt="Repository history" /><br/><em>Repository activity history</em></td>
 </tr>
 </table>
 
 * **Config**: runtime controls for the autonomous loop, run interval, investigator concurrency, and stabilization pass limits, all applied live without restarting the server.
 
 <p align="center">
-<img src="screenshots/configuration.png" alt="Configuration" /><br/>
+<img src="https://github.com/javredstone/mycelium/raw/main/docs/screenshots/configuration.png" alt="Configuration" /><br/>
 <em>Runtime configuration</em>
 </p>
 
@@ -137,7 +137,7 @@ A persistent knowledge graph stores inferred ownership per module, contributor h
 A FastAPI backend runs on Cloud Run via Docker and handles webhook ingestion, pipeline orchestration, REST APIs, and SSE streams. GitLab webhooks trigger autonomous runs, and the UI streams live agent execution in real time. Runtime configuration (loop enable/disable, interval, investigator concurrency, and stabilization pass limits) is stored in MongoDB and applied without restarting the server, so the agent's behavior can be tuned live against a deployed instance.
 
 <p align="center">
-<img src="screenshots/cloud_run_metrics.png" alt="Cloud Run metrics" /><br/>
+<img src="https://github.com/javredstone/mycelium/raw/main/docs/screenshots/cloud_run_metrics.png" alt="Cloud Run metrics" /><br/>
 <em>Cloud Run metrics</em>
 </p>
 
