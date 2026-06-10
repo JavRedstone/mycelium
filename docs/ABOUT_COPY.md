@@ -24,6 +24,13 @@ When it detects issues, it acts inside GitLab:
 * produces handoff artifacts from historical activity when engineers go inactive
 * closes stale issues when risks are resolved
 
+<table>
+<tr>
+<td align="center"><img src="https://github.com/javredstone/mycelium/raw/main/docs/screenshots/gitlab_issues_all.png" alt="GitLab issues" /><br/><em>Agent-created issues in GitLab</em></td>
+<td align="center"><img src="https://github.com/javredstone/mycelium/raw/main/docs/screenshots/gitlab_issues_marco_torres.png" alt="GitLab issues for a contributor" /><br/><em>Issues targeting a specific contributor</em></td>
+</tr>
+</table>
+
 Core loop:
 **Observe → Model → Analyze → Decide → Act → Reflect → Persist → Summary**
 
@@ -90,6 +97,12 @@ Each stage can be expanded in the UI to reveal the full reasoning trace for that
 </p>
 
 * **Issues**: a live view of every GitLab issue the agent has created, linked to the findings that generated them.
+
+<p align="center">
+<img src="https://github.com/javredstone/mycelium/raw/main/docs/screenshots/issues_view.png" alt="Issues view" /><br/>
+<em>Issues dashboard</em>
+</p>
+
 * **Actions**: a log of every GitLab operation the agent executed, grouped by pipeline run, with tool-level detail and success or failure status.
 
 <p align="center">
