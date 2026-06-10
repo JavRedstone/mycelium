@@ -24,12 +24,15 @@ When it detects issues, it acts inside GitLab:
 * produces handoff artifacts from historical activity when engineers go inactive
 * closes stale issues when risks are resolved
 
-<table>
-<tr>
-<td align="center"><img src="screenshots/gitlab_issues_all.png" alt="GitLab issues" /><br/><em>Agent-created issues in GitLab</em></td>
-<td align="center"><img src="screenshots/gitlab_issues_marco_torres.png" alt="GitLab issues for a contributor" /><br/><em>Issues targeting a specific contributor</em></td>
-</tr>
-</table>
+<p align="center">
+<img src="screenshots/gitlab_issues_all.png" alt="GitLab issues" /><br/>
+<em>Agent-created issues in GitLab</em>
+</p>
+
+<p align="center">
+<img src="screenshots/gitlab_issues_marco_torres.png" alt="GitLab issues for a contributor" /><br/>
+<em>Issues targeting a specific contributor</em>
+</p>
 
 Core loop:
 **Observe → Model → Analyze → Decide → Act → Reflect → Persist → Summary**
@@ -55,39 +58,51 @@ The CLI connects to the running backend and can be pointed at any deployment, lo
 
 * **Pipeline**: the current run in progress, with each of the 8 stages shown as it executes. Expandable agent traces show every tool call, reasoning step, and subagent spawn in real time.
 
-<table>
-<tr>
-<td align="center"><img src="screenshots/agent_activity.png" alt="Agent activity trace" /><br/><em>Live agent trace</em></td>
-<td align="center"><img src="screenshots/logs.png" alt="Agent run logs" /><br/><em>Agent run logs</em></td>
-</tr>
-</table>
+<p align="center">
+<img src="screenshots/agent_activity.png" alt="Agent activity trace" /><br/>
+<em>Live agent trace</em>
+</p>
+
+<p align="center">
+<img src="screenshots/logs.png" alt="Agent run logs" /><br/>
+<em>Agent run logs</em>
+</p>
 
 Each stage can be expanded in the UI to reveal the full reasoning trace for that step: which tools were called, what the model concluded, and which subagents were spawned for deeper investigation. This makes every decision fully auditable — there is no black-box behavior. When a run finishes, the dashboard transitions to a completion summary showing total findings produced, actions taken, and the net change in knowledge graph state relative to the previous cycle.
 
-<table>
-<tr>
-<td align="center"><img src="screenshots/pipeline_completed_splash.png" alt="Pipeline completion summary" /><br/><em>Run completion summary</em></td>
-<td align="center"><img src="screenshots/pipeline_completed.png" alt="Pipeline completed" /><br/><em>Completed pipeline stages</em></td>
-</tr>
-</table>
+<p align="center">
+<img src="screenshots/pipeline_completed_splash.png" alt="Pipeline completion summary" /><br/>
+<em>Run completion summary</em>
+</p>
+
+<p align="center">
+<img src="screenshots/pipeline_completed.png" alt="Pipeline completed" /><br/>
+<em>Completed pipeline stages</em>
+</p>
 
 * **Analytics**: observational measurements across the knowledge graph. The central chart is the *bus factor* distribution, which counts how many internal contributors have meaningful ownership of each module. A bus factor of 1 means *one person holds all recoverable knowledge* for that area and a single departure would leave it unmaintained. The chart is color-coded from red (single-owner concentration) through to green (well-distributed knowledge). Alongside it: findings grouped by concern type, and a developer knowledge load chart showing relative commit concentration across contributors.
 
-<table>
-<tr>
-<td align="center"><img src="screenshots/analytics_findings_by_concern_type.png" alt="Analytics — findings by concern type" /><br/><em>Findings by concern type</em></td>
-<td align="center"><img src="screenshots/analytics_bus_factor_distribution.png" alt="Analytics — bus factor distribution" /><br/><em>Bus factor distribution</em></td>
-</tr>
-</table>
+<p align="center">
+<img src="screenshots/analytics_findings_by_concern_type.png" alt="Analytics — findings by concern type" /><br/>
+<em>Findings by concern type</em>
+</p>
+
+<p align="center">
+<img src="screenshots/analytics_bus_factor_distribution.png" alt="Analytics — bus factor distribution" /><br/>
+<em>Bus factor distribution</em>
+</p>
 
 * **Knowledge Graph**: an interactive node-link diagram of the full developer-module ownership topology, with inferred expertise weights and fork-aware separation of internal contributors from upstream authors.
 
-<table>
-<tr>
-<td align="center"><img src="screenshots/knowledge_graph_bus_factor_breakdown.png" alt="Knowledge graph bus factor breakdown" /><br/><em>Bus factor breakdown</em></td>
-<td align="center"><img src="screenshots/knowledge_graph_structural_overview.png" alt="Knowledge graph structural overview" /><br/><em>Ownership topology</em></td>
-</tr>
-</table>
+<p align="center">
+<img src="screenshots/knowledge_graph_bus_factor_breakdown.png" alt="Knowledge graph bus factor breakdown" /><br/>
+<em>Bus factor breakdown</em>
+</p>
+
+<p align="center">
+<img src="screenshots/knowledge_graph_structural_overview.png" alt="Knowledge graph structural overview" /><br/>
+<em>Ownership topology</em>
+</p>
 
 * **Investigations**: the full written output of the investigator subagents, including which files were read, what knowledge is at risk if a contributor becomes unavailable, transferability assessments, and recommended documentation actions for each flagged module or member.
 
@@ -112,12 +127,15 @@ Each stage can be expanded in the UI to reveal the full reasoning trace for that
 
 * **History / Timeline**: a chronological record of all pipeline runs with per-stage timing, outcomes, and the ability to expand any run to see its full activity trace. The repository history view provides a longitudinal perspective on how activity has evolved — commit patterns, contributor involvement over time, and module churn that feeds directly into the ownership inference model.
 
-<table>
-<tr>
-<td align="center"><img src="screenshots/run_history.png" alt="Run history" /><br/><em>Run history</em></td>
-<td align="center"><img src="screenshots/repository_history.png" alt="Repository history" /><br/><em>Repository activity history</em></td>
-</tr>
-</table>
+<p align="center">
+<img src="screenshots/run_history.png" alt="Run history" /><br/>
+<em>Run history</em>
+</p>
+
+<p align="center">
+<img src="screenshots/repository_history.png" alt="Repository history" /><br/>
+<em>Repository activity history</em>
+</p>
 
 * **Config**: runtime controls for the autonomous loop, run interval, investigator concurrency, and stabilization pass limits, all applied live without restarting the server.
 
