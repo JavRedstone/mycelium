@@ -68,7 +68,7 @@ The CLI connects to the running backend and can be pointed at any deployment, lo
 <em>Agent run logs</em>
 </p>
 
-Each stage can be expanded in the UI to reveal the full reasoning trace for that step: which tools were called, what the model concluded, and which subagents were spawned for deeper investigation. This makes every decision fully auditable — there is no black-box behavior. When a run finishes, the dashboard transitions to a completion summary showing total findings produced, actions taken, and the net change in knowledge graph state relative to the previous cycle.
+Each stage can be expanded in the UI to reveal the full reasoning trace for that step: which tools were called, what the model concluded, and which subagents were spawned for deeper investigation. This makes every decision fully auditable, with no black-box behavior. When a run finishes, the dashboard transitions to a completion summary showing total findings produced, actions taken, and the net change in knowledge graph state relative to the previous cycle.
 
 <p align="center">
 <img src="https://github.com/javredstone/mycelium/raw/main/docs/screenshots/pipeline_completed_splash.png" alt="Pipeline completion summary" /><br/>
