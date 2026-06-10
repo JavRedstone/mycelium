@@ -31,7 +31,7 @@ When it detects issues, it acts inside GitLab:
 
 <p align="center">
 <img src="screenshots/gitlab_issues_marco_torres.png" alt="GitLab issues for a contributor" /><br/>
-<em>Issues targeting a specific contributor</em>
+<em>Issue targeting onboarding a new contributor</em>
 </p>
 
 Core loop:
