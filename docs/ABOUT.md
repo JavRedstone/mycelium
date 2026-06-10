@@ -125,7 +125,7 @@ Each stage can be expanded in the UI to reveal the full reasoning trace for that
 <em>Actions log</em>
 </p>
 
-* **History / Timeline**: a chronological record of all pipeline runs with per-stage timing, outcomes, and the ability to expand any run to see its full activity trace. The repository history view provides a longitudinal perspective on how activity has evolved — commit patterns, contributor involvement over time, and module churn that feeds directly into the ownership inference model.
+* **History / Timeline**: a chronological record of all pipeline runs with per-stage timing and outcomes. Any run can be expanded to see its full activity trace. A separate repository history view shows how activity in the codebase has evolved over time, including commit patterns, contributor involvement, and module churn that feeds into the ownership inference model.
 
 <p align="center">
 <img src="screenshots/run_history.png" alt="Run history" /><br/>
