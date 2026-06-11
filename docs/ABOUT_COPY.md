@@ -153,6 +153,16 @@ The system is structured across three layers:
 **Reasoning layer (Vertex AI and Gemini):**
 The act agent runs *continuous multi-step reasoning* over repository state. It uses investigator subagents that read actual file content from GitLab before producing qualitative assessments of ownership and structural risk. There are *no fixed thresholds*. Judgments come from interpreting code and context directly.
 
+Three types of investigator subagent are spawned concurrently during the Investigate stage:
+
+* **Module investigator** — recursively walks a module's directory tree, reading READMEs, key configuration files, and source code samples (up to 30 files with adaptive depth). It then asks Gemini to assess *transferability*: whether a new engineer could pick up the module from what is actually written down, not from file counts. It produces a documentation state (`excellent` → `missing`), a transferability assessment, what knowledge would be lost if the top contributor left, and specific documentation actions to close identified gaps. Placeholder docs score worse than no docs — abandoned `TODO: add docs` comments are themselves a signal.
+
+* **Member investigator** — focuses on a single high-attention team member and the modules they uniquely contribute to. It reads sample file content from those modules and asks Gemini to assess what walks out the door if that person goes inactive. The attention reason shapes interpretation: `sole_contributor` means no internal backup exists; `recently_inactive` prompts an assessment of what is at risk if they do not return; `recent_joiner` surfaces the risk of assigning critical work too early; `multi_module_concentration` highlights single-point-of-failure spread across multiple areas. Output includes knowledge at risk, transferability today, urgency reasoning, and recommended actions.
+
+* **Drift investigator** — targets forked repositories. It reads the upstream commits the fork has not yet merged and judges sync urgency from commit *content*, not commit *count*. Three CVE patches outweigh thirty README typo fixes. It identifies high-priority commits (security signals, breaking changes, critical-path edits) versus low-impact noise (formatting, changelogs, version bumps) and produces a content-driven urgency assessment and a recommended action.
+
+All three subagents are lightweight direct Gemini calls — not full ADK agent runtimes — so many can be spawned concurrently per pipeline run, controlled by the configurable investigator concurrency setting.
+
 **Execution layer (GitLab MCP and MongoDB MCP):**
 Two official MCP servers are used:
 
