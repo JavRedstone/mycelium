@@ -68,11 +68,11 @@ The CLI connects to the running backend and can be pointed at any deployment, lo
 <em>Agent run logs</em>
 </p>
 
-Each stage can be expanded in the UI to reveal the full reasoning trace for that step: which tools were called, what the model concluded, and which subagents were spawned for deeper investigation. This makes every decision fully auditable, with no black-box behavior. When a run finishes, the dashboard transitions to a completion summary showing total findings produced, actions taken, and the net change in knowledge graph state relative to the previous cycle.
+It reveals the full reasoning trace for each stage: which tools were called, what the model concluded, and which subagents were spawned for deeper investigation. This makes every decision fully auditable, with no black-box behavior. When a run finishes, the dashboard transitions to a completion summary showing total findings produced, actions taken, and the net change in knowledge graph state relative to the previous cycle.
 
 <p align="center">
 <img src="screenshots/pipeline_completed_splash.png" alt="Pipeline completion summary" /><br/>
-<em>Run completion summary</em>
+<em>Completed pipeline run and run history</em>
 </p>
 
 <p align="center">
