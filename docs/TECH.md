@@ -2,7 +2,7 @@
 
 ## Google Cloud Technologies
 
-Vertex AI, Vertex AI Agent Engine, Google ADK, Cloud Run, Google Cloud Storage
+Gemini, Vertex AI, Vertex AI Agent Engine, Google ADK, Cloud Run, Google Cloud Storage
 
 ## Other Technologies
 

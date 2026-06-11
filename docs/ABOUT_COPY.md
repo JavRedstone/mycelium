@@ -223,7 +223,7 @@ The long-term vision is Mycelium as a persistent organizational memory layer ins
 
 ## Technologies Used
 
-**Google Cloud:** Vertex AI, Vertex AI Agent Engine, Google ADK, Cloud Run, Google Cloud Storage
+**Google Cloud:** Gemini, Vertex AI, Vertex AI Agent Engine, Google ADK, Cloud Run, Google Cloud Storage
 
 **Other:** GitLab MCP, MongoDB MCP, MongoDB Atlas, GitLab API, GitLab Webhooks, FastAPI, Next.js, Docker
 
