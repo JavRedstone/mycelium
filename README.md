@@ -19,6 +19,7 @@ Built for the **Google Cloud Rapid Agent Hackathon 2026** using Vertex AI, ADK, 
 |---|---|
 | [docs/SETUP.md](docs/SETUP.md) | Prerequisites, environment config, local run, webhooks, and deployment |
 | [docs/ABOUT.md](docs/ABOUT.md) | Project writeup: inspiration, design, challenges, and roadmap |
+| [docs/TECH.md](docs/TECH.md) | Full technology stack: all frameworks, services, and libraries used |
 | [docs/PROJECT_INFO.md](docs/PROJECT_INFO.md) | Full project overview: design decisions, pipeline stages, agent architecture, and roadmap |
 | [docs/HACKATHON.md](docs/HACKATHON.md) | Hackathon compliance requirements and partner integration notes |
 
@@ -31,6 +32,7 @@ mycelium/
 ├── docs/                   # Project documentation
 │   ├── SETUP.md            # Setup guide: local run, environment, deployment
 │   ├── ABOUT.md            # Project writeup: inspiration, design, challenges, roadmap
+│   ├── TECH.md             # Full technology stack reference
 │   ├── PROJECT_INFO.md     # Full design and architecture reference
 │   ├── HACKATHON.md        # Hackathon compliance requirements
 │   └── draw.io/            # Architecture diagrams
