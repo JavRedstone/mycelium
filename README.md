@@ -3,6 +3,7 @@
 ![Mycelium Banner](docs/mycelium-banner.png)
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Devpost](https://img.shields.io/badge/Devpost-Mycelium-003E54)](https://devpost.com/software/mycelium-x4myeu)
 
 Mycelium is an autonomous agent system that prevents engineering knowledge loss as teams and codebases evolve. It infers who understands what in a codebase, where knowledge is fragile, and acts directly inside GitLab to stabilize it.
 
